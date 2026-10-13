@@ -1,16 +1,25 @@
-# Security status
+# Security policy
 
-This repository is an experimental prototype, not a security-audited VPN product.
+PQTunnel is an experimental prototype and has not undergone an independent security audit. Do not use it to protect sensitive activity or on production infrastructure.
 
-- Require Go 1.24+ and TLS 1.3 only.
-- Enable only `tls.X25519MLKEM768`; failure to negotiate must fail closed.
-- Client and server authenticate with X.509 certificates issued by a private CA.
-- Certificate signatures are Ed25519 (classical); only the key exchange is post-quantum hybrid in this prototype.
-- No custom cryptographic algorithms are implemented.
-- IPv6 packets are intentionally discarded, not tunneled.
-- Route management, DNS control, kill-switch, certificate revocation, device enrollment, robust MTU/PMTUD, anti-replay beyond TLS stream semantics, resource quotas, and production observability are incomplete.
-- Protect CA and client private keys. `ca.key` must not be copied to the server or any client.
-- A compromised endpoint or host can observe plaintext packets before/after the TLS tunnel.
-- A single TCP stream may perform poorly under loss due to TCP-over-TCP head-of-line blocking.
+## Reporting a vulnerability
 
-Do not expose a daemon to the public Internet until the missing routing policy, rate limits, resource controls, certificate lifecycle, platform behavior, and security review are addressed.
+Do not open public issues containing private keys, certificates, connection tokens, server IPs you consider sensitive, or unredacted logs. Contact the maintainer privately through a trusted channel and include a minimal reproducible description. Do not expect a response-time SLA for this prototype.
+
+## Current cryptographic design
+
+- TLS 1.3 only.
+- Explicit hybrid key-exchange group `X25519MLKEM768`; no classical key-exchange fallback is configured.
+- Mutual TLS using a private CA.
+- Certificate signatures are currently Ed25519 (classical). Authentication is therefore not post-quantum even though key exchange is hybrid post-quantum.
+- No custom cipher, KDF or cryptographic primitive is implemented by this project.
+
+## Known gaps
+
+- No independent security review or fuzzing campaign.
+- No online revocation/distribution or safe automated enrollment workflow.
+- Windows routes/DNS/kill-switch and Android certificate import/build verification remain incomplete.
+- Linux networking helpers are prototypes and are not a persistent, audited kill-switch.
+- Traffic may be exposed if endpoints, client keys, CA signing key, host firewall rules, or device permissions are compromised.
+
+Please avoid claiming that the tunnel is "unbreakable", "fully post-quantum", "leak-proof", or ready for production.

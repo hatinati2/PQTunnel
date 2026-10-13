@@ -1,4 +1,4 @@
-module example.com/pqtunnel
+module github.com/hatinati2/PQTunnel
 
 go 1.24.0
 
