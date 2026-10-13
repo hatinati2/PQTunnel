@@ -3,3 +3,10 @@
 /android/.gradle/
 /android/app/build/
 *.key
+*.crt
+*.pem
+*.p12
+*.pfx
+.env
+dist/
+/android/local.properties

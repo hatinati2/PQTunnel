@@ -1,119 +1,101 @@
-# PQTunnel — نمونهٔ اولیهٔ تونل کامل با تبادل کلید پساکوانتومی
+# PQTunnel
 
-**وضعیت: Prototype / آزمایشگاهی، نسخهٔ 0.1.0 — هنوز آمادهٔ استفادهٔ تولیدی نیست.**
+**Version:** 0.2.0-dev · **Status:** experimental prototype, not production-ready.
 
-این پروژه مستقل است و به WatTunnel وابسته نیست. هسته با Go نوشته شده و کانال TCP را در TLS 1.3 قرار می‌دهد. تبادل کلید فقط `X25519MLKEM768` است؛ اگر این گروه قابل مذاکره نباشد اتصال باید شکست بخورد و نباید به گروه کلاسیک تنزل کند. این گروه در Go 1.24+ وجود دارد.
+PQTunnel is an experimental IPv4 layer-3 tunnel using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
 
-## چه چیزی پیاده شده است؟
+> **Security notice:** This repository has not undergone an independent security audit. Do not use it to protect sensitive activity or deploy it on a production server. The key exchange is post-quantum hybrid; certificate signatures are currently Ed25519 (classical), so the entire authentication system is not post-quantum. No cryptographic construction is unbreakable by definition.
 
-- TCP + TLS 1.3 با تبادل کلید هیبریدی اجباری `X25519MLKEM768`.
-- احراز هویت دوطرفه با گواهی‌های کلاینت و سرور (mTLS).
-- ابزار Go برای ایجاد CA و گواهی سرور/کلاینت با کلیدهای Ed25519.
-- فریم‌بندی بسته‌های IP با طول ۴ بایتی، محافظت از طول فریم و اعتبارسنجی بسته‌های IPv4.
-- هستهٔ تونل و reconnect با backoff، بافر محدود و ردکردن بسته‌های IPv6.
-- TUN لینوکس از طریق `/dev/net/tun` و آداپتور Windows مبتنی بر Wintun برای خواندن/نوشتن بسته‌ها.
-- شالودهٔ Android VPN Service؛ مسیر پیش‌فرض IPv4 و IPv6 را وارد VPN می‌کند، اما هستهٔ نسخهٔ اول عمداً IPv6 را drop می‌کند. سوکت اتصال به سرور با `VpnService.protect()` از حلقهٔ تونل خارج می‌شود.
-- تست‌های واحد برای فریم پروتکل و اعتبارسنجی بسته‌های IPv4.
+## Current scope
 
-## محدودیت‌هایی که باید جدی گرفته شوند
+- TLS 1.3 only, with `X25519MLKEM768` explicitly selected and no classical key-exchange fallback.
+- Mutual TLS for client authentication.
+- Per-client IPv4 identity taken from the signed client certificate's Common Name; clients must receive unique addresses in `10.66.0.0/24`.
+- Length-prefixed IPv4 packets, source-address anti-spoofing, bounded active/handshaking connections, bounded packet queue, and reconnect backoff.
+- Server systemd unit and separate, explicit Ubuntu IPv4 forwarding/NAT script.
+- Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
+- GitHub Actions tests/cross-builds and release packaging.
+- Android `VpnService` scaffold and Linux/Windows TUN adapters.
 
-این یک **نمونهٔ اولیهٔ هستهٔ تونل** است، نه یک VPN آمادهٔ نصب روی دستگاه‌ها:
+## Important limitations
 
-1. آداپتور لینوکس/ویندوز بسته‌ها را می‌خواند و می‌نویسد، اما مدیریت خودکار route، DNS، kill-switch و بازگرداندن تنظیمات شبکهٔ سیستم‌عامل هنوز تکمیل نشده است. صرف ساخت TUN به معنی عبور کل ترافیک از آن نیست.
-2. آداپتور Windows به آداپتور و DLL/درایور Wintun که جداگانه و از منبع رسمی تأمین شده باشد نیاز دارد.
-3. سرور هم به IP forwarding، route شبکهٔ تونل و NAT/egress مناسب نیاز دارد. این پروژه آن تنظیمات شبکهٔ میزبان را خودکار انجام نمی‌دهد.
-4. مسیر Android یک شالوده است و به گواهی‌های معتبر در فضای خصوصی اپ نیاز دارد. توقف سرویس، نصب AAR و رفتار روی نسخه‌های مختلف Android باید روی دستگاه واقعی تست شوند.
-5. گواهی‌ها در این نسخه با امضای Ed25519 کلاسیک امضا می‌شوند. **تبادل کلید پساکوانتومی است؛ احراز هویت با امضای پساکوانتومی نیست.** برای امضای پساکوانتومی باید پشتیبانی کامل گواهی/TLS و مدیریت کلید مستقل طراحی و آزمایش شود.
-6. یک جریان TCP واحد خطر TCP-over-TCP و تأخیر head-of-line دارد؛ این عمداً نسخهٔ سادهٔ اول است.
-7. هنوز audit امنیتی، تست فشار/قطع شبکه، بررسی نشت DNS/IPv6، مدیریت لغو گواهی و ابزار رسمی توزیع کلاینت انجام نشده است.
+1. The server network script does not alter UFW or other existing firewall policies. Forwarding may still be blocked when UFW or another firewall is active; read the script and configure the host firewall deliberately.
+2. The Linux client route helper is not a persistent, audited firewall kill-switch. Its IPv4 route remains directed at TUN while the helper state is active, and it blackholes an IPv6 default route while connected, but the route configuration does not automatically survive reboot. Custom processes that bind directly to a physical interface require a firewall policy as well.
+3. Windows TUN uses Wintun, which must be provisioned from the official distribution; automatic Windows route/DNS/kill-switch management is not included in this release.
+4. Android is a scaffold; the AAR must be built locally with `gomobile`, certificate import is not implemented in the UI, and the app has not been tested on physical devices.
+5. The server and Linux-client scripts affect networking when explicitly run. Review them first and keep console/out-of-band access available. They have not been tested on your host.
+6. The single TCP transport can suffer TCP-over-TCP head-of-line blocking.
+7. There is no online certificate revocation service, secure device provisioning flow, or PQ signature/certificate chain yet.
 
-**این پروژه را روی VPS فعلی اجرا نکن؛** ابتدا سورس را روی دستگاه آزمایشگاهی یا محیط توسعه بازبینی کن. طبق تأکیدت هیچ دستور تغییردهنده‌ای برای سرور در این فایل ارائه نشده است.
+## Requirements
 
-## معماری
+- Go 1.24 or later; CI uses Go 1.27.x. Go 1.24 introduced the standardized TLS `X25519MLKEM768` hybrid key exchange. See the [Go 1.24 release notes](https://go.dev/doc/go1.24).
+- Ubuntu/Linux server with systemd, `iproute2`, `nftables`, and `/dev/net/tun` for the supplied deployment scripts.
+- Linux client with `iproute2` and `systemd-resolved` (`resolvectl`) for the supplied client route helper.
+- Windows: official Wintun DLL/driver and a provisioned adapter named `pqtun0`; this project does not distribute the driver.
+- Android build: Android Studio/SDK and NDK plus `gomobile`.
 
-```text
-Android VpnService / Linux TUN / Windows Wintun
-                    |
-          IPv4 packet validation
-                    |
-       length-prefixed packet frames
-                    |
-              TCP connection
-                    |
-     TLS 1.3, strict X25519MLKEM768
-             + mutual TLS
-                    |
-        Server peer-IP router
-                    |
-           Server-side TUN
-                    |
-     OS forwarding / route / NAT (external)
-```
+## Build and test
 
-گواهی کلاینت باید IP ثابت کلاینت را در `Subject.CommonName` داشته باشد؛ سرور همان IP را برای route کردن بسته‌های برگشتی و مقابله با spoofing استفاده می‌کند. هر IP فقط یک نشست هم‌زمان می‌تواند داشته باشد.
-
-## نیازمندی‌ها
-
-- Go **1.24 یا بالاتر** برای استانداردسازی `X25519MLKEM768` در `crypto/tls`.
-- Linux برای اجرای daemon فعلی روی سرور؛ برای باز کردن TUN مجوزهای مناسب سیستم‌عامل لازم است.
-- Windows: آداپتور و `wintun.dll` جداگانه.
-- Android build: Android Studio/SDK/NDK و `gomobile` برای ساخت AAR هسته.
-
-## آزمون محلی
-
-از پوشهٔ پروژه:
-
-```text
+```sh
 go test ./...
+go vet ./...
+go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
 ```
 
-برای بررسی cross-compile آداپتور ویندوز (در محیطی که Go و وابستگی‌ها در دسترس است):
+CI performs tests and cross-compiles Linux amd64/arm64 and Windows amd64. The Android application is not part of the verified CI build.
 
-```text
-GOOS=windows GOARCH=amd64 go build ./cmd/pqtunnel-client
-```
+## PKI workflow
 
-این فرمان‌ها build/test هستند؛ daemon را راه نمی‌اندازند و route یا TUN سیستم را تغییر نمی‌دهند. در محیطی که Go از نصب خودکار toolchain پشتیبانی کند، Go ممکن است ابزار نسخهٔ موردنیاز را دریافت کند.
+Create the CA and server certificate in a trusted development environment, not on the public server:
 
-## ایجاد PKI در محیط توسعهٔ محلی
-
-این دستورات را فقط روی سیستم توسعه اجرا کن، نه روی VPS. آدرس نمونه را با نام واقعی‌ای که در گواهی سرور استفاده می‌شود جایگزین کن:
-
-```text
+```sh
 go run ./cmd/pqtunnel-pki init --out ./pki --server-name vpn.example.com
 go run ./cmd/pqtunnel-pki issue-client --out ./pki --ip 10.66.0.2
 ```
 
-برای هر دستگاه یک IP یکتا صادر کن. مثلاً دستگاه بعدی باید IP دیگری داشته باشد. ابزار نام فایل کلاینت را به شکل `client-10_66_0_2.crt` و `client-10_66_0_2.key` می‌سازد.
+Issue a separate client certificate for each device with a unique IP address. Never copy `ca.key` to the server or any client. The server needs only `server.crt`, `server.key`, and `ca.crt`; each client needs `ca.crt` plus its own client certificate and private key. Transfer private keys over a separate trusted channel.
 
-- `ca.key`: کلید خصوصی CA؛ آفلاین/خصوصی نگه‌دار، **هرگز** روی سرور یا کلاینت کپی نکن.
-- سمت سرور: `server.crt`، `server.key` و `ca.crt` (CA برای اعتبارسنجی گواهی‌های کلاینت).
-- سمت کلاینت: گواهی و کلید خصوصی همان دستگاه و `ca.crt`.
-- کلید خصوصی کلاینت را از طریق کانال امن جداگانه تحویل بده. این پروژه هنوز ابزار provisioning امن ندارد.
+The current certificate signatures use Ed25519. The `X25519MLKEM768` KEM does not make these signatures post-quantum.
 
-نمونهٔ تنظیمات Android در `android/app/src/main/res/values/strings.xml` صرفاً placeholder است و قبل از build خصوصی باید جایگزین شود. گواهی‌های کلاینت برای اپ Android باید در مسیر خصوصی `files/pki` اپ قرار بگیرند، با نام‌های `ca.crt`، `client.crt` و `client.key`. اپ در این مرحله صفحهٔ import گواهی ندارد.
+## Ubuntu server packaging
 
-## رمزنگاری و مدل تهدید
+The deployment assets are intentionally split into installation and network setup so that installing the service does not silently modify firewall/NAT policy.
 
-- **محرمانگی نشست:** TLS 1.3 و گروه هیبریدی `X25519MLKEM768`، با fallback کلاسیک غیرفعال.
-- **احراز هویت:** گواهی کلاینت و سرور از CA خصوصی؛ امضای گواهی فعلاً Ed25519 کلاسیک است.
-- **رمز ترافیک:** cipher suite توسط `crypto/tls` استاندارد انتخاب می‌شود؛ رمزنگاری اختصاصی یا دوباره‌رمزکردن دلخواه اضافه نشده است.
-- **IPv6:** عمداً پشتیبانی نمی‌شود و بسته‌ها drop می‌شوند. روی Android مسیر `::/0` به VPN فرستاده می‌شود؛ روی Desktop تا تکمیل مدیریت route/kill-switch هیچ تضمینی دربارهٔ نشت IPv6 وجود ندارد.
-- **DNS:** Android از DNS تنظیم‌شده در VPN استفاده می‌کند؛ روی Linux/Windows مدیریت DNS کامل نشده است.
-- **امنیت مطلق:** هیچ الگوریتمی تضمین «غیرقابل شکستن» نمی‌دهد؛ اشتباه پیاده‌سازی، سرقت endpoint، کلیدهای فاش‌شده و حملات فعال خارج از صرفاً شکستن KEM هستند.
+1. Ensure the server PKI directory contains `server.crt`, `server.key`, and `ca.crt` only. Do not place `ca.key` on the server.
+2. Review `scripts/install-server.sh` and `deploy/systemd/pqtunneld.service` before use. The installer builds the daemon with Go 1.24+ and installs the binary, certificates, and systemd unit. By default it does not start/enable the service. The optional `--enable` flag starts it.
+3. `scripts/server-network.sh` supports `status`, `apply --wan-if <actual-uplink-interface>`, and `rollback`. It manages only the dedicated `ip pqtunnel` nftables table and a dedicated sysctl file. It does not update UFW, open TCP port 8443, or change unrelated firewall rules. Review the script and take a backup before applying network changes.
+4. Open the TCP listening port using the host provider firewall and host firewall policy appropriate for your environment. Do not assume the network helper does this.
 
-## ساخت هسته برای Android
+Do not run server network scripts on a remote host without console/out-of-band recovery access. The project maintainer has not tested these scripts against your existing firewall, provider firewall, or routing rules.
 
-در پوشهٔ ریشهٔ این پروژه، پس از آماده‌سازی `gomobile` و SDK/NDK، فایل `android/app/libs/pqtunnel-mobile.aar` را با binding از پکیج `mobile` تولید کن: `gomobile bind -target=android -javapkg=org.pqtunnel -o android/app/libs/pqtunnel-mobile.aar ./mobile`. این بخش هنوز در این محیط روی Android SDK/NDK build نشده و mapping نهایی نام‌های Java باید هنگام تولید AAR با source Kotlin تطبیق داده شود؛ به همین دلیل اپ Android را build-verified نمی‌نامیم.
+## Linux client route helper
 
-## درخت پروژه
+Copy `scripts/client.env.example` to `/etc/pqtunnel/client.env`, set `PQTUNNEL_SERVER_IP` to the server's **literal IPv4 address**, and select a unique client address. Review `scripts/linux-client-network.sh` first.
 
-- `cmd/pqtunneld` — TCP/TLS server + packet router
-- `cmd/pqtunnel-client` — client core CLI
-- `cmd/pqtunnel-pki` — ایجاد CA و گواهی‌های آزمایشی
-- `internal/tunnel` — TLS و reconnect/packet pumps
-- `internal/tun` — TUN Linux، Wintun Windows، API دستگاه از FD
-- `internal/protocol` — frame protocol
-- `internal/packet` — اعتبارسنجی IPv4
-- `mobile` — bridge برای `gomobile`
-- `android` — اپ اولیهٔ Android VPN Service
+- `up` installs a physical route for the server endpoint before directing the IPv4 default route through TUN. It directs systemd-resolved's catch-all DNS domain to the TUN DNS server and blackholes an IPv6 default route if one is present.
+- Start `pqtunnel-client` with matching endpoint, certificate, key, server name and local IP values.
+- Stop the client process before using `down`. `down` deliberately restores ordinary networking.
+
+This helper is a prototype, not a guarantee against every possible DNS/IPv6 leak or against traffic before configuration is applied at boot. Test with a non-sensitive client first.
+
+## Windows and Android
+
+The Windows adapter expects a Wintun adapter named `pqtun0` to exist and be available; manual route/DNS/kill-switch management is not yet bundled. See the upstream [Wintun project](https://git.zx2c4.com/wintun).
+
+For Android, the initial AAR command is available through `make android-aar`, but first install/configure `gomobile` and Android SDK/NDK. Place `ca.crt`, `client.crt`, and `client.key` in the app's private `files/pki` directory using a secure development workflow. Do not commit those files. The UI does not yet provide an import flow.
+
+## Release assets
+
+Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build Linux amd64/arm64 and Windows amd64 command-line artifacts. This workflow does not imply that the complete VPN client is production-ready.
+
+## Documentation
+
+- [فارسی](README.fa.md)
+- [Security notes](SECURITY.md)
+- [Protocol notes](docs/PROTOCOL.md)
+- [Pre-release checklist](docs/RELEASE-CHECKLIST.md)
+
+## License
+
+MIT. See [LICENSE](LICENSE).
