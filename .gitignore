@@ -1,0 +1,5 @@
+/pki/
+/android/app/libs/*.aar
+/android/.gradle/
+/android/app/build/
+*.key
