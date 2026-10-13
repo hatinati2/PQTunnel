@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">PQTunnel</string>
+    <!-- Replace these example values in a private build before packaging. -->
+    <string name="server_address">203.0.113.10:8443</string>
+    <string name="server_name">vpn.example.com</string>
+    <string name="client_ip">10.66.0.2</string>
+</resources>

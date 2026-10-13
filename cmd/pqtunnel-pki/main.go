@@ -1,0 +1,186 @@
+package main
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"flag"
+	"fmt"
+	"math/big"
+	"net"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+	}
+	switch os.Args[1] {
+	case "init":
+		initCA(os.Args[2:])
+	case "issue-client":
+		issueClient(os.Args[2:])
+	default:
+		usage()
+	}
+}
+
+func initCA(args []string) {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	out := fs.String("out", "./pki", "output directory; keep this directory private")
+	host := fs.String("server-name", "", "public DNS name or IP used for the server certificate SAN")
+	_ = fs.Parse(args)
+	if *host == "" {
+		die("--server-name is required")
+	}
+	if err := os.MkdirAll(*out, 0700); err != nil {
+		die(err.Error())
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		die(err.Error())
+	}
+	now := time.Now()
+	caTpl := &x509.Certificate{SerialNumber: serial(), Subject: pkix.Name{CommonName: "PQTunnel local CA"}, NotBefore: now.Add(-5 * time.Minute), NotAfter: now.AddDate(10, 0, 0), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTpl, caTpl, pub, priv)
+	if err != nil {
+		die(err.Error())
+	}
+	if err := writePEM(filepath.Join(*out, "ca.crt"), "CERTIFICATE", caDER, 0644); err != nil {
+		die(err.Error())
+	}
+	caKeyDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		die(err.Error())
+	}
+	if err := writePEM(filepath.Join(*out, "ca.key"), "PRIVATE KEY", caKeyDER, 0600); err != nil {
+		die(err.Error())
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		die(err.Error())
+	}
+	issueServer(*out, *host, caCert, priv)
+	fmt.Printf("Created CA and server certificate in %s. Keep ca.key offline; never copy it to the server or clients.\n", *out)
+}
+
+func issueServer(out, host string, ca *x509.Certificate, caKey ed25519.PrivateKey) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		die(err.Error())
+	}
+	tpl := &x509.Certificate{SerialNumber: serial(), Subject: pkix.Name{CommonName: host}, NotBefore: time.Now().Add(-5 * time.Minute), NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if ip.Is4() {
+			tpl.IPAddresses = []net.IP{ip.AsSlice()}
+		} else {
+			tpl.IPAddresses = []net.IP{ip.AsSlice()}
+		}
+	} else {
+		tpl.DNSNames = []string{host}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, ca, pub, caKey)
+	if err != nil {
+		die(err.Error())
+	}
+	if err := writePEM(filepath.Join(out, "server.crt"), "CERTIFICATE", der, 0644); err != nil {
+		die(err.Error())
+	}
+	writePrivateKey(filepath.Join(out, "server.key"), priv)
+}
+
+func issueClient(args []string) {
+	fs := flag.NewFlagSet("issue-client", flag.ExitOnError)
+	out := fs.String("out", "./pki", "existing PKI directory")
+	ipText := fs.String("ip", "", "unique client IPv4 address, also used as certificate CN")
+	_ = fs.Parse(args)
+	ip, err := netip.ParseAddr(*ipText)
+	if err != nil || !ip.Is4() {
+		die("--ip must be a valid IPv4 address")
+	}
+	caPEM, err := os.ReadFile(filepath.Join(*out, "ca.crt"))
+	if err != nil {
+		die(err.Error())
+	}
+	block, _ := pem.Decode(caPEM)
+	if block == nil {
+		die("invalid ca.crt")
+	}
+	ca, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		die(err.Error())
+	}
+	keyPEM, err := os.ReadFile(filepath.Join(*out, "ca.key"))
+	if err != nil {
+		die(err.Error())
+	}
+	kb, _ := pem.Decode(keyPEM)
+	if kb == nil {
+		die("invalid ca.key")
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(kb.Bytes)
+	if err != nil {
+		die(err.Error())
+	}
+	caKey, ok := parsed.(ed25519.PrivateKey)
+	if !ok {
+		die("ca.key is not an Ed25519 key")
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		die(err.Error())
+	}
+	tpl := &x509.Certificate{SerialNumber: serial(), Subject: pkix.Name{CommonName: ip.String(), OrganizationalUnit: []string{"PQTunnel client"}}, NotBefore: time.Now().Add(-5 * time.Minute), NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, ca, pub, caKey)
+	if err != nil {
+		die(err.Error())
+	}
+	stem := "client-" + strings.ReplaceAll(ip.String(), ".", "_")
+	if err := writePEM(filepath.Join(*out, stem+".crt"), "CERTIFICATE", der, 0644); err != nil {
+		die(err.Error())
+	}
+	writePrivateKey(filepath.Join(*out, stem+".key"), priv)
+	fmt.Printf("Issued client %s. Install only %s.crt, %s.key and ca.crt on that device.\n", ip, stem, stem)
+}
+
+func writePrivateKey(path string, key ed25519.PrivateKey) {
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		die(err.Error())
+	}
+	if err := writePEM(path, "PRIVATE KEY", der, 0600); err != nil {
+		die(err.Error())
+	}
+}
+func writePEM(path, typ string, der []byte, mode os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if err := pem.Encode(f, &pem.Block{Type: typ, Bytes: der}); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+func serial() *big.Int {
+	n, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
+	if err != nil {
+		die(err.Error())
+	}
+	return n
+}
+func die(s string) { fmt.Fprintln(os.Stderr, "pqtunnel-pki:", s); os.Exit(1) }
+func usage() {
+	die("usage: pqtunnel-pki init --server-name vpn.example.com --out ./pki | issue-client --ip 10.66.0.2 --out ./pki")
+}
