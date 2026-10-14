@@ -86,6 +86,10 @@ read_sysctl net.ipv6.conf.all.forwarding ipv6_forwarding
 read_sysctl net.ipv4.conf.all.rp_filter ipv4_rp_filter_all
 read_sysctl net.ipv4.conf.default.rp_filter ipv4_rp_filter_default
 
+NOTRACK_FOUND=0
+MARK_RULE_FOUND=0
+NFT_RULESET=
+
 if have nft; then
   if NFT_TABLES=$(nft list tables 2>/dev/null); then
     if [[ -n "$NFT_TABLES" ]]; then
@@ -94,6 +98,13 @@ if have nft; then
       if printf '%s\n' "$NFT_TABLES" | grep -Eq '^table inet (pqtunnel_selective|pqtunnel_gateway)$'; then report WARN 'A PQTunnel-named nftables table already exists.'; fi
     else report PASS 'nftables query succeeded and reported no tables.'; fi
   else report WARN 'nftables query failed; state is unknown (possibly permissions or missing kernel support).'; fi
+
+  if NFT_RULESET=$(nft list ruleset 2>/dev/null); then
+    if grep -Eiq '(^|[[:space:]])notrack([[:space:]]|$)' <<< "$NFT_RULESET"; then NOTRACK_FOUND=1; fi
+    if grep -Eiq '(meta[[:space:]]+mark[[:space:]]+set|ct[[:space:]]+mark[[:space:]]+set)' <<< "$NFT_RULESET"; then MARK_RULE_FOUND=1; fi
+  else
+    report WARN 'nftables ruleset could not be read; NOTRACK and native packet-mark checks may be incomplete.'
+  fi
 else report WARN 'nft unavailable; nftables state was not checked.'; fi
 
 if have ufw; then
@@ -105,8 +116,24 @@ else report WARN 'ufw unavailable; UFW status could not be checked.'; fi
 if have iptables-save; then
   if IPTABLES_OUTPUT=$(iptables-save 2>/dev/null); then
     if grep -qE '^-A[[:space:]]' <<< "$IPTABLES_OUTPUT"; then report WARN 'Existing iptables rules detected; review before any apply.'; else report PASS 'iptables-save query succeeded and reported no -A rules.'; fi
+    if grep -Eiq -- '(-j[[:space:]]+NOTRACK|--notrack)' <<< "$IPTABLES_OUTPUT"; then NOTRACK_FOUND=1; fi
+    if grep -Eiq -- '(-j[[:space:]]+(MARK|CONNMARK)|--set-mark|--set-xmark|--restore-mark|--save-mark)' <<< "$IPTABLES_OUTPUT"; then MARK_RULE_FOUND=1; fi
   else report WARN 'iptables-save query failed; legacy firewall state is unknown.'; fi
-else report WARN 'iptables-save unavailable; legacy iptables rules were not checked.'; fi
+else report WARN 'iptables-save unavailable; legacy firewall rules were not checked.'; fi
+
+if have ip6tables-save; then
+  if IPT6TABLES_OUTPUT=$(ip6tables-save 2>/dev/null); then
+    if grep -Eiq -- '(-j[[:space:]]+NOTRACK|--notrack)' <<< "$IPT6TABLES_OUTPUT"; then NOTRACK_FOUND=1; fi
+    if grep -Eiq -- '(-j[[:space:]]+(MARK|CONNMARK)|--set-mark|--set-xmark|--restore-mark|--save-mark)' <<< "$IPT6TABLES_OUTPUT"; then MARK_RULE_FOUND=1; fi
+  else report WARN 'ip6tables-save query failed; legacy IPv6 firewall rule inspection may be incomplete.'; fi
+fi
+
+if (( NOTRACK_FOUND )); then
+  report WARN 'Existing raw-table NOTRACK rules detected; matching flows bypass conntrack and may break PQTunnel SNAT/DNAT. Review destination and source-port overlap before any deployment.'
+fi
+if (( MARK_RULE_FOUND )); then
+  report WARN 'Existing packet-marking rules detected; compare mark values/masks and policy-routing priorities before any deployment.'
+fi
 
 check_file() {
   path=$1; label=$2; private=0
