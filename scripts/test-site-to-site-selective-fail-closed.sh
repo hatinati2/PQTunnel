@@ -154,7 +154,7 @@ mkdir -m 0700 "$WRAPPER_DIR"
 cat >"$WRAPPER_DIR/nft" <<'WRAPPER'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-case "\${1:-}" in
+case "$1" in
   -c) exec "$PQTUNNEL_REAL_NFT" "$@" ;;
   -f) echo 'injected nftables apply failure for rollback test' >&2; exit 42 ;;
   *) exec "$PQTUNNEL_REAL_NFT" "$@" ;;
