@@ -79,7 +79,7 @@ A one-line remote preflight is also available; it defaults to checks only and do
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | bash
 ```
 
-The bootstrap can install the gateway daemon when the operator explicitly selects its `install-server` mode and supplies an already-staged server PKI directory plus a reviewed site-to-site EnvironmentFile. Its `--start` option starts only `pqtunneld`; it does **not** apply routes, firewall/NAT, forwarding, or provider firewall rules. It refuses an existing server installation, does not install operating-system packages, and is not a full two-VPS deployment tool. Review the script before use and keep recovery console access available. No installation or network apply is run by CI against a real VPS.
+The same bootstrap also has guarded `install-server` and `install-client` modes. Both require certificates and reviewed role-specific environment files to be staged first; the client build requires Go 1.24+ already installed. `install-server` stages the listener and network-helper configuration; `--start` starts the daemon, and the additional `--apply-network` flag is required to explicitly apply gateway routes/NAT. `install-client` stages the dialer service; its `--start` option activates the systemd unit, which applies the dialer network helper and invokes rollback after the service stops. Both modes refuse existing artifacts and do not install operating-system packages. Example settings use documentation-only IP prefixes and must be replaced. These helpers are not a substitute for a reviewed recovery plan and have not been run on your VPS. CI exercises them only in the disposable GitHub runner.
 
 ## Ubuntu server packaging
 
