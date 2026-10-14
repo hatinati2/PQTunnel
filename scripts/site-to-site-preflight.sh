@@ -62,6 +62,24 @@ if have ip; then
   printf 'default_route_count_v4=%s default_route_count_v6=%s default_route_interfaces=%s\n' "$DEFAULT4" "$DEFAULT6" "${WAN_NAMES:-none}"
   if [[ "$DEFAULT4" -gt 0 ]]; then report PASS 'At least one IPv4 default route exists.'; else report WARN 'No IPv4 default route found.'; fi
   if ip link show dev pqtun0 >/dev/null 2>&1; then report WARN 'pqtun0 already exists; do not assume PQTunnel owns it.'; else report PASS 'pqtun0 is not currently present.'; fi
+
+  # A different TUN/TAP device can be owned by another active VPN/tunnel.
+  # Record its presence without assuming the name or ownership of any device.
+  if TUNTAP_OUTPUT=$(ip tuntap show 2>/dev/null); then
+    TUNTAP_NAMES=$(printf '%s\n' "$TUNTAP_OUTPUT" | awk -F: '
+      NF > 1 {
+        name=$1
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+        if (name != "" && name != "pqtun0") print name
+      }' | sort -u | paste -sd, -)
+    if [[ -n "$TUNTAP_NAMES" ]]; then
+      TUNTAP_COUNT=$(printf '%s\n' "$TUNTAP_NAMES" | awk -F, '{print NF}')
+      report WARN "Other pre-existing TUN/TAP interface(s) detected (count=$TUNTAP_COUNT): $TUNTAP_NAMES; review ownership before any network apply."
+    fi
+  else
+    report WARN 'Could not query existing TUN/TAP interfaces; interface ownership review is incomplete.'
+  fi
+
   if ip -4 rule show 2>/dev/null | grep -Eq '^(10518|10519):'; then report WARN 'Policy-routing priority 10518 or 10519 is occupied.'; else report PASS 'Policy-routing priorities 10518/10519 appear free.'; fi
   for table in 518 519; do
     R4=$(ip -4 route show table "$table" 2>/dev/null | awk 'END{print NR+0}')
