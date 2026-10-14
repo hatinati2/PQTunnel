@@ -1,6 +1,8 @@
 package tunnel
 
 import (
+	"context"
+	"errors"
 	"net/netip"
 	"testing"
 
@@ -70,5 +72,24 @@ func TestPeerPacketAllowedChecksBothSourceAndDestination(t *testing.T) {
 				t.Fatalf("peerPacketAllowed(%s, %s) = %v, want %v", tt.src, tt.dst, got, tt.want)
 			}
 		})
+	}
+}
+
+
+// failingReadDevice is used to verify that an unexpected TUN read failure is
+// reported to Serve rather than leaving a listener running with one-way traffic.
+type failingReadDevice struct {
+	err error
+}
+
+func (d failingReadDevice) Read([]byte) (int, error) { return 0, d.err }
+func (d failingReadDevice) Write([]byte) (int, error) { return 0, nil }
+func (d failingReadDevice) Close() error { return nil }
+
+func TestRoutePacketsReturnsTUNReadError(t *testing.T) {
+	want := errors.New("synthetic TUN read failure")
+	s := &Server{Device: failingReadDevice{err: want}}
+	if got := s.routePackets(context.Background()); !errors.Is(got, want) {
+		t.Fatalf("routePackets error = %v, want wrapped %v", got, want)
 	}
 }
