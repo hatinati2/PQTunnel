@@ -111,3 +111,5 @@ jobs:
         run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-site-to-site-netns.sh
       - name: Test selective TCP/UDP port forwarding over dual-stack TUN
         run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-selective-forward-netns.sh
+      - name: Test selective TCP/UDP egress over dual-stack TUN
+        run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-selective-egress-netns.sh
