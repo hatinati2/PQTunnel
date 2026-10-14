@@ -91,7 +91,22 @@ if have nft; then
     if [[ -n "$NFT_TABLES" ]]; then
       NFT_COUNT=$(printf '%s\n' "$NFT_TABLES" | grep -c '^table ' || true)
       report WARN "Existing nftables tables detected (count=$NFT_COUNT); review before any apply."
-      if printf '%s\n' "$NFT_TABLES" | grep -Eq '^table inet (pqtunnel_selective|pqtunnel_gateway)
+      if printf '%s\n' "$NFT_TABLES" | grep -Eq '^table inet (pqtunnel_selective|pqtunnel_gateway)$'; then report WARN 'A PQTunnel-named nftables table already exists.'; fi
+    else report PASS 'nftables query succeeded and reported no tables.'; fi
+  else report WARN 'nftables query failed; state is unknown (possibly permissions or missing kernel support).'; fi
+else report WARN 'nft unavailable; nftables state was not checked.'; fi
+
+if have ufw; then
+  if UFW_OUTPUT=$(ufw status 2>/dev/null); then
+    UFW_STATUS=$(printf '%s\n' "$UFW_OUTPUT" | awk 'NR==1{print $2}')
+    if [[ "$UFW_STATUS" == active ]]; then report WARN 'UFW is active; current network helper deliberately refuses this host.'; elif [[ "$UFW_STATUS" == inactive ]]; then report PASS 'UFW reports inactive.'; else report WARN 'UFW status output was not understood; state is unknown.'; fi
+  else report WARN 'UFW status query failed; firewall state is unknown.'; fi
+else report WARN 'ufw unavailable; UFW status could not be checked.'; fi
+if have iptables-save; then
+  if IPTABLES_OUTPUT=$(iptables-save 2>/dev/null); then
+    if grep -qE '^-A[[:space:]]' <<< "$IPTABLES_OUTPUT"; then report WARN 'Existing iptables rules detected; review before any apply.'; else report PASS 'iptables-save query succeeded and reported no -A rules.'; fi
+  else report WARN 'iptables-save query failed; legacy firewall state is unknown.'; fi
+else report WARN 'iptables-save unavailable; legacy iptables rules were not checked.'; fi
 
 check_file() {
   path=$1; label=$2; private=0
@@ -183,92 +198,6 @@ if [[ "$ROLE" == dialer || "$ROLE" == both ]]; then
   if have openssl; then
     check_certificate_bundle /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/pqtunnel/pki/ca.crt sslclient 'Client/peer'
     check_ca_certificate /etc/pqtunnel/pki/ca.crt 'Server'
-  fi
-fi
-
-if [[ -n "$ENDPOINT" ]]; then
-  printf '%s\n' '--- optional endpoint route check ---'
-  candidate=
-  if [[ "$ENDPOINT" =~ ^[0-9.]+$ || "$ENDPOINT" =~ ^[0-9a-fA-F:]+$ ]]; then
-    candidate=$ENDPOINT
-  elif have getent; then
-    candidate=$(getent ahosts "$ENDPOINT" 2>/dev/null | awk 'NR==1{print $1}')
-  fi
-  if [[ -z "$candidate" ]]; then report WARN 'Endpoint did not resolve to an IP; route check skipped.'; elif ip route get "$candidate" >/dev/null 2>&1 || ip -6 route get "$candidate" >/dev/null 2>&1; then report PASS 'An existing route to an endpoint address is present.'; else report WARN 'No route could be confirmed to the endpoint.'; fi
-fi
-
-printf '\nSUMMARY pass=%s warn=%s fail=%s\n' "$PASS" "$WARN" "$FAIL"
-printf '%s\n' 'READ-ONLY GUARANTEE: no files were created/deleted; no routes, sysctls, firewall state, or services were changed.'
-printf '%s\n' 'Warnings are not permission to apply the network helper. Review all findings and retain console/out-of-band recovery.'
-exit $(( FAIL > 0 ? 1 : 0 ))
-; then report WARN 'A PQTunnel-named nftables table already exists.'; fi
-    else report PASS 'nftables query succeeded and reported no tables.'; fi
-  else report WARN 'nftables query failed; state is unknown (possibly permissions or missing kernel support).'; fi
-else report WARN 'nft unavailable; nftables state was not checked.'; fi
-
-if have ufw; then
-  if UFW_OUTPUT=$(ufw status 2>/dev/null); then
-    UFW_STATUS=$(printf '%s\n' "$UFW_OUTPUT" | awk 'NR==1{print $2}')
-    if [[ "$UFW_STATUS" == active ]]; then report WARN 'UFW is active; current network helper deliberately refuses this host.'; elif [[ "$UFW_STATUS" == inactive ]]; then report PASS 'UFW reports inactive.'; else report WARN 'UFW status output was not understood; state is unknown.'; fi
-  else report WARN 'UFW status query failed; firewall state is unknown.'; fi
-else report WARN 'ufw unavailable; UFW status could not be checked.'; fi
-if have iptables-save; then
-  if IPTABLES_OUTPUT=$(iptables-save 2>/dev/null); then
-    if grep -qE '^-A[[:space:]]' <<< "$IPTABLES_OUTPUT"; then report WARN 'Existing iptables rules detected; review before any apply.'; else report PASS 'iptables-save query succeeded and reported no -A rules.'; fi
-  else report WARN 'iptables-save query failed; legacy firewall state is unknown.'; fi
-else report WARN 'iptables-save unavailable; legacy iptables rules were not checked.'; fi
-
-check_file() {
-  path=$1; label=$2; private=0
-  if [[ $# -ge 3 ]]; then private=$3; fi
-  if [[ ! -e "$path" ]]; then report WARN "$label not found: $path"; return; fi
-  if [[ ! -f "$path" ]]; then report WARN "$label is not a regular file: $path"; return; fi
-  if have stat; then
-    owner=$(stat -c '%u' "$path" 2>/dev/null || printf '?')
-    mode=$(stat -c '%a' "$path" 2>/dev/null || printf '?')
-    printf 'file=%s exists=yes owner_uid=%s mode=%s\n' "$path" "$owner" "$mode"
-    if [[ "$private" == 1 && "$mode" =~ ^[0-7]+$ ]]; then
-      perm=$((8#$mode))
-      if (( (perm & 0077) == 0 )); then report PASS "$label permissions restrict access to owner."; else report WARN "$label permissions are broader than 0600."; fi
-    fi
-    if [[ "$owner" != 0 ]]; then report WARN "$label is not owned by root."; fi
-  fi
-}
-
-if [[ "$ROLE" == gateway || "$ROLE" == both ]]; then
-  printf '%s\n' '--- gateway/listener checks ---'
-  check_file /usr/local/sbin/pqtunneld 'pqtunneld binary'
-  check_file /etc/default/pqtunneld 'pqtunneld environment file'
-  check_file /etc/pqtunnel/pki/server.crt 'server certificate'
-  check_file /etc/pqtunnel/pki/server.key 'server private key' 1
-  check_file /etc/pqtunnel/pki/ca.crt 'peer CA certificate'
-  if have systemctl; then
-    if systemctl is-active --quiet pqtunneld 2>/dev/null; then report WARN 'pqtunneld service is active.'; else report PASS 'pqtunneld service is not active.'; fi
-    if systemctl is-enabled --quiet pqtunneld 2>/dev/null; then report WARN 'pqtunneld is enabled at boot.'; else report PASS 'pqtunneld is not enabled at boot.'; fi
-  fi
-  if have openssl && [[ -s /etc/pqtunnel/pki/server.crt ]]; then
-    END_DATE=$(openssl x509 -in /etc/pqtunnel/pki/server.crt -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
-    if [[ -n "$END_DATE" ]]; then
-      printf 'server_certificate_not_after=%s\n' "$END_DATE"
-      if openssl x509 -in /etc/pqtunnel/pki/server.crt -checkend 0 -noout >/dev/null 2>&1; then report PASS 'Server certificate is not expired.'; else report FAIL 'Server certificate has expired or could not be validated.'; fi
-    fi
-  fi
-fi
-
-if [[ "$ROLE" == dialer || "$ROLE" == both ]]; then
-  printf '%s\n' '--- dialer/client checks ---'
-  check_file /usr/local/bin/pqtunnel-client 'pqtunnel-client binary'
-  check_file /etc/pqtunnel/site-to-site.env 'selective network config'
-  check_file /etc/pqtunnel/pki/client.crt 'client/peer certificate'
-  check_file /etc/pqtunnel/pki/client.key 'client/peer private key' 1
-  check_file /etc/pqtunnel/pki/ca.crt 'server CA certificate'
-  if have pgrep; then
-    CLIENT_COUNT=$(pgrep -x pqtunnel-client 2>/dev/null | awk 'END{print NR+0}')
-    printf 'pqtunnel_client_process_count=%s\n' "$CLIENT_COUNT"
-    if [[ "$CLIENT_COUNT" -gt 0 ]]; then report WARN 'pqtunnel-client process is running.'; else report PASS 'No pqtunnel-client process is running.'; fi
-  fi
-  if have systemctl; then
-    if systemctl is-active --quiet pqtunnel-client 2>/dev/null; then report WARN 'pqtunnel-client systemd unit is active.'; else report PASS 'pqtunnel-client systemd unit is not active.'; fi
   fi
 fi
 
