@@ -6,7 +6,7 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT"
 [[ $EUID -eq 0 ]] || { echo 'FAIL: run this test with sudo/root on an isolated Linux host' >&2; exit 2; }
-for cmd in ip ss nft tcpdump python3 go; do
+for cmd in ip ss nft tcpdump python3 go ping; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "FAIL: required command missing: $cmd" >&2; exit 2; }
 done
 [[ -c /dev/net/tun ]] || { echo 'FAIL: /dev/net/tun is unavailable' >&2; exit 2; }
@@ -384,6 +384,25 @@ ip netns exec "$IR_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)
 ip netns exec "$DE_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)' >"$DE_TUN_LOG" 2>&1 & DE_TUN_PID=$!
 ip netns exec "$IR_NS" tcpdump -n -l -i "$IR_IF" '(tcp or udp or icmp6)' >"$IR_WAN_LOG" 2>&1 & IR_WAN_PID=$!
 sleep 0.1
+
+# Wait for the newly established peer session to complete a basic packet
+# round trip before starting conntrack/NAT-sensitive TCP port-forward tests.
+# This catches a TCP-established-but-not-yet-ready TLS peer during startup.
+ping_until_success() {
+  local family="$1" target="$2" i
+  for i in $(seq 1 10); do
+    if [[ "$family" == 4 ]]; then
+      ip netns exec "$IR_NS" ping -n -c 1 -W 1 -I pqtun0 "$target" >/dev/null 2>&1 && return 0
+    else
+      ip netns exec "$IR_NS" ping -6 -n -c 1 -W 1 -I pqtun0 "$target" >/dev/null 2>&1 && return 0
+    fi
+    sleep 0.2
+  done
+  echo "FAIL: $family site-to-site health check to $target failed before port-forward test" >&2
+  return 1
+}
+ping_until_success 4 10.10.0.1
+ping_until_success 6 fd10:10::1
 
 ip netns exec "$VIS_NS" python3 - <<'PY'
 import socket
