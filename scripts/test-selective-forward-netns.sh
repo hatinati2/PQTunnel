@@ -307,6 +307,15 @@ ip netns exec "$DE_NS" python3 -u "$LAB_DIR/udp6.py" >"$UDP6_LOG" 2>&1 & UDP6_PI
 ip netns exec "$DE_NS" python3 -u "$LAB_DIR/tcp-health4.py" >"$TCP_HEALTH4_LOG" 2>&1 & TCP_HEALTH4_PID=$!
 ip netns exec "$DE_NS" python3 -u "$LAB_DIR/tcp-health6.py" >"$TCP_HEALTH6_LOG" 2>&1 & TCP_HEALTH6_PID=$!
 
+# Start with a fully provisioned TUN in this disposable gateway namespace. The
+# server opens the persistent device after it already has addresses and is UP,
+# avoiding a startup race between its packet reader and test interface setup.
+ip -n "$DE_NS" tuntap add dev pqtun0 mode tun
+ip -n "$DE_NS" addr add 10.66.0.1/24 dev pqtun0
+ip -n "$DE_NS" -6 addr add fd42:7061:7475::1/64 dev pqtun0
+ip -n "$DE_NS" link set pqtun0 up
+wait_for_ipv6_addr_ready "$DE_NS" pqtun0 "fd42:7061:7475::1"
+
 ip netns exec "$DE_NS" env PQTUNNEL_TRACE_PACKET_FLOW=1 "$PQTUNNEL_BIN_DIR/pqtunneld" \
   --listen 198.18.0.1:8443 \
   --tls-cert "$LAB_DIR/server-pki/server.crt" \
@@ -328,10 +337,6 @@ wait_for_tun() {
   return 1
 }
 wait_for_tun || { echo 'FAIL: Germany gateway TUN did not appear' >&2; exit 1; }
-ip -n "$DE_NS" addr add 10.66.0.1/24 dev pqtun0
-ip -n "$DE_NS" -6 addr add fd42:7061:7475::1/64 dev pqtun0
-ip -n "$DE_NS" link set pqtun0 up
-wait_for_ipv6_addr_ready "$DE_NS" pqtun0 "fd42:7061:7475::1"
 
 wait_for_listener() {
   local i
