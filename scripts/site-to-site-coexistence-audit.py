@@ -9,7 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-CATEGORIES = ("notrack", "packet_mark", "nat", "drop_reject", "accept", "xt_fallback", "xt_opaque", "xt_match", "xt_target", "xt_watcher", "xt_type_unknown", "xt_target_other")
+CATEGORIES = ("notrack", "packet_mark", "nat", "drop_reject", "accept", "xt_fallback", "xt_opaque", "xt_match", "xt_target", "xt_watcher", "xt_type_unknown", "xt_ct_target", "xt_target_other")
 
 def walk_keys(value: Any):
     if isinstance(value, dict):
@@ -61,8 +61,11 @@ def expr_categories(expr: Any) -> set[str]:
     if any(not opaque and xt_type not in valid_types
            for xt_type, _, opaque in xt_entries):
         out.add("xt_type_unknown")
+    if any(not opaque and xt_type == "target" and name == "ct"
+           for xt_type, name, opaque in xt_entries):
+        out.add("xt_ct_target")
     recognized_targets = {
-        "notrack", "mark", "connmark", "dnat", "snat", "masquerade",
+        "notrack", "ct", "mark", "connmark", "dnat", "snat", "masquerade",
         "redirect", "drop", "reject", "accept",
     }
     if any(name not in recognized_targets for name in xt_targets):
@@ -112,6 +115,19 @@ def parse_nft_json(data: dict[str, Any]) -> dict[str, Any]:
 
 MARK_RE = re.compile(r"(?:--set-(?:x)?mark\b|--restore-mark\b|--save-mark\b|(?:-j|--jump)\s+(?:CONN)?MARK\b|CONNMARK)", re.I)
 NOTRACK_RE = re.compile(r"(?:--notrack\b|(?:-j|--jump)\s+NOTRACK\b)", re.I)
+DIRECT_NOTRACK_RE = re.compile(r"(?:-j|--jump)\s+NOTRACK\b", re.I)
+CT_NOTRACK_RE = re.compile(r"(?:-j|--jump)\s+CT\b.*--notrack\b", re.I)
+NOTRACK_OPTION_RE = re.compile(r"--notrack\b", re.I)
+
+def notrack_mechanism(line: str) -> str:
+    """Classify NOTRACK mechanics without retaining or printing rule values."""
+    if CT_NOTRACK_RE.search(line):
+        return "ct_target_option"
+    if DIRECT_NOTRACK_RE.search(line):
+        return "direct_target"
+    if NOTRACK_OPTION_RE.search(line):
+        return "option_other_target"
+    return "other_notrack_match"
 NAT_RE = re.compile(r"(?:-j|--jump)\s+(?:DNAT|SNAT|MASQUERADE|REDIRECT)\b", re.I)
 DROP_RE = re.compile(r"(?:-j|--jump)\s+(?:DROP|REJECT)\b", re.I)
 ACCEPT_RE = re.compile(r"(?:-j|--jump)\s+ACCEPT\b", re.I)
@@ -179,6 +195,7 @@ def parse_iptables_save(text: str) -> dict[str, Any]:
             notrack_rules.append({
                 "table": table, "chain": fields[1],
                 "selectors": iptables_selector_categories(line),
+                "mechanism": notrack_mechanism(line),
             })
         if MARK_RE.search(line): counts["packet_mark"] += 1
         if NAT_RE.search(line): counts["nat"] += 1
@@ -246,7 +263,7 @@ def audit_iptables(command: str, family: str) -> None:
         key = (rule["table"], rule["chain"])
         chain_indices[key] += 1
         selectors = ",".join(rule["selectors"]) or "none-detected"
-        print(f"{family}_iptables_notrack_scope table={key[0]} chain={key[1]} rule={chain_indices[key]} selectors={selectors}")
+        print(f"{family}_iptables_notrack_scope table={key[0]} chain={key[1]} rule={chain_indices[key]} selectors={selectors} mechanism={rule['mechanism']}")
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only firewall inventory; raw rules are never printed.")
