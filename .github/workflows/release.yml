@@ -16,6 +16,22 @@ jobs:
         with:
           go-version: '1.27.x'
           cache: true
+      - name: Run unit tests
+        run: go test -race ./...
+      - name: Static analysis
+        run: go vet ./...
+      - name: Validate shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in scripts/*.sh; do bash -n "$script"; done
+      - name: Install nftables parser for check-only regression test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables
+      - name: Test selective site-to-site nftables preview
+        shell: bash
+        run: bash scripts/test-site-to-site-selective.sh
       - name: Build release assets
         shell: bash
         env:

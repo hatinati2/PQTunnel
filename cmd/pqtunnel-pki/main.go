@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"bytes"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -128,7 +129,28 @@ func loadCA(out string) (*x509.Certificate, ed25519.PrivateKey) {
 	if !ok {
 		die("ca.key is not an Ed25519 key")
 	}
+	if err := validateCAKey(ca, key); err != nil {
+		die(err.Error())
+	}
 	return ca, key
+}
+
+func validateCAKey(ca *x509.Certificate, key ed25519.PrivateKey) error {
+	if ca == nil || !ca.IsCA || !ca.BasicConstraintsValid || ca.KeyUsage&x509.KeyUsageCertSign == 0 {
+		return fmt.Errorf("ca.crt is not a valid certificate-signing CA")
+	}
+	now := time.Now()
+	if now.Before(ca.NotBefore) || !now.Before(ca.NotAfter) {
+		return fmt.Errorf("ca.crt is not currently valid")
+	}
+	if len(key) != ed25519.PrivateKeySize {
+		return fmt.Errorf("ca.key has an invalid Ed25519 private-key length")
+	}
+	pub, ok := ca.PublicKey.(ed25519.PublicKey)
+	if !ok || !bytes.Equal(pub, key.Public().(ed25519.PublicKey)) {
+		return fmt.Errorf("ca.key does not match ca.crt")
+	}
+	return nil
 }
 
 func issueAdditionalServer(args []string) {
@@ -222,34 +244,7 @@ func issueClient(args []string) {
 	if err != nil || !ip.Is4() {
 		die("--ip must be a valid IPv4 address")
 	}
-	caPEM, err := os.ReadFile(filepath.Join(*out, "ca.crt"))
-	if err != nil {
-		die(err.Error())
-	}
-	block, _ := pem.Decode(caPEM)
-	if block == nil {
-		die("invalid ca.crt")
-	}
-	ca, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		die(err.Error())
-	}
-	keyPEM, err := os.ReadFile(filepath.Join(*out, "ca.key"))
-	if err != nil {
-		die(err.Error())
-	}
-	kb, _ := pem.Decode(keyPEM)
-	if kb == nil {
-		die("invalid ca.key")
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(kb.Bytes)
-	if err != nil {
-		die(err.Error())
-	}
-	caKey, ok := parsed.(ed25519.PrivateKey)
-	if !ok {
-		die("ca.key is not an Ed25519 key")
-	}
+	ca, caKey := loadCA(*out)
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		die(err.Error())
