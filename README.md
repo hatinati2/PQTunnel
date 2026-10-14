@@ -6,6 +6,10 @@ PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets usin
 
 > **Security notice:** This repository has not undergone an independent security audit. Do not use it to protect sensitive activity or deploy it on a production server. The key exchange is post-quantum hybrid; certificate signatures are currently Ed25519 (classical), so the entire authentication system is not post-quantum. No cryptographic construction is unbreakable by definition.
 
+## Repository layout notice
+
+The active project source tree and CI source of truth are at the **repository root**. The nested `PQTunnel/` directory is a stale legacy copy retained pending a separate cleanup decision; it is not the active development or release source, and the root CI workflow does not test that nested copy. Do not build, package, or deploy from `PQTunnel/`.
+
 ## Current scope
 
 - TLS 1.3 only, with `X25519MLKEM768` explicitly selected and no classical key-exchange fallback.
