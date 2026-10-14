@@ -60,12 +60,22 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-mkdir -m 0700 "$LAB_DIR/bin" "$LAB_DIR/authority" "$LAB_DIR/server-pki" "$LAB_DIR/client-pki"
-go build -o "$LAB_DIR/bin/pqtunneld" "$ROOT/cmd/pqtunneld"
-go build -o "$LAB_DIR/bin/pqtunnel-client" "$ROOT/cmd/pqtunnel-client"
-go build -o "$LAB_DIR/bin/pqtunnel-pki" "$ROOT/cmd/pqtunnel-pki"
-"$LAB_DIR/bin/pqtunnel-pki" init --out "$LAB_DIR/authority" --server-name gateway.lab
-"$LAB_DIR/bin/pqtunnel-pki" issue-peer --out "$LAB_DIR/authority" --name iran
+mkdir -m 0700 "$LAB_DIR/authority" "$LAB_DIR/server-pki" "$LAB_DIR/client-pki"
+if [[ -n "${PQTUNNEL_BIN_DIR:-}" ]]; then
+  BIN_DIR="$PQTUNNEL_BIN_DIR"
+  [[ -d "$BIN_DIR" ]] || { echo "FAIL: PQTUNNEL_BIN_DIR does not exist: $BIN_DIR" >&2; exit 2; }
+  for bin in pqtunneld pqtunnel-client pqtunnel-pki; do
+    [[ -x "$BIN_DIR/$bin" ]] || { echo "FAIL: missing executable $BIN_DIR/$bin" >&2; exit 2; }
+  done
+else
+  BIN_DIR="$LAB_DIR/bin"
+  mkdir -m 0700 "$BIN_DIR"
+  go build -o "$BIN_DIR/pqtunneld" "$ROOT/cmd/pqtunneld"
+  go build -o "$BIN_DIR/pqtunnel-client" "$ROOT/cmd/pqtunnel-client"
+  go build -o "$BIN_DIR/pqtunnel-pki" "$ROOT/cmd/pqtunnel-pki"
+fi
+"$BIN_DIR/pqtunnel-pki" init --out "$LAB_DIR/authority" --server-name gateway.lab
+"$BIN_DIR/pqtunnel-pki" issue-peer --out "$LAB_DIR/authority" --name iran
 
 # Keep CA private material outside both endpoint PKI directories.
 cp "$LAB_DIR/authority/server.crt" "$LAB_DIR/server-pki/server.crt"
@@ -99,7 +109,7 @@ ip -n "$DE_NS" addr add 10.10.0.1/24 dev lande
 ip -n "$DE_NS" -6 addr add fd10:10::1/64 dev lande
 ip -n "$DE_NS" link set lande up
 
-ip netns exec "$DE_NS" "$LAB_DIR/bin/pqtunneld" \
+ip netns exec "$DE_NS" "$BIN_DIR/pqtunneld" \
   --listen 198.18.0.1:8443 \
   --tls-cert "$LAB_DIR/server-pki/server.crt" \
   --tls-key "$LAB_DIR/server-pki/server.key" \
@@ -137,7 +147,7 @@ ip -n "$DE_NS" route add 10.20.0.0/24 dev pqtun0
 ip -n "$DE_NS" -6 route add fd20:20::/64 dev pqtun0
 wait_for_listener || { echo 'FAIL: gateway did not listen on 198.18.0.1:8443' >&2; exit 1; }
 
-ip netns exec "$IR_NS" "$LAB_DIR/bin/pqtunnel-client" \
+ip netns exec "$IR_NS" "$BIN_DIR/pqtunnel-client" \
   --server 198.18.0.1:8443 --server-name gateway.lab --network tcp4 \
   --ca "$LAB_DIR/client-pki/ca.crt" \
   --cert "$LAB_DIR/client-pki/peer.crt" \
