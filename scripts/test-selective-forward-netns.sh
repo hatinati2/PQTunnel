@@ -240,6 +240,20 @@ ip netns exec "$DE_NS" "$PQTUNNEL_BIN_DIR/pqtunneld" \
   --peer-name iran >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
+wait_for_tun() {
+  local i
+  for i in $(seq 1 100); do
+    kill -0 "$SERVER_PID" >/dev/null 2>&1 || return 1
+    ip -n "$DE_NS" link show dev pqtun0 >/dev/null 2>&1 && return 0
+    sleep 0.1
+  done
+  return 1
+}
+wait_for_tun || { echo 'FAIL: Germany gateway TUN did not appear' >&2; exit 1; }
+ip -n "$DE_NS" addr add 10.66.0.1/24 dev pqtun0
+ip -n "$DE_NS" -6 addr add fd42:7061:7475::1/64 dev pqtun0
+ip -n "$DE_NS" link set pqtun0 up
+
 wait_for_listener() {
   local i
   for i in $(seq 1 100); do
