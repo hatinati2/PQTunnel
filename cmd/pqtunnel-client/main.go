@@ -10,8 +10,10 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
+	"github.com/hatinati2/PQTunnel/internal/portpolicy"
 	"github.com/hatinati2/PQTunnel/internal/prefixset"
 	"github.com/hatinati2/PQTunnel/internal/tun"
 	"github.com/hatinati2/PQTunnel/internal/tunnel"
@@ -28,6 +30,8 @@ func main() {
 	localIP := flag.String("local-ip", "10.66.0.2", "legacy single-host IPv4 address; use prefix options for site-to-site mode")
 	localPrefixesText := flag.String("local-prefixes", "", "comma-separated local source/destination CIDRs for site-to-site mode")
 	remotePrefixesText := flag.String("remote-prefixes", "", "comma-separated allowed remote source/destination CIDRs; use 0.0.0.0/0 and/or ::/0 for default routes")
+	allowedDstPortsText := flag.String("allowed-dst-ports", os.Getenv("PQTUNNEL_ALLOWED_DST_PORTS"), "optional outbound destination-port allowlist, e.g. tcp:443,udp:53,tcp:8000-8010")
+	socketMark := flag.Uint("socket-mark", envUint("PQTUNNEL_SOCKET_MARK", 0), "optional Linux SO_MARK used to exempt tunnel transport from port-based policy routing")
 	flag.Parse()
 	if *server == "" || *serverName == "" {
 		fatalIf(fmt.Errorf("--server and --server-name are required"))
@@ -38,6 +42,8 @@ func main() {
 	localPrefixes, err := prefixset.ParseCSV(*localPrefixesText)
 	fatalIf(err)
 	remotePrefixes, err := prefixset.ParseCSV(*remotePrefixesText)
+	fatalIf(err)
+	allowedDstPorts, err := portpolicy.ParseCSV(*allowedDstPortsText)
 	fatalIf(err)
 	if (*localPrefixesText == "") != (*remotePrefixesText == "") {
 		fatalIf(fmt.Errorf("site-to-site mode requires both --local-prefixes and --remote-prefixes; otherwise use legacy --local-ip mode"))
@@ -70,11 +76,24 @@ func main() {
 	fmt.Printf("PQTunnel dialer: %s via %s; TLS 1.3 strict hybrid X25519MLKEM768; IPv4/IPv6 packet support\n", *server, *network)
 	err = tunnel.RunClient(ctx, dev, tunnel.ClientConfig{
 		ServerAddress: *server, ServerName: *serverName, Network: *network,
-		LocalIP: ip, LocalPrefixes: localPrefixes, RemotePrefixes: remotePrefixes, TLSConfig: tlsCfg,
+		LocalIP: ip, LocalPrefixes: localPrefixes, RemotePrefixes: remotePrefixes, AllowedDstPorts: allowedDstPorts, SocketMark: uint32(*socketMark), TLSConfig: tlsCfg,
 	})
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, os.ErrClosed) {
 		fatalIf(err)
 	}
+}
+
+func envUint(name string, fallback uint) uint {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseUint(value, 0, 32)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pqtunnel-client: invalid %s=%q\n", name, value)
+		os.Exit(2)
+	}
+	return uint(parsed)
 }
 
 func fatalIf(err error) {

@@ -2,11 +2,6 @@
 
 ## 0.3.0-dev
 
-- Added opt-in TCP/UDP destination-port allowlists for packets injected by the authenticated peer.
-- Added an experimental Iran-side network helper for selected outbound ports and inbound TCP/UDP DNAT/SNAT port forwards to a Germany-side address.
-- Added a separate experimental Germany-side dual-stack forwarding/NAT helper; it is restricted to isolated test hosts because its forwarding base chain uses a DROP policy.
-- Added IPv4/IPv6 transport-port inspection with fail-closed handling for fragments in port-policy mode.
-
 - Added normal IPv6 packet framing/parsing alongside IPv4 (IPv6 jumbograms remain unsupported).
 - Added experimental single-peer server-to-server route profiles with separate peer-source/return-route and listener-destination CIDR allowlists, plus explicit peer certificate identity pinning.
 - Added DNS/IPv4/IPv6 endpoint selection for the dialer (`tcp`, `tcp4`, `tcp6`).
@@ -21,3 +16,11 @@
 - Updated documentation to describe known limitations and the lack of a security audit.
 
 This is still a development build, not a production VPN release. Windows routing, a persistent cross-platform kill-switch, and verified Android build/provisioning remain incomplete.
+
+## Unreleased — selective site-to-site prototype
+
+- Added optional TCP/UDP destination-port allowlists in the client and listener.
+- Added Linux socket-mark support so the PQTunnel transport can be exempted from mark-based egress policy routing.
+- Added an experimental selective site-to-site network helper and config example. It is guarded against existing firewall/forwarding state and must only be validated on an isolated lab host.
+- Added IPv4/IPv6 port-policy parser tests; fragmented packets are rejected while a port allowlist is active.
+- This does not complete true reverse-initiated operation or replace real two-host integration testing.

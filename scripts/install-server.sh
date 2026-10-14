@@ -123,6 +123,9 @@ PQTUNNEL_MAX_CLIENTS=128
 PQTUNNEL_PEER_PREFIXES=
 PQTUNNEL_LOCAL_PREFIXES=
 PQTUNNEL_PEER_NAME=
+# Optional destination-port allowlist, e.g. tcp:443,udp:53,tcp:8000-8010.
+# Keep it identical to the dialer allowlist; include every remote target port used by port-forward rules.
+PQTUNNEL_ALLOWED_DST_PORTS=
 ENV
   chown root:root /etc/default/pqtunneld
   chmod 0640 /etc/default/pqtunneld
