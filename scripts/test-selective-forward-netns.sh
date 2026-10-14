@@ -88,6 +88,18 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   if (( rc != 0 )); then
+    if ip netns list | awk '{print $1}' | grep -Fxq "$IR_NS"; then
+      echo '--- Iran namespace health route lookup and forwarding ---' >&2
+      ip netns exec "$IR_NS" ip -4 route get 10.10.0.1 >&2 || true
+      ip netns exec "$IR_NS" ip -6 route get fd10:10::1 >&2 || true
+      ip netns exec "$IR_NS" sysctl net.ipv4.ip_forward net.ipv6.conf.all.forwarding >&2 || true
+    fi
+    if ip netns list | awk '{print $1}' | grep -Fxq "$DE_NS"; then
+      echo '--- Germany namespace health route lookup and forwarding ---' >&2
+      ip netns exec "$DE_NS" ip -4 route get 10.10.0.1 >&2 || true
+      ip netns exec "$DE_NS" ip -6 route get fd10:10::1 >&2 || true
+      ip netns exec "$DE_NS" sysctl net.ipv4.ip_forward net.ipv6.conf.all.forwarding >&2 || true
+    fi
     for ns in "$IR_NS" "$DE_NS" "$VIS_NS" "$SW_NS"; do
       if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
         echo "--- namespace $ns interfaces/routes ---" >&2
@@ -356,27 +368,34 @@ ip netns exec "$IR_NS" env PQTUNNEL_SITE_CONFIG="$DIALER_CONFIG" PQTUNNEL_STATE_
 ip netns exec "$IR_NS" nft -f - <<'NFT'
 table inet pqtunnel_trace {
   chain preroute { type filter hook prerouting priority raw; policy accept;
-    tcp dport { 8443, 9443 } meta nftrace set 1
+    tcp dport { 8180, 8443, 9443 } meta nftrace set 1
+    tcp sport 8180 meta nftrace set 1
     udp dport { 5354, 5355 } meta nftrace set 1
     tcp sport 8080 meta nftrace set 1
     udp sport 5353 meta nftrace set 1
   }
+  chain output_trace { type filter hook output priority raw; policy accept;
+    tcp dport 8180 meta nftrace set 1
+  }
   chain forward_trace { type filter hook forward priority raw; policy accept;
-    tcp sport 8080 meta nftrace set 1
-    tcp dport 8080 meta nftrace set 1
+    tcp sport { 8080, 8180 } meta nftrace set 1
+    tcp dport { 8080, 8180 } meta nftrace set 1
     udp sport 5353 meta nftrace set 1
     udp dport 5353 meta nftrace set 1
   }
   chain input_trace { type filter hook input priority raw; policy accept;
-    tcp sport 8080 meta nftrace set 1
+    tcp sport { 8080, 8180 } meta nftrace set 1
+    tcp dport 8180 meta nftrace set 1
     udp sport 5353 meta nftrace set 1
   }
   chain preroute_late_trace { type filter hook prerouting priority filter; policy accept;
-    tcp sport 8080 meta nftrace set 1
+    tcp sport { 8080, 8180 } meta nftrace set 1
+    tcp dport 8180 meta nftrace set 1
     udp sport 5353 meta nftrace set 1
   }
   chain postroute_trace { type filter hook postrouting priority 110; policy accept;
-    tcp sport 8080 meta nftrace set 1
+    tcp sport { 8080, 8180 } meta nftrace set 1
+    tcp dport 8180 meta nftrace set 1
     udp sport 5353 meta nftrace set 1
   }
 }
@@ -415,8 +434,8 @@ ip -n "$IR_NS" -6 route add fd10:10::/64 dev pqtun0
 
 # Capture both sides of the TUN link to diagnose whether the forward packet is
 # emitted by the dialer and injected by the gateway. Captures remain namespace-local.
-ip netns exec "$IR_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)' >"$IR_TUN_LOG" 2>&1 & IR_TUN_PID=$!
-ip netns exec "$DE_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)' >"$DE_TUN_LOG" 2>&1 & DE_TUN_PID=$!
+ip netns exec "$IR_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or tcp port 8180 or udp port 5353)' >"$IR_TUN_LOG" 2>&1 & IR_TUN_PID=$!
+ip netns exec "$DE_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or tcp port 8180 or udp port 5353)' >"$DE_TUN_LOG" 2>&1 & DE_TUN_PID=$!
 ip netns exec "$IR_NS" tcpdump -n -l -i "$IR_IF" '(tcp or udp or icmp6)' >"$IR_WAN_LOG" 2>&1 & IR_WAN_PID=$!
 sleep 0.1
 
