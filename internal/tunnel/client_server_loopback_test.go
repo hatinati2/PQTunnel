@@ -202,7 +202,6 @@ func TestRunClientLoopbackTLSFiltersOutboundAndInboundPackets(t *testing.T) {
 		t.Fatal("client did not establish TLS and send the allowed packet")
 	}
 
-	select {
 	for _, want := range [][]byte{
 		e2eTCPPacket("192.0.2.9", "10.66.0.2", 443, 50003),
 		e2eIPv6TCPPacket("2001:db8:2::9", "fd42:7061:7475::2", 443, 50007),
@@ -213,7 +212,6 @@ func TestRunClientLoopbackTLSFiltersOutboundAndInboundPackets(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("client did not deliver an allowed inbound packet to the device")
 		}
-	}
 
 	cancel()
 	select {
