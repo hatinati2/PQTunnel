@@ -73,17 +73,17 @@ DROP_RE = re.compile(r"(?:-j|--jump)\s+(?:DROP|REJECT)\b", re.I)
 ACCEPT_RE = re.compile(r"(?:-j|--jump)\s+ACCEPT\b", re.I)
 
 SELECTOR_PATTERNS: dict[str, re.Pattern[str]] = {
-    "interface": re.compile(r"(?:^|\\s)(?:-i|--in-interface|-o|--out-interface)(?:\\s|=)", re.I),
-    "protocol": re.compile(r"(?:^|\\s)(?:-p|--protocol)(?:\\s|=)", re.I),
-    "address": re.compile(r"(?:^|\\s)(?:-s|--source|-d|--destination|--src|--dst)(?:\\s|=)", re.I),
-    "port": re.compile(r"(?:^|\\s)(?:--(?:sport|source-port|sports|dport|destination-port|dports))(?:\\s|=)", re.I),
-    "connection": re.compile(r"(?:^|\\s)(?:--(?:ctstate|state|ctstatus|ctdir|ctexpire))(?:\\s|=)", re.I),
-    "mark": re.compile(r"(?:^|\\s)(?:--(?:mark|ctmark|nfmark|nfmask|ctmask))(?:\\s|=)", re.I),
+    "interface": re.compile(r"(?:^|\s)(?:-i|--in-interface|-o|--out-interface)(?:\s|=)", re.I),
+    "protocol": re.compile(r"(?:^|\s)(?:-p|--protocol)(?:\s|=)", re.I),
+    "address": re.compile(r"(?:^|\s)(?:-s|--source|-d|--destination|--src|--dst)(?:\s|=)", re.I),
+    "port": re.compile(r"(?:^|\s)(?:--(?:sport|source-port|sports|dport|destination-port|dports))(?:\s|=)", re.I),
+    "connection": re.compile(r"(?:^|\s)(?:--(?:ctstate|state|ctstatus|ctdir|ctexpire))(?:\s|=)", re.I),
+    "mark": re.compile(r"(?:^|\s)(?:--(?:mark|ctmark|nfmark|nfmask|ctmask))(?:\s|=)", re.I),
 }
 OTHER_SELECTOR_RE = re.compile(
-    r"(?:^|\\s)(?:--(?:tcp-flags|syn|icmp-type|icmpv6-type|uid-owner|gid-owner|socket-exists|"
+    r"(?:^|\s)(?:--(?:tcp-flags|syn|icmp-type|icmpv6-type|uid-owner|gid-owner|socket-exists|"
     r"limit|limit-burst|hashlimit|string|mac-source|length|frag|probability|src-type|dst-type|"
-    r"physdev-in|physdev-out))(?:\\s|=)", re.I
+    r"physdev-in|physdev-out))(?:\s|=)", re.I
 )
 IGNORABLE_MATCH_MODULES = {
     "comment", "tcp", "udp", "icmp", "icmp6", "ipv6-icmp", "multiport",
@@ -95,7 +95,7 @@ def iptables_selector_categories(line: str) -> list[str]:
     selectors = {name for name, pattern in SELECTOR_PATTERNS.items() if pattern.search(line)}
     if OTHER_SELECTOR_RE.search(line):
         selectors.add("other")
-    modules = re.findall(r"(?:^|\\s)(?:-m|--match)\\s+([^\\s]+)", line, re.I)
+    modules = re.findall(r"(?:^|\s)(?:-m|--match)\s+([^\s]+)", line, re.I)
     if any(module.lower() not in IGNORABLE_MATCH_MODULES for module in modules):
         selectors.add("other")
     return sorted(selectors)
