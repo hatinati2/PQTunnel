@@ -22,7 +22,7 @@ func validateDisjointPrefixes(a, b []netip.Prefix, allowDefaultRoute bool) error
 	}
 	for _, left := range a {
 		for _, right := range b {
-			if allowDefaultRoute && (isDefaultPrefix(left) || isDefaultPrefix(right)) {
+			if allowDefaultRoute && isDefaultPrefix(right) {
 				continue
 			}
 			if prefixset.Overlap([]netip.Prefix{left}, []netip.Prefix{right}) {
