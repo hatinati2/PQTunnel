@@ -19,6 +19,7 @@ Do not mark PQTunnel stable until these items have been performed and their resu
 ## Packet and network tests
 
 - [ ] Run protocol tests and fuzzing for malformed/truncated/oversized frames and IP packets.
+- [ ] Keep `scripts/test-site-to-site-netns.sh` passing on Ubuntu 24.04 and 26.04. It exercises real Linux TUN devices and IPv4/IPv6 routes between disposable namespaces, but does not replace a two-VPS test or validate public routing, provider firewalls, NAT, or port forwarding.
 - [ ] Test two clients with unique addresses and reject duplicate identities/source spoofing.
 - [ ] Test reconnects, packet loss, long RTT, server restart, sleep/resume and TCP-over-TCP degradation.
 - [ ] Verify IPv4 forwarding/NAT with and without UFW or another host firewall. Verify rollback from console access.
