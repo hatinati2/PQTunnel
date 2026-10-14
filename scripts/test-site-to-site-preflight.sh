@@ -13,6 +13,16 @@ grep -q 'install-client' <<< "$BOOTSTRAP_HELP"
 bash "$ROOT/scripts/pqtunnel-bootstrap.sh" check-config --kind gateway --app-env "$ROOT/scripts/pqtunneld.site-to-site.env.example" --network-env "$ROOT/scripts/site-to-site-gateway.env.example"
 bash "$ROOT/scripts/pqtunnel-bootstrap.sh" check-config --kind dialer --app-env "$ROOT/scripts/pqtunnel-client.env.example" --network-env "$ROOT/scripts/site-to-site.env.example"
 
+# The installer and systemd unit currently require pqtun0; reject a drifted TUN name.
+TMP_TUN_CONFIG="$(mktemp -d)"
+trap 'rm -rf "$TMP_TUN_CONFIG" /tmp/pqtunnel-config-pwned' EXIT
+cp "$ROOT/scripts/site-to-site-gateway.env.example" "$TMP_TUN_CONFIG/gateway-network.env"
+sed -i 's/^PQTUNNEL_TUN=pqtun0$/PQTUNNEL_TUN=pqtun1/' "$TMP_TUN_CONFIG/gateway-network.env"
+if bash "$ROOT/scripts/pqtunnel-bootstrap.sh" check-config --kind gateway --app-env "$ROOT/scripts/pqtunneld.site-to-site.env.example" --network-env "$TMP_TUN_CONFIG/gateway-network.env" >/dev/null 2>&1; then
+  echo "mismatched TUN name was unexpectedly accepted" >&2
+  exit 1
+fi
+
 # A shell-expression payload must be rejected as data, never evaluated.
 TMP_CONFIG_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_CONFIG_DIR" /tmp/pqtunnel-config-pwned' EXIT
