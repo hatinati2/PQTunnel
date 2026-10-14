@@ -43,7 +43,7 @@ class AuditParserTests(unittest.TestCase):
             {"rule": {"family": "ip", "table": "raw", "chain": "PREROUTING",
                       "expr": [{"xt": {"type": "target", "name": "DROP"}}]}},
             {"rule": {"family": "ip", "table": "raw", "chain": "PREROUTING",
-                      "expr": [{"xt": {"type": "target", "name": "ACCEPT"}}]},
+                      "expr": [{"xt": {"type": "target", "name": "ACCEPT"}}]}},
         ]}
         parsed = audit.parse_nft_json(fixture)
         counts = parsed["rules"][("ip", "raw", "PREROUTING")]
