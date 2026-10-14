@@ -128,6 +128,7 @@ REF=REPLACE_WITH_REVIEWED_40_CHAR_SHA; curl -fsSL "https://raw.githubusercontent
 ## اسناد
 
 - [English README](README.md)
+- [راهنمای آمادگی استقرار و بازیابی دو VPS](docs/TWO-VPS-DEPLOYMENT.fa.md)
 - [یادداشت‌های امنیتی](SECURITY.md)
 - [جزئیات پروتکل](docs/PROTOCOL.md)
 - [چک‌لیست پیش از انتشار](docs/RELEASE-CHECKLIST.md)
