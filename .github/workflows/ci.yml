@@ -118,3 +118,5 @@ jobs:
         run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-selective-egress-netns.sh
       - name: Test selective network helper fail-closed and rollback
         run: sudo bash scripts/test-site-to-site-selective-fail-closed.sh
+      - name: Test existing-firewall coexistence semantics in disposable namespaces
+        run: sudo bash scripts/test-firewall-coexistence-netns.sh
