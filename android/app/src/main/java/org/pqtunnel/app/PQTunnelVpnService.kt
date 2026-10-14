@@ -37,8 +37,8 @@ class PQTunnelVpnService : VpnService() {
                 .addAddress(getString(R.string.client_ip), 32)
                 .addAddress("fd66:66::2", 128)
                 .addRoute("0.0.0.0", 0)
-                // IPv6 is routed into the VPN but intentionally dropped by the v1 core.
-                // This prevents a direct IPv6 path at the cost of IPv6 connectivity.
+                // This Android scaffold still invokes the legacy single-IPv4 client API,
+                // so IPv6 is routed into the VPN but is not yet forwarded by this app.
                 .addRoute("::", 0)
                 .addDnsServer("1.1.1.1")
             val established = builder.establish() ?: throw IllegalStateException("VpnService.establish failed")

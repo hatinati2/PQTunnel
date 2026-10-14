@@ -6,7 +6,9 @@ import (
 	"io"
 )
 
-const MaxFrameSize = 65535
+// MaxFrameSize accommodates the largest normal IPv6 packet (40-byte header +
+// 65535-byte payload). IPv6 jumbograms are not supported.
+const MaxFrameSize = 65575
 
 var ErrInvalidFrame = errors.New("invalid tunnel frame length")
 

@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.2.0-dev
+## 0.3.0-dev
+
+- Added normal IPv6 packet framing/parsing alongside IPv4 (IPv6 jumbograms remain unsupported).
+- Added experimental single-peer server-to-server route profiles with separate peer-source/return-route and listener-destination CIDR allowlists, plus explicit peer certificate identity pinning.
+- Added DNS/IPv4/IPv6 endpoint selection for the dialer (`tcp`, `tcp4`, `tcp6`).
+- Added PKI commands for additional server certificates and named peer client certificates.
 
 - Changed the Go module path to the public GitHub repository path.
 - Bounded concurrent TLS handshakes as well as authenticated tunnel sessions.

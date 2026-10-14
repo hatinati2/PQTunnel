@@ -1,13 +1,15 @@
 # PQTunnel — نسخهٔ آزمایشی
 
-**نسخه: 0.2.0-dev · وضعیت: نمونهٔ اولیه؛ آمادهٔ استفادهٔ تولیدی نیست.**
+**نسخه: 0.3.0-dev · وضعیت: نمونهٔ اولیه؛ آمادهٔ استفادهٔ تولیدی نیست.**
 
-PQTunnel یک تونل آزمایشی IPv4 است که TCP را داخل TLS 1.3 حمل می‌کند و برای تبادل کلید، گروه هیبریدی `X25519MLKEM768` را به‌صورت اجباری انتخاب می‌کند. احراز هویت با گواهی‌های دوطرفه و CA خصوصی انجام می‌شود.
+PQTunnel یک تونل آزمایشی لایهٔ ۳ با encapsulation بسته‌های IPv4 و IPv6 است که TCP را داخل TLS 1.3 حمل می‌کند و برای تبادل کلید، گروه هیبریدی `X25519MLKEM768` را به‌صورت اجباری انتخاب می‌کند. احراز هویت با گواهی‌های دوطرفه و CA خصوصی انجام می‌شود.
 
 > **هشدار امنیتی:** این پروژه audit امنیتی مستقل نشده است. آن را برای فعالیت حساس یا روی سرور عملیاتی استفاده نکن. تبادل کلید پساکوانتومی/هیبریدی است، اما امضای گواهی‌ها فعلاً Ed25519 کلاسیک است؛ بنابراین کل سامانه پساکوانتومی نیست. هیچ رمزنگاری‌ای تضمین ابدی «غیرقابل‌شکستن» ندارد.
 
 ## چه چیزهایی اضافه یا بهبود یافته‌اند؟
 
+- حمل بسته‌های IPv4 و IPv6 و فیلتر route بر پایهٔ CIDR برای لینک آزمایشی server-to-server؛ تنظیم واقعی مسیرهای IPv6 هنوز دستی و آزمایش‌نشده است.
+- پارامترهای transport برای hostname/IPv4/IPv6 (`--server`, `--server-name`, `--network tcp|tcp4|tcp6`) و حالت peer-prefix تک‌اتصالی.
 - مسیر نصب سرویس Ubuntu با systemd در `scripts/install-server.sh` و `deploy/systemd/pqtunneld.service`.
 - اسکریپت مستقل و قابل بازگردانی برای فعال‌سازی IPv4 forwarding و NAT در `scripts/server-network.sh`؛ فقط جدول اختصاصی nftables خودش را مدیریت می‌کند و UFW را تغییر نمی‌دهد.
 - اسکریپت شبکهٔ کلاینت لینوکس در `scripts/linux-client-network.sh`: route اختصاصی IP سرور، مسیر پیش‌فرض IPv4 از TUN، DNS با systemd-resolved و blackhole برای مسیر پیش‌فرض IPv6.
@@ -53,7 +55,7 @@ go run ./cmd/pqtunnel-pki issue-client --out ./pki --ip 10.66.0.2
 
 برای هر دستگاه یک IP یکتا صادر کن. فایل `ca.key` باید آفلاین/خصوصی بماند و **نباید** به سرور یا کلاینت منتقل شود. سرور فقط به `server.crt`، `server.key` و `ca.crt` نیاز دارد. هر کلاینت باید `ca.crt` و گواهی/کلید خصوصی اختصاصی خودش را دریافت کند. کلید خصوصی را از کانال امن جداگانه انتقال بده.
 
-امضای گواهی‌ها فعلاً Ed25519 کلاسیک است؛ پس `X25519MLKEM768` به معنی پساکوانتومی‌بودن کامل احراز هویت نیست.
+امضای گواهی‌ها فعلاً Ed25519 کلاسیک است؛ پس `X25519MLKEM768` به معنی پساکوانتومی‌بودن کامل احراز هویت نیست. در حالت server-to-server تک‌peer، هر دو مقدار `PQTUNNEL_PEER_PREFIXES` (CIDRهای مجاز مبدأ peer و مسیر برگشت) و `PQTUNNEL_LOCAL_PREFIXES` (CIDRهای مقصد مجاز سمت Listener) را در `/etc/default/pqtunneld` تنظیم کن، `PQTUNNEL_PEER_NAME` را مشخص کن و `PQTUNNEL_MAX_CLIENTS=1` قرار بده؛ نام peer باید دقیقاً با Common Name گواهی صادرشده برابر باشد. Listener certificate paths can be selected with `PQTUNNEL_TLS_CERT` and `PQTUNNEL_TLS_KEY` when reversing roles.
 
 ## بسته‌بندی سرور Ubuntu
 
@@ -92,6 +94,7 @@ go run ./cmd/pqtunnel-pki issue-client --out ./pki --ip 10.66.0.2
 - [یادداشت‌های امنیتی](SECURITY.md)
 - [جزئیات پروتکل](docs/PROTOCOL.md)
 - [چک‌لیست پیش از انتشار](docs/RELEASE-CHECKLIST.md)
+- [راهنمای آزمایشی تونل سرور‌به‌سرور](docs/SITE-TO-SITE.fa.md)
 
 ## مجوز
 

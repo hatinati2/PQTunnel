@@ -115,7 +115,14 @@ if [[ ! -e /etc/default/pqtunneld ]]; then
   cat > /etc/default/pqtunneld <<'ENV'
 # PQTunnel server settings. Review before enabling the service.
 PQTUNNEL_LISTEN=0.0.0.0:8443
+PQTUNNEL_TLS_CERT=/etc/pqtunnel/pki/server.crt
+PQTUNNEL_TLS_KEY=/etc/pqtunnel/pki/server.key
+PQTUNNEL_CLIENT_CA=/etc/pqtunnel/pki/ca.crt
 PQTUNNEL_MAX_CLIENTS=128
+# For a single site-to-site peer, set both values and set MAX_CLIENTS=1.
+PQTUNNEL_PEER_PREFIXES=
+PQTUNNEL_LOCAL_PREFIXES=
+PQTUNNEL_PEER_NAME=
 ENV
   chown root:root /etc/default/pqtunneld
   chmod 0640 /etc/default/pqtunneld

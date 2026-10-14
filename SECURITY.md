@@ -19,6 +19,8 @@ Do not open public issues containing private keys, certificates, connection toke
 - No independent security review or fuzzing campaign.
 - No online revocation/distribution or safe automated enrollment workflow.
 - Windows routes/DNS/kill-switch and Android certificate import/build verification remain incomplete.
+- The site-to-site link mode currently supports one configured peer-route profile per listener; host route installation, dual-stack forwarding and NAT are not automated or integration-tested.
+- IPv6 packet encapsulation is implemented, but IPv6 host routing/firewall policy must be separately configured and tested.
 - Linux networking helpers are prototypes and are not a persistent, audited kill-switch.
 - Traffic may be exposed if endpoints, client keys, CA signing key, host firewall rules, or device permissions are compromised.
 
