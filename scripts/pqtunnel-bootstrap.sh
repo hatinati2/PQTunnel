@@ -132,6 +132,7 @@ require_pinned_source_ref() {
     local checkout_sha
     checkout_sha="$(git rev-parse HEAD 2>/dev/null)" || fail 'cannot verify the local checkout commit; use a clean checkout matching PQTUNNEL_REF.'
     [[ "$checkout_sha" == "$PQTUNNEL_REF" ]] || fail "local checkout HEAD ($checkout_sha) does not match PQTUNNEL_REF ($PQTUNNEL_REF); no changes made."
+    [[ -z "$(git status --porcelain 2>/dev/null)" ]] || fail 'local checkout has uncommitted or untracked changes; use a clean checkout matching PQTUNNEL_REF.'
   fi
 }
 
