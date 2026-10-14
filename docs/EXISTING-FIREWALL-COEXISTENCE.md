@@ -55,3 +55,10 @@ A generic coexistence mode must not be added until at least one clearly specifie
 ## Current decision
 
 **No live installation, service start, route change, forwarding change, NAT edit, or firewall edit is authorized by this document.** Continue using read-only preflight on the real hosts. Develop and test the coexistence design separately.
+
+
+## Disposable lab regression
+
+CI also runs `scripts/test-firewall-coexistence-netns.sh` in three disposable network namespaces. It models an existing forward chain with a default-drop policy and a separate later PQTunnel-like allow chain. The test asserts that the independent allow chain cannot override the earlier drop verdict, then demonstrates a narrow allow inserted into the owning host-firewall chain. The entire test topology, routes, forwarding setting and firewall rules are confined to the temporary namespaces and are removed by the test cleanup.
+
+This is a rule-ordering contract test, not a general production coexistence implementation. A real backend still has to integrate with the firewall manager that owns the active ruleset (including UFW or an iptables-nft-managed configuration), preserve marks/conntrack assumptions, and be tested against an exported sanitized ruleset in a disposable VM before any live rollout.
