@@ -20,18 +20,35 @@ def walk_keys(value: Any):
         for child in value:
             yield from walk_keys(child)
 
+def walk_xt_names(value: Any):
+    """Yield names of xtables-compat expressions (not rule selector values)."""
+    if isinstance(value, dict):
+        xt_obj = value.get("xt")
+        if isinstance(xt_obj, dict):
+            name = xt_obj.get("name")
+            if isinstance(name, str):
+                yield name.lower()
+        for child in value.values():
+            yield from walk_xt_names(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from walk_xt_names(child)
+
 def expr_categories(expr: Any) -> set[str]:
     keys = set(walk_keys(expr))
+    # iptables-nft can expose targets as {"xt":{"type":"target","name":"NOTRACK"}}
+    # when nftables has no native translation for that xtables extension.
+    xt_names = set(walk_xt_names(expr))
     out: set[str] = set()
-    if "notrack" in keys:
+    if "notrack" in keys or "notrack" in xt_names:
         out.add("notrack")
-    if "mark" in keys or "mangle" in keys:
+    if "mark" in keys or "mangle" in keys or {"mark", "connmark"} & xt_names:
         out.add("packet_mark")
-    if {"dnat", "snat", "masquerade", "redirect"} & keys:
+    if {"dnat", "snat", "masquerade", "redirect"} & (keys | xt_names):
         out.add("nat")
-    if {"drop", "reject"} & keys:
+    if {"drop", "reject"} & (keys | xt_names):
         out.add("drop_reject")
-    if "accept" in keys:
+    if "accept" in keys or "accept" in xt_names:
         out.add("accept")
     return out
 
