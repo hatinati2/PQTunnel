@@ -28,13 +28,13 @@ Run the correct role-specific command separately on each VPS. These commands fet
 Germany:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/413bfbab0a7c2f7896ec86bdb3902728107024c9/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/49f884d00e09fd2686f0947d31b3599028c0fc91/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
 ```
 
 Iran:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/413bfbab0a7c2f7896ec86bdb3902728107024c9/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/49f884d00e09fd2686f0947d31b3599028c0fc91/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
 ```
 
 Or run from a reviewed checkout:
