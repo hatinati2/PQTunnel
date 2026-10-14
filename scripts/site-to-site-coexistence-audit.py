@@ -142,7 +142,7 @@ SELECTOR_PATTERNS: dict[str, re.Pattern[str]] = {
     "mark": re.compile(r"(?:^|\s)(?:--(?:mark|ctmark|nfmark|nfmask|ctmask))(?:\s|=)", re.I),
 }
 OTHER_SELECTOR_RE = re.compile(
-    r"(?:^|\s)(?:--(?:tcp-flags|syn|icmp-type|icmpv6-type|uid-owner|gid-owner|socket-exists|"
+    r"(?:^|\s)(?:-f|--fragment|--(?:tcp-flags|syn|icmp-type|icmpv6-type|uid-owner|gid-owner|socket-exists|"
     r"limit|limit-burst|hashlimit|string|mac-source|length|frag|probability|src-type|dst-type|"
     r"physdev-in|physdev-out))(?:\s|=)", re.I
 )
