@@ -64,6 +64,23 @@ Issue a separate client certificate for each device with a unique IP address. Ne
 
 The current certificate signatures use Ed25519. The `X25519MLKEM768` KEM does not make these signatures post-quantum. For site-to-site mode, configure both `PQTUNNEL_PEER_PREFIXES` (allowed peer source/return-route CIDRs) and `PQTUNNEL_LOCAL_PREFIXES` (allowed listener-side destination CIDRs) in `/etc/default/pqtunneld`, set `PQTUNNEL_PEER_NAME`, and set `PQTUNNEL_MAX_CLIENTS=1`. The peer name must exactly match the issued client/peer certificate Common Name. Listener certificate paths can be selected using `PQTUNNEL_TLS_CERT` and `PQTUNNEL_TLS_KEY` when reversing the roles.
 
+## VPS preflight and one-line bootstrap
+
+Before preparing either VPS, run the **read-only** preflight from a source checkout:
+
+```sh
+bash scripts/site-to-site-preflight.sh --role gateway
+bash scripts/site-to-site-preflight.sh --role dialer
+```
+
+A one-line remote preflight is also available; it defaults to checks only and does not need root:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | bash
+```
+
+The bootstrap can install the gateway daemon when the operator explicitly selects its `install-server` mode and supplies an already-staged server PKI directory plus a reviewed site-to-site EnvironmentFile. Its `--start` option starts only `pqtunneld`; it does **not** apply routes, firewall/NAT, forwarding, or provider firewall rules. It refuses an existing server installation, does not install operating-system packages, and is not a full two-VPS deployment tool. Review the script before use and keep recovery console access available. No installation or network apply is run by CI against a real VPS.
+
 ## Ubuntu server packaging
 
 The deployment assets are intentionally split into installation and network setup so that installing the service does not silently modify firewall/NAT policy.
