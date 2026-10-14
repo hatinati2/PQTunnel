@@ -208,9 +208,9 @@ make_dialer_nft() {
         for entry in "${_maps[@]}"; do
           parse_forward_entry "$entry"
           if [[ "$TARGET_FAMILY" == ipv4 ]]; then
-            printf '    iifname "%s" meta nfproto ipv4 %s dport %s dnat to %s:%s\n' "$PQTUNNEL_WAN_IF" "$proto" "$LOCAL_PORT" "$TARGET_IP" "$TARGET_PORT"
+            printf '    iifname "%s" meta nfproto ipv4 %s dport %s dnat ip to %s:%s\n' "$PQTUNNEL_WAN_IF" "$proto" "$LOCAL_PORT" "$TARGET_IP" "$TARGET_PORT"
           else
-            printf '    iifname "%s" meta nfproto ipv6 %s dport %s dnat to [%s]:%s\n' "$PQTUNNEL_WAN_IF" "$proto" "$LOCAL_PORT" "$TARGET_IP" "$TARGET_PORT"
+            printf '    iifname "%s" meta nfproto ipv6 %s dport %s dnat ip6 to [%s]:%s\n' "$PQTUNNEL_WAN_IF" "$proto" "$LOCAL_PORT" "$TARGET_IP" "$TARGET_PORT"
           fi
         done
       done
@@ -221,11 +221,11 @@ make_dialer_nft() {
       printf '  }\n'
     fi
     printf '  chain postrouting_snat { type nat hook postrouting priority srcnat; policy accept;\n'
-    printf '    oifname "%s" meta mark %s ip saddr != %s snat to %s\n' "$PQTUNNEL_TUN" "$MARK_EGRESS" "$TUN_V4_HOST" "$TUN_V4_HOST"
-    printf '    oifname "%s" meta mark %s ip6 saddr != %s snat to %s\n' "$PQTUNNEL_TUN" "$MARK_EGRESS" "$TUN_V6_HOST" "$TUN_V6_HOST"
+    printf '    oifname "%s" meta mark %s ip saddr != %s snat ip to %s\n' "$PQTUNNEL_TUN" "$MARK_EGRESS" "$TUN_V4_HOST" "$TUN_V4_HOST"
+    printf '    oifname "%s" meta mark %s ip6 saddr != %s snat ip6 to %s\n' "$PQTUNNEL_TUN" "$MARK_EGRESS" "$TUN_V6_HOST" "$TUN_V6_HOST"
     if [[ -n "$PQTUNNEL_TCP_FORWARD_RULES$PQTUNNEL_UDP_FORWARD_RULES" ]]; then
-      printf '    oifname "%s" meta mark %s ip saddr != %s snat to %s\n' "$PQTUNNEL_TUN" "$MARK_FORWARD" "$TUN_V4_HOST" "$TUN_V4_HOST"
-      printf '    oifname "%s" meta mark %s ip6 saddr != %s snat to %s\n' "$PQTUNNEL_TUN" "$MARK_FORWARD" "$TUN_V6_HOST" "$TUN_V6_HOST"
+      printf '    oifname "%s" meta mark %s ip saddr != %s snat ip to %s\n' "$PQTUNNEL_TUN" "$MARK_FORWARD" "$TUN_V4_HOST" "$TUN_V4_HOST"
+      printf '    oifname "%s" meta mark %s ip6 saddr != %s snat ip6 to %s\n' "$PQTUNNEL_TUN" "$MARK_FORWARD" "$TUN_V6_HOST" "$TUN_V6_HOST"
     fi
     printf '  }\n'
     printf '}\n'
