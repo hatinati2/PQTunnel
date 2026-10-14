@@ -70,6 +70,7 @@ printf '%s\n' "$OUTPUT"
 # Simulate existing firewall rules without modifying runner networking.
 # These wrappers return only read-only fixture data to the preflight.
 FAKE_BIN_DIR="$(mktemp -d)"
+REAL_IP="$(command -v ip)"
 cat >"$FAKE_BIN_DIR/nft" <<'NFT_WRAPPER'
 #!/usr/bin/env bash
 set -eu
@@ -130,23 +131,32 @@ case "$*" in
   *) exit 1 ;;
 esac
 SYSCTL_WRAPPER
-chmod 0700 "$FAKE_BIN_DIR/nft" "$FAKE_BIN_DIR/iptables-save" "$FAKE_BIN_DIR/ip6tables-save" "$FAKE_BIN_DIR/sysctl"
-DIAGNOSTIC_OUTPUT="$(PATH="$FAKE_BIN_DIR:$PATH" bash "$PREFLIGHT" --role both)"
+cat >"$FAKE_BIN_DIR/ip" <<'IP_WRAPPER'
+#!/usr/bin/env bash
+set -eu
+case "$*" in
+  "tuntap show") printf '%s\n' 'tun0: tun' ;;
+  *) exec "$PQTUNNEL_REAL_IP" "$@" ;;
+esac
+IP_WRAPPER
+chmod 0700 "$FAKE_BIN_DIR/nft" "$FAKE_BIN_DIR/iptables-save" "$FAKE_BIN_DIR/ip6tables-save" "$FAKE_BIN_DIR/sysctl" "$FAKE_BIN_DIR/ip"
+DIAGNOSTIC_OUTPUT="$(PATH="$FAKE_BIN_DIR:$PATH" PQTUNNEL_REAL_IP="$REAL_IP" bash "$PREFLIGHT" --role both)"
 grep -q 'Existing raw-table NOTRACK rules detected' <<< "$DIAGNOSTIC_OUTPUT"
 grep -q 'Existing packet-marking rules detected' <<< "$DIAGNOSTIC_OUTPUT"
+grep -q 'Other pre-existing TUN/TAP interface(s) detected (count=1): tun0' <<< "$DIAGNOSTIC_OUTPUT"
 grep -q '^SUMMARY pass=' <<< "$DIAGNOSTIC_OUTPUT"
-echo 'PASS: preflight reports simulated NOTRACK and packet-marking hazards.'
+echo 'PASS: preflight reports simulated NOTRACK, packet-marking, and existing TUN/TAP hazards.'
 
 # Verify Linux rp_filter semantics: 2 means loose, while 1 means strict.
 # The effective mode is max(conf/all, conf/<interface>), not conf/default.
-LOOSE_OUTPUT="$(PATH="$FAKE_BIN_DIR:$PATH" FAKE_RPFILTER_ALL=2 FAKE_RPFILTER_DEFAULT=2 FAKE_RPFILTER_INTERFACE=0 bash "$PREFLIGHT" --role both)"
+LOOSE_OUTPUT="$(PATH="$FAKE_BIN_DIR:$PATH" PQTUNNEL_REAL_IP="$REAL_IP" FAKE_RPFILTER_ALL=2 FAKE_RPFILTER_DEFAULT=2 FAKE_RPFILTER_INTERFACE=0 bash "$PREFLIGHT" --role both)"
 grep -q 'ipv4_rp_filter_all=2 (loose reverse-path filtering' <<< "$LOOSE_OUTPUT"
 grep -q 'rp_filter_interface=lo configured=0 effective=2 mode=loose' <<< "$LOOSE_OUTPUT"
 if grep -q 'enabled/strict' <<< "$LOOSE_OUTPUT"; then
   echo 'rp_filter=2 was incorrectly described as strict' >&2
   exit 1
 fi
-STRICT_OUTPUT="$(PATH="$FAKE_BIN_DIR:$PATH" FAKE_RPFILTER_ALL=1 FAKE_RPFILTER_DEFAULT=0 FAKE_RPFILTER_INTERFACE=0 bash "$PREFLIGHT" --role both)"
+STRICT_OUTPUT="$(PATH="$FAKE_BIN_DIR:$PATH" PQTUNNEL_REAL_IP="$REAL_IP" FAKE_RPFILTER_ALL=1 FAKE_RPFILTER_DEFAULT=0 FAKE_RPFILTER_INTERFACE=0 bash "$PREFLIGHT" --role both)"
 grep -q 'ipv4_rp_filter_all=1 (strict reverse-path filtering' <<< "$STRICT_OUTPUT"
 grep -q 'rp_filter_interface=lo configured=0 effective=1 mode=strict' <<< "$STRICT_OUTPUT"
 echo 'PASS: preflight distinguishes strict and loose rp_filter modes and reports effective interface values.'
