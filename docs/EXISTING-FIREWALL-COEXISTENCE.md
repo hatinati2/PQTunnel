@@ -74,3 +74,8 @@ The optional `scripts/site-to-site-coexistence-audit.py` inventory summarizes nf
 When `iptables -V` reports `nf_tables`, the `iptables-save` output is another view of the nftables-backed ruleset. Its rule totals overlap with the `nft -j list ruleset` total; do not add them together. Some compatibility expressions may be classified differently by the nft JSON summary, so review both views.
 
 The audit prints per-rule NOTRACK selector *types* (interface, protocol, address, port, connection, mark, or other) without their values. `selectors=none-detected` means no selector from the audit's recognized set was identified; it is not proof that a rule matches all traffic. The output is a privacy-preserving clue for lab design, not enough by itself to prove whether a specific PQTunnel flow overlaps a NOTRACK rule.
+
+
+### Opaque xtables-compat fallback in nft JSON
+
+Some libnftables versions serialize an xtables-compatibility statement as `{"xt": null}`. In that case, nft JSON confirms an opaque compatibility extension exists but does not expose its target name. The audit reports `xt_fallback` for any such extension and `xt_opaque` when the extension name is not available. A rule counted as `xt_opaque` must not be guessed to be NOTRACK, NAT, MARK, or a verdict. Use the sanitized `iptables-save` category output to identify known target types and keep the native nft JSON view marked as opaque. If `xt_opaque` is nonzero, the native summary alone is insufficient to assert that its target categories agree with the compatibility view.
