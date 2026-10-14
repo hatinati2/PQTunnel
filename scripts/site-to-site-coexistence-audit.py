@@ -9,7 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-CATEGORIES = ("notrack", "packet_mark", "nat", "drop_reject", "accept", "xt_fallback", "xt_opaque")
+CATEGORIES = ("notrack", "packet_mark", "nat", "drop_reject", "accept", "xt_fallback", "xt_opaque", "xt_match", "xt_target", "xt_watcher", "xt_type_unknown", "xt_target_other")
 
 def walk_keys(value: Any):
     if isinstance(value, dict):
@@ -21,16 +21,18 @@ def walk_keys(value: Any):
             yield from walk_keys(child)
 
 def walk_xt_entries(value: Any):
-    """Yield (target-or-match name, opaque) for xtables-compat fallback objects."""
+    """Yield (type, name, opaque) for xtables-compat fallback objects."""
     if isinstance(value, dict):
         if "xt" in value:
             xt_obj = value.get("xt")
             if isinstance(xt_obj, dict) and isinstance(xt_obj.get("name"), str):
-                yield xt_obj["name"].lower(), False
+                xt_type = xt_obj.get("type")
+                yield (xt_type.lower() if isinstance(xt_type, str) else "",
+                       xt_obj["name"].lower(), False)
             else:
                 # Some libnftables versions expose only {"xt": null}, which
                 # proves an xtables fallback exists but hides its extension name.
-                yield "", True
+                yield "", "", True
         for child in value.values():
             yield from walk_xt_entries(child)
     elif isinstance(value, list):
@@ -39,24 +41,41 @@ def walk_xt_entries(value: Any):
 
 def expr_categories(expr: Any) -> set[str]:
     keys = set(walk_keys(expr))
-    # iptables-nft can expose translated targets by name, or an opaque {"xt": null}
-    # fallback when native nftables translation is unavailable/incomplete.
+    # XT extension names are meaningful only together with their type.
+    # A match named "mark" is not the same as a MARK target.
     xt_entries = list(walk_xt_entries(expr))
-    xt_names = {name for name, opaque in xt_entries if name}
+    xt_targets = {name for xt_type, name, opaque in xt_entries
+                  if not opaque and xt_type == "target" and name}
     out: set[str] = set()
+    valid_types = {"match", "target", "watcher"}
     if xt_entries:
         out.add("xt_fallback")
-    if any(opaque for _, opaque in xt_entries):
+    if any(opaque for _, _, opaque in xt_entries):
         out.add("xt_opaque")
-    if "notrack" in keys or "notrack" in xt_names:
+    if any(not opaque and xt_type == "match" for xt_type, _, opaque in xt_entries):
+        out.add("xt_match")
+    if any(not opaque and xt_type == "target" for xt_type, _, opaque in xt_entries):
+        out.add("xt_target")
+    if any(not opaque and xt_type == "watcher" for xt_type, _, opaque in xt_entries):
+        out.add("xt_watcher")
+    if any(not opaque and xt_type not in valid_types
+           for xt_type, _, opaque in xt_entries):
+        out.add("xt_type_unknown")
+    recognized_targets = {
+        "notrack", "mark", "connmark", "dnat", "snat", "masquerade",
+        "redirect", "drop", "reject", "accept",
+    }
+    if any(name not in recognized_targets for name in xt_targets):
+        out.add("xt_target_other")
+    if "notrack" in keys or "notrack" in xt_targets:
         out.add("notrack")
-    if "mark" in keys or "mangle" in keys or {"mark", "connmark"} & xt_names:
+    if "mark" in keys or "mangle" in keys or {"mark", "connmark"} & xt_targets:
         out.add("packet_mark")
-    if {"dnat", "snat", "masquerade", "redirect"} & (keys | xt_names):
+    if {"dnat", "snat", "masquerade", "redirect"} & (keys | xt_targets):
         out.add("nat")
-    if {"drop", "reject"} & (keys | xt_names):
+    if {"drop", "reject"} & (keys | xt_targets):
         out.add("drop_reject")
-    if "accept" in keys or "accept" in xt_names:
+    if "accept" in keys or "accept" in xt_targets:
         out.add("accept")
     return out
 
