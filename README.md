@@ -14,6 +14,7 @@ PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets usin
 - Experimental single-peer server-to-server mode with IPv4/IPv6 CIDR allowlists (`--peer-prefixes`, `--peer-name`, `--local-prefixes`, `--remote-prefixes`) and overlapping-prefix rejection.
 - Length-prefixed IPv4/IPv6 packets, source-prefix anti-spoofing, bounded active/handshaking connections, bounded packet queue, and reconnect backoff.
 - Client transport can connect using a DNS name, IPv4 or bracketed IPv6 endpoint; `--network tcp4` and `--network tcp6` force the underlay address family.
+- Experimental selective TCP/UDP destination-port egress routing and inbound Iran-to-Germany port-forwarding helpers; see `docs/SELECTIVE-PORTS.fa.md` for limitations and test-host-only network guidance.
 - Server systemd unit and separate, explicit Ubuntu IPv4 forwarding/NAT script.
 - Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
 - GitHub Actions tests/cross-builds and release packaging.
@@ -97,6 +98,7 @@ Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build L
 
 ## Documentation
 
+- [Selective ports and forwarding guide (Persian)](docs/SELECTIVE-PORTS.fa.md)
 - [فارسی](README.fa.md)
 - [Security notes](SECURITY.md)
 - [Protocol notes](docs/PROTOCOL.md)
