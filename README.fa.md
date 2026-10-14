@@ -76,6 +76,24 @@ curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqt
 
 این راه‌انداز حالت‌های کنترل‌شدهٔ `install-server` و `install-client` را هم دارد. برای هر دو، گواهی‌ها و فایل‌های تنظیمات مختص نقش باید از قبل آماده و بازبینی شده باشند؛ ساخت کلاینت نیز به Go 1.24+ نصب‌شده نیاز دارد. `install-server` سرویس Listener و تنظیمات helper شبکه را آماده می‌کند؛ `--start` سرویس را اجرا می‌کند و فقط گزینهٔ جداگانهٔ `--apply-network` تنظیم route/NAT سمت Gateway را اعمال می‌کند. `install-client` سرویس Dialer را آماده می‌کند؛ `--start` واحد systemd را فعال می‌کند که helper شبکهٔ Dialer را اجرا کرده و پس از توقف سرویس rollback را فراخوانی می‌کند. هر دو حالت اگر فایل نصب موجود باشد از بازنویسی خودداری می‌کنند و بستهٔ سیستم‌عامل را خودکار نصب نمی‌کنند. IPهای مثال صرفاً برای مستندسازی هستند و باید با CIDRهای واقعی جایگزین شوند. این ابزار جای برنامهٔ بازیابی بازبینی‌شده را نمی‌گیرد و روی VPS تو اجرا نشده است؛ CI آن را فقط در runner دورریختنی آزمایش می‌کند.
 
+### فرمان یک‌خطی نصب و راه‌اندازی (حالت صریح و تغییردهندهٔ شبکه)
+
+این فرمان‌ها جدا از حالت پیش‌فرضِ فقط‌خواندنی هستند. پیش از استفاده، فایل‌های گواهی و تنظیمات را در مسیرهای مشخص‌شده روی همان میزبان آماده کن، مسیرهای نمونه را اصلاح کن، تمام تنظیمات را بازبینی کن و ابتدا در محیط آزمایشگاهی دورریختنی تست بگیر. این فرمان‌ها **هنوز برای VPS عملیاتی تو تأیید نشده‌اند**. فرمان آلمان سرویس را اجرا و helper شبکه را اعمال می‌کند؛ فرمان ایران سرویس Dialer را اجرا می‌کند که مسیرهای شبکه را تغییر می‌دهد. دسترسی کنسول خارج از باند را حفظ کن. این نصب‌کننده بستهٔ سیستم‌عامل نصب نمی‌کند، پورت فایروال ارائه‌دهنده را باز نمی‌کند و فایل نصب موجود را بازنویسی نمی‌کند.
+
+Gateway آلمان (نیازمند server.crt، server.key، ca.crt، فایل تنظیمات برنامه و فایل تنظیمات شبکهٔ بازبینی‌شده):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-server --pki-dir /root/pqtunnel-input/germany-pki --server-env-file /root/pqtunnel-input/germany-app.env --network-env-file /root/pqtunnel-input/germany-network.env --start --apply-network
+```
+
+Dialer ایران (نیازمند client.crt، client.key، ca.crt، فایل تنظیمات کلاینت و فایل تنظیمات شبکهٔ بازبینی‌شده):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-client --pki-dir /root/pqtunnel-input/iran-pki --client-env-file /root/pqtunnel-input/iran-app.env --network-env-file /root/pqtunnel-input/iran-network.env --start
+```
+
+مسیرهای بالا نمونه‌اند؛ این فرمان فایل‌های گواهی یا تنظیمات را ایجاد نمی‌کند. عملیات نصب و راه‌اندازی روی تمام وضعیت میزبان به‌صورت تراکنشی برگشت‌پذیر نیست و ابزار ارتقا هم نیست. این روش یک‌خطی اسکریپت فعلی شاخهٔ main را با دسترسی root اجرا می‌کند؛ پیش از استفاده، همان نسخهٔ دقیق اسکریپت را بازبینی کن. در مرحلهٔ فعلی پروژه فقط فرمان preflight فقط‌خواندنی را اجرا کن؛ این دو فرمان نصب/راه‌اندازی را روی سرورهای واقعی اجرا نکن.
+
 ## بسته‌بندی سرور Ubuntu
 
 فایل‌های نصب از تغییرات شبکه جدا شده‌اند تا نصب سرویس، بی‌سروصدا قواعد NAT یا فایروال را عوض نکند.
