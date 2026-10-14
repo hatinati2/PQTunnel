@@ -19,9 +19,10 @@ Do not mark PQTunnel stable until these items have been performed and their resu
 ## Packet and network tests
 
 - [ ] Run protocol tests and fuzzing for malformed/truncated/oversized frames and IP packets.
-- [ ] Keep `scripts/test-site-to-site-netns.sh` passing on Ubuntu 24.04 and 26.04. It exercises real Linux TUN devices and IPv4/IPv6 routes between disposable namespaces, but does not replace a two-VPS test or validate public routing, provider firewalls, NAT, or port forwarding.
+- [ ] Keep `scripts/test-site-to-site-netns.sh` and `scripts/test-selective-forward-netns.sh` passing on Ubuntu 24.04 and 26.04. They exercise real Linux TUN devices, dual-stack routes, and inbound TCP/UDP port-forward round trips over IPv4 and IPv6 in disposable namespaces. They do not replace a two-VPS test or validate provider firewalls, public routing, or production firewall/NAT integration.
 - [ ] Test two clients with unique addresses and reject duplicate identities/source spoofing.
 - [ ] Test reconnects, packet loss, long RTT, server restart, sleep/resume and TCP-over-TCP degradation.
+- [ ] Keep `scripts/test-selective-egress-netns.sh` passing on Ubuntu 24.04 and 26.04; extend coverage to additional port-list configurations, edge cases, and fail-safe behavior before stable release.
 - [ ] Verify IPv4 forwarding/NAT with and without UFW or another host firewall. Verify rollback from console access.
 - [ ] Check DNS and IPv6 on all desktop OSs using independent leak tests; test before tunnel, while connected, after transport loss, during sleep/resume and after reboot.
 - [ ] Confirm the Linux client route helper refuses ambiguous existing routes and that its explicit `down` path restores the original connectivity.
