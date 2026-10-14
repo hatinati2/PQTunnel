@@ -62,6 +62,11 @@ func (s *Server) Serve(ctx context.Context) error {
 	if siteToSite && s.PeerIdentity == "" {
 		return fmt.Errorf("site-to-site mode requires an expected peer identity")
 	}
+	if siteToSite {
+		if err := validateDisjointPrefixes(s.PeerPrefixes, s.LocalPrefixes, false); err != nil {
+			return fmt.Errorf("site-to-site peer and local prefixes: %w", err)
+		}
+	}
 	for _, pfx := range append(append([]netip.Prefix(nil), s.PeerPrefixes...), s.LocalPrefixes...) {
 		if !pfx.IsValid() || pfx != pfx.Masked() {
 			return fmt.Errorf("site-to-site prefixes must be valid masked CIDR networks")
