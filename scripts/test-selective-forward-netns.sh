@@ -303,6 +303,14 @@ table inet pqtunnel_trace {
     tcp sport 8080 meta nftrace set 1
     udp sport 5353 meta nftrace set 1
   }
+  chain forward_trace { type filter hook forward priority raw; policy accept;
+    tcp port 8080 meta nftrace set 1
+    udp port 5353 meta nftrace set 1
+  }
+  chain input_trace { type filter hook input priority raw; policy accept;
+    tcp sport 8080 meta nftrace set 1
+    udp sport 5353 meta nftrace set 1
+  }
 }
 NFT
 ip netns exec "$IR_NS" nft monitor trace >"$TRACE_LOG" 2>&1 &
