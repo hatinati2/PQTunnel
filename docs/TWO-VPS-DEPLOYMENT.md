@@ -28,13 +28,13 @@ Run the correct role-specific command separately on each VPS. These pinned comma
 Germany:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/5a9caca4012d27f49e6e252a2b9d631756e613d1/scripts/pqtunnel-bootstrap.sh | bash -s -- preflight --role gateway
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/e18383fd735d72800e3d4bede2c611e02c79f6b9/scripts/pqtunnel-bootstrap.sh | bash -s -- preflight --role gateway
 ```
 
 Iran:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/5a9caca4012d27f49e6e252a2b9d631756e613d1/scripts/pqtunnel-bootstrap.sh | bash -s -- preflight --role dialer
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/e18383fd735d72800e3d4bede2c611e02c79f6b9/scripts/pqtunnel-bootstrap.sh | bash -s -- preflight --role dialer
 ```
 
 Or run from a reviewed checkout:
