@@ -300,6 +300,8 @@ table inet pqtunnel_trace {
   chain preroute { type filter hook prerouting priority raw; policy accept;
     tcp dport { 8443, 9443 } meta nftrace set 1
     udp dport { 5354, 5355 } meta nftrace set 1
+    tcp sport 8080 meta nftrace set 1
+    udp sport 5353 meta nftrace set 1
   }
 }
 NFT
