@@ -47,6 +47,11 @@ func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) er
 	if cfg.Network != "tcp" && cfg.Network != "tcp4" && cfg.Network != "tcp6" {
 		return fmt.Errorf("network must be tcp, tcp4 or tcp6")
 	}
+	// RunClient owns the device lifetime while running. Closing it on cancellation
+	// unblocks the dedicated TUN reader goroutine if Read is waiting for a packet.
+	stopDeviceClose := context.AfterFunc(ctx, func() { _ = dev.Close() })
+	defer stopDeviceClose()
+
 	localPrefixes := cfg.LocalPrefixes
 	if len(localPrefixes) == 0 {
 		if !cfg.LocalIP.IsValid() {
