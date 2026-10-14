@@ -16,7 +16,7 @@ PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets usin
 - Client transport can connect using a DNS name, IPv4 or bracketed IPv6 endpoint; `--network tcp4` and `--network tcp6` force the underlay address family.
 - Server systemd unit and separate, explicit Ubuntu IPv4 forwarding/NAT script.
 - Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
-- GitHub Actions tests/cross-builds, a loopback TLS integration test, and a Linux network-namespace test using real TUN interfaces.
+- GitHub Actions tests/cross-builds, a loopback TLS integration test, and Linux network-namespace tests using real TUN interfaces, including inbound TCP/UDP port-forward round trips over IPv4 and IPv6.
 - Android `VpnService` scaffold and Linux/Windows TUN adapters.
 
 ## Important limitations
@@ -45,7 +45,7 @@ go vet ./...
 go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
 ```
 
-CI runs unit tests, vet and Linux builds on both Ubuntu 24.04 and 26.04, cross-compiles Linux amd64/arm64 and Windows amd64, and exercises real Linux TUN devices plus IPv4/IPv6 routes between disposable network namespaces. This lab test does not validate public VPS routing, provider firewalls, NAT/port forwarding, DNS leaks, the four cross-version pairings, Windows route management, or Android physical devices.
+CI runs unit tests, vet and Linux builds on both Ubuntu 24.04 and 26.04, cross-compiles Linux amd64/arm64 and Windows amd64, and exercises real Linux TUN devices plus IPv4/IPv6 routes between disposable network namespaces. These namespace tests cover the tunnel packet path and inbound TCP/UDP port-forward round trips over IPv4 and IPv6; they do not validate public VPS routing, provider firewalls or production NAT/firewall integration, selective outbound egress policy, DNS leaks, the four cross-version pairings, Windows route management, or Android physical devices.
 
 ## PKI workflow
 
