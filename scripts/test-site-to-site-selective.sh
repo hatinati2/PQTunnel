@@ -39,4 +39,14 @@ if grep -Eq 'dnat to |snat to ' <<<"$preview"; then
   exit 1
 fi
 
-echo 'PASS: selective site-to-site preview uses explicit IPv4/IPv6 NAT syntax.'
+# Run the real nftables parser in check-only mode. This does not apply rules.
+if ! command -v nft >/dev/null 2>&1; then
+  echo 'FAIL: nftables parser is required for this regression test' >&2
+  exit 1
+fi
+rules_file="$(mktemp)"
+trap 'rm -f "$tmp_config" "$rules_file"' EXIT
+printf '%s\\n' "$preview" >"$rules_file"
+sudo nft -c -f "$rules_file"
+
+echo 'PASS: preview has explicit IPv4/IPv6 NAT syntax and passes nft -c.'
