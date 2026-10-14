@@ -53,6 +53,24 @@ COMMIT
         self.assertEqual(parsed["rules"][("filter", "FORWARD")]["drop_reject"], 1)
         self.assertEqual(parsed["policies"][("filter", "FORWARD")], "DROP")
 
+    def test_notrack_scope_reports_selector_types_without_values(self):
+        fixture = """*raw
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -i wan0 -p tcp -s 203.0.113.7 --dport 443 -j NOTRACK
+-A PREROUTING -j NOTRACK
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(fixture)
+        self.assertEqual(parsed["rules"][("raw", "PREROUTING")]["notrack"], 2)
+        self.assertEqual(parsed["notrack_rules"][0], {
+            "table": "raw",
+            "chain": "PREROUTING",
+            "selectors": ["address", "interface", "port", "protocol"],
+        })
+        self.assertEqual(parsed["notrack_rules"][1]["selectors"], [])
+        self.assertNotIn("203.0.113.7", repr(parsed["notrack_rules"]))
+        self.assertNotIn("443", repr(parsed["notrack_rules"]))
+
     def test_accept_is_counted(self):
         parsed = audit.parse_iptables_save("*filter\n:FORWARD ACCEPT [0:0]\n-A FORWARD -j ACCEPT\nCOMMIT\n")
         self.assertEqual(parsed["rules"][("filter", "FORWARD")]["accept"], 1)

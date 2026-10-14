@@ -72,12 +72,42 @@ NAT_RE = re.compile(r"(?:-j|--jump)\s+(?:DNAT|SNAT|MASQUERADE|REDIRECT)\b", re.I
 DROP_RE = re.compile(r"(?:-j|--jump)\s+(?:DROP|REJECT)\b", re.I)
 ACCEPT_RE = re.compile(r"(?:-j|--jump)\s+ACCEPT\b", re.I)
 
+SELECTOR_PATTERNS: dict[str, re.Pattern[str]] = {
+    "interface": re.compile(r"(?:^|\s)(?:-i|--in-interface|-o|--out-interface)(?:\s|=)", re.I),
+    "protocol": re.compile(r"(?:^|\s)(?:-p|--protocol)(?:\s|=)", re.I),
+    "address": re.compile(r"(?:^|\s)(?:-s|--source|-d|--destination|--src|--dst)(?:\s|=)", re.I),
+    "port": re.compile(r"(?:^|\s)(?:--(?:sport|source-port|sports|dport|destination-port|dports))(?:\s|=)", re.I),
+    "connection": re.compile(r"(?:^|\s)(?:--(?:ctstate|state|ctstatus|ctdir|ctexpire))(?:\s|=)", re.I),
+    "mark": re.compile(r"(?:^|\s)(?:--(?:mark|ctmark|nfmark|nfmask|ctmask))(?:\s|=)", re.I),
+}
+OTHER_SELECTOR_RE = re.compile(
+    r"(?:^|\s)(?:--(?:tcp-flags|syn|icmp-type|icmpv6-type|uid-owner|gid-owner|socket-exists|"
+    r"limit|limit-burst|hashlimit|string|mac-source|length|frag|probability|src-type|dst-type|"
+    r"physdev-in|physdev-out))(?:\s|=)", re.I
+)
+IGNORABLE_MATCH_MODULES = {
+    "comment", "tcp", "udp", "icmp", "icmp6", "ipv6-icmp", "multiport",
+    "conntrack", "state", "mark", "connmark",
+}
+
+def iptables_selector_categories(line: str) -> list[str]:
+    """Return selector *types*, never selector values, for a saved iptables rule."""
+    selectors = {name for name, pattern in SELECTOR_PATTERNS.items() if pattern.search(line)}
+    if OTHER_SELECTOR_RE.search(line):
+        selectors.add("other")
+    modules = re.findall(r"(?:^|\s)(?:-m|--match)\s+([^\s]+)", line, re.I)
+    if any(module.lower() not in IGNORABLE_MATCH_MODULES for module in modules):
+        selectors.add("other")
+    return sorted(selectors)
+
+
 def parse_iptables_save(text: str) -> dict[str, Any]:
     table = None
     policies: dict[tuple[str, str], str] = {}
     rules: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {"rules": 0, **{cat: 0 for cat in CATEGORIES}}
     )
+    notrack_rules: list[dict[str, Any]] = []
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("*"):
@@ -100,12 +130,17 @@ def parse_iptables_save(text: str) -> dict[str, Any]:
             continue
         counts = rules[(table, fields[1])]
         counts["rules"] += 1
-        if NOTRACK_RE.search(line): counts["notrack"] += 1
+        if NOTRACK_RE.search(line):
+            counts["notrack"] += 1
+            notrack_rules.append({
+                "table": table, "chain": fields[1],
+                "selectors": iptables_selector_categories(line),
+            })
         if MARK_RE.search(line): counts["packet_mark"] += 1
         if NAT_RE.search(line): counts["nat"] += 1
         if DROP_RE.search(line): counts["drop_reject"] += 1
         if ACCEPT_RE.search(line): counts["accept"] += 1
-    return {"policies": policies, "rules": dict(rules)}
+    return {"policies": policies, "rules": dict(rules), "notrack_rules": notrack_rules}
 
 def run_readonly(argv: list[str]) -> tuple[int, str]:
     try:
@@ -155,11 +190,19 @@ def audit_iptables(command: str, family: str) -> None:
         if "nf_tables" in version.lower(): backend = "nf_tables"
         elif "legacy" in version.lower(): backend = "legacy"
     print(f"{family}_iptables_backend={backend}")
+    if backend == "nf_tables":
+        print(f"NOTE {family}_iptables_save is an overlapping compatibility view of nft_json; do not add the rule totals.")
     for table, chain in sorted(set(parsed["policies"]) | set(parsed["rules"])):
         counts = parsed["rules"].get((table, chain), {"rules": 0, **{cat: 0 for cat in CATEGORIES}})
         policy = parsed["policies"].get((table, chain), "-")
         if policy != "-" or any(counts[k] for k in ("notrack", "packet_mark", "nat", "drop_reject")):
             print(f"{family}_iptables_chain table={table} name={chain} policy={policy} {fmt_categories(counts)}")
+    chain_indices: dict[tuple[str, str], int] = defaultdict(int)
+    for rule in parsed.get("notrack_rules", []):
+        key = (rule["table"], rule["chain"])
+        chain_indices[key] += 1
+        selectors = ",".join(rule["selectors"]) or "none-detected"
+        print(f"{family}_iptables_notrack_scope table={key[0]} chain={key[1]} rule={chain_indices[key]} selectors={selectors}")
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only firewall inventory; raw rules are never printed.")
