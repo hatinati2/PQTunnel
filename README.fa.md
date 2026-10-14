@@ -44,7 +44,7 @@ go vet ./...
 go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
 ```
 
-CI تست‌ها و cross-build برای Linux amd64/arm64 و Windows amd64 انجام می‌دهد. ساخت Android هنوز در CI تأیید نمی‌شود.
+CI تست‌ها و cross-build برای Linux amd64/arm64 و Windows amd64 انجام می‌دهد؛ همچنین روی Ubuntu 24.04 و 26.04 تونل TUN واقعی و رفت‌وبرگشت پورت‌فوروارد ورودی TCP/UDP را برای IPv4 و IPv6 در network namespaceهای ایزوله آزمایش می‌کند. این تست‌ها سیاست خروج انتخابی، فایروال ارائه‌دهنده یا دو VPS واقعی را تأیید نمی‌کنند. ساخت Android هنوز در CI تأیید نمی‌شود.
 
 ## ساخت گواهی‌ها
 
