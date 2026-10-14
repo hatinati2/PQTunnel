@@ -84,7 +84,7 @@ cleanup() {
       ip netns exec "$IR_NS" ip -6 route show table 519 >&2
     fi
   fi
-  if [[ -n "$IR_NS" ]} && ip netns list | awk '{print $1}' | grep -Fxq "$IR_NS"; then
+  if [[ -n "$IR_NS" ]] && ip netns list | awk '{print $1}' | grep -Fxq "$IR_NS"; then
     if [[ -f "$STATE_FILE" && -f "$DIALER_CONFIG" ]]; then
       ip netns exec "$IR_NS" env PQTUNNEL_SITE_CONFIG="$DIALER_CONFIG" PQTUNNEL_STATE_DIR="$STATE_DIR" \
         bash "$ROOT/scripts/site-to-site-selective.sh" dialer-down >/dev/null 2>&1
