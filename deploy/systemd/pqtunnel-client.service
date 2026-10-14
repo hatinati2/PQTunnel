@@ -9,8 +9,8 @@ Type=simple
 EnvironmentFile=/etc/default/pqtunnel-client
 Environment=PQTUNNEL_SITE_CONFIG=/etc/pqtunnel/site-to-site.env
 ExecStartPre=/usr/local/lib/pqtunnel/site-to-site-selective.sh dialer-up
-ExecStart=/usr/local/bin/pqtunnel-client --server $PQTUNNEL_SERVER --server-name $PQTUNNEL_SERVER_NAME --ca /etc/pqtunnel/pki/ca.crt --cert /etc/pqtunnel/pki/client.crt --key /etc/pqtunnel/pki/client.key --local-prefixes $PQTUNNEL_LOCAL_PREFIXES --remote-prefixes $PQTUNNEL_REMOTE_PREFIXES --allowed-dst-ports $PQTUNNEL_ALLOWED_DST_PORTS --socket-mark 20560
-ExecStopPost=/usr/local/lib/pqtunnel/site-to-site-selective.sh dialer-down
+ExecStart=/usr/local/lib/pqtunnel/run-client.sh
+ExecStopPost=/usr/local/lib/pqtunnel/stop-client-network.sh
 Restart=on-failure
 RestartSec=3s
 TimeoutStopSec=15s
