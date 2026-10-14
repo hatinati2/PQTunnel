@@ -88,16 +88,16 @@ These commands are intentionally separate from the default read-only bootstrap. 
 Germany gateway (requires server.crt, server.key, ca.crt, a reviewed server env file, and a reviewed gateway network env file):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-server --pki-dir /root/pqtunnel-input/germany-pki --server-env-file /root/pqtunnel-input/germany-app.env --network-env-file /root/pqtunnel-input/germany-network.env --start --apply-network
+REF=REPLACE_WITH_REVIEWED_40_CHAR_SHA; curl -fsSL "https://raw.githubusercontent.com/hatinati2/PQTunnel/${REF}/scripts/pqtunnel-bootstrap.sh" | sudo env PQTUNNEL_REF="$REF" bash -s -- install-server --pki-dir /root/pqtunnel-input/germany-pki --server-env-file /root/pqtunnel-input/germany-app.env --network-env-file /root/pqtunnel-input/germany-network.env --start --apply-network
 ```
 
 Iran dialer (requires client.crt, client.key, ca.crt, a reviewed client env file, and a reviewed dialer network env file):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-client --pki-dir /root/pqtunnel-input/iran-pki --client-env-file /root/pqtunnel-input/iran-app.env --network-env-file /root/pqtunnel-input/iran-network.env --start
+REF=REPLACE_WITH_REVIEWED_40_CHAR_SHA; curl -fsSL "https://raw.githubusercontent.com/hatinati2/PQTunnel/${REF}/scripts/pqtunnel-bootstrap.sh" | sudo env PQTUNNEL_REF="$REF" bash -s -- install-client --pki-dir /root/pqtunnel-input/iran-pki --client-env-file /root/pqtunnel-input/iran-app.env --network-env-file /root/pqtunnel-input/iran-network.env --start
 ```
 
-The paths above are examples, not files created by the command. These operations are not transactional across the full host configuration and are not an upgrade path. The one-line form executes the repository's current main bootstrap as root, so review the exact script/ref before use. For the current project stage, run only the read-only preflight command above; do not run these install/launch lines on the live servers.
+The paths above are examples, not files created by the command. These operations are not transactional across the full host configuration and are not an upgrade path. Replace the SHA placeholder in each command with a reviewed, lowercase 40-character commit SHA. The bootstrap and downloaded source then use the same immutable commit; installer modes reject mutable refs such as main. For the current project stage, run only the read-only preflight command above; do not run these install/launch lines on the live servers.
 
 ## Ubuntu server packaging
 

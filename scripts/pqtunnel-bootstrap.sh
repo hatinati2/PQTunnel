@@ -4,8 +4,13 @@ set -Eeuo pipefail
 
 MODE=preflight
 if (($#)); then MODE="$1"; shift; fi
-RAW_BASE="https://raw.githubusercontent.com/hatinati2/PQTunnel/main"
-API_TARBALL="https://api.github.com/repos/hatinati2/PQTunnel/tarball/main"
+PQTUNNEL_REF="${PQTUNNEL_REF:-main}"
+if [[ ! "$PQTUNNEL_REF" =~ ^[A-Za-z0-9._/-]+$ || "$PQTUNNEL_REF" == *..* ]]; then
+  printf 'pqtunnel-bootstrap: invalid PQTUNNEL_REF; use main for read-only checks or a reviewed commit SHA for installation.\n' >&2
+  exit 2
+fi
+RAW_BASE="https://raw.githubusercontent.com/hatinati2/PQTunnel/${PQTUNNEL_REF}"
+API_TARBALL="https://api.github.com/repos/hatinati2/PQTunnel/tarball/${PQTUNNEL_REF}"
 WORK_DIR=
 
 fail() { printf 'pqtunnel-bootstrap: %s\n' "$*" >&2; exit 1; }
@@ -25,12 +30,13 @@ Install modes require pre-created certificates and manually reviewed config file
 One-line examples below change services/network state; use them only on a disposable lab host
 after review, and replace every example path with staged files on the destination host.
 
-  # Germany gateway — starts the daemon and applies gateway networking:
-  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-server --pki-dir /root/pqtunnel-input/germany-pki --server-env-file /root/pqtunnel-input/germany-app.env --network-env-file /root/pqtunnel-input/germany-network.env --start --apply-network
+  # Use a reviewed 40-character commit SHA, replacing the placeholder below:
+  REF=REPLACE_WITH_REVIEWED_40_CHAR_SHA; curl -fsSL "https://raw.githubusercontent.com/hatinati2/PQTunnel/${REF}/scripts/pqtunnel-bootstrap.sh" | sudo env PQTUNNEL_REF="$REF" bash -s -- install-server --pki-dir /root/pqtunnel-input/germany-pki --server-env-file /root/pqtunnel-input/germany-app.env --network-env-file /root/pqtunnel-input/germany-network.env --start --apply-network
 
-  # Iran dialer — starts the service, whose helper changes route state:
-  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-client --pki-dir /root/pqtunnel-input/iran-pki --client-env-file /root/pqtunnel-input/iran-app.env --network-env-file /root/pqtunnel-input/iran-network.env --start
+  REF=REPLACE_WITH_REVIEWED_40_CHAR_SHA; curl -fsSL "https://raw.githubusercontent.com/hatinati2/PQTunnel/${REF}/scripts/pqtunnel-bootstrap.sh" | sudo env PQTUNNEL_REF="$REF" bash -s -- install-client --pki-dir /root/pqtunnel-input/iran-pki --client-env-file /root/pqtunnel-input/iran-app.env --network-env-file /root/pqtunnel-input/iran-network.env --start
 
+Install modes require PQTUNNEL_REF to be a reviewed 40-character commit SHA. The bootstrap
+script and source tarball both use that same ref; mutable branches such as main are refused.
 --start is an explicit operational action. Gateway network apply requires the separate
 --apply-network flag. Starting the dialer unit applies its network helper. This project is
 experimental: retain console/out-of-band access, review every file, and test in a lab first.
@@ -120,6 +126,16 @@ check_no_existing() {
   for path in "$@"; do [[ ! -e "$path" ]] || fail "existing artifact detected at $path; refusing to overwrite."; done
 }
 
+require_pinned_source_ref() {
+  [[ "$PQTUNNEL_REF" =~ ^[0-9a-f]{40}$ ]] || fail 'install modes require PQTUNNEL_REF to be a reviewed, lowercase 40-character commit SHA; no changes made.'
+  if [[ -f ./go.mod && -f ./scripts/install-server.sh ]] && grep -Fxq 'module github.com/hatinati2/PQTunnel' ./go.mod; then
+    local checkout_sha
+    checkout_sha="$(git rev-parse HEAD 2>/dev/null)" || fail 'cannot verify the local checkout commit; use a clean checkout matching PQTUNNEL_REF.'
+    [[ "$checkout_sha" == "$PQTUNNEL_REF" ]] || fail "local checkout HEAD ($checkout_sha) does not match PQTUNNEL_REF ($PQTUNNEL_REF); no changes made."
+    [[ -z "$(git status --porcelain 2>/dev/null)" ]] || fail 'local checkout has uncommitted or untracked changes; use a clean checkout matching PQTUNNEL_REF.'
+  fi
+}
+
 case "$MODE" in
   -h|--help|help) usage; exit 0 ;;
   preflight)
@@ -167,6 +183,7 @@ case "$MODE" in
         *) echo "unknown install-server option: $1" >&2; usage >&2; exit 2 ;;
       esac
     done
+    require_pinned_source_ref
     [[ "$(id -u)" == 0 ]] || fail 'install-server requires root (sudo); no changes made.'
     [[ -n "$PKI_DIR" && -d "$PKI_DIR" ]] || fail '--pki-dir must contain server.crt, server.key and ca.crt.'
     check_os_prerequisites curl tar go openssl systemctl ip stat grep awk install
@@ -204,6 +221,7 @@ case "$MODE" in
         *) echo "unknown install-client option: $1" >&2; usage >&2; exit 2 ;;
       esac
     done
+    require_pinned_source_ref
     [[ "$(id -u)" == 0 ]] || fail 'install-client requires root (sudo); no changes made.'
     [[ -n "$PKI_DIR" && -d "$PKI_DIR" ]] || fail '--pki-dir must contain client.crt, client.key and ca.crt.'
     check_os_prerequisites curl tar go openssl systemctl ip nft sysctl stat grep awk install sha256sum sed
