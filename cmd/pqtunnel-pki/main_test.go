@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,7 +27,7 @@ func TestSafeIdentity(t *testing.T) {
 		{"../outside", false},
 		{"has space", false},
 		{"slash/name", false},
-		{"identity-with-more-than-sixty-four-characters-which-is-invalid", false},
+		{strings.Repeat("a", 65), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
