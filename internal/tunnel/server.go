@@ -63,7 +63,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		return fmt.Errorf("site-to-site mode requires an expected peer identity")
 	}
 	if siteToSite {
-		if err := validateDisjointPrefixes(s.PeerPrefixes, s.LocalPrefixes); err != nil {
+		if err := validateDisjointPrefixes(s.PeerPrefixes, s.LocalPrefixes, false); err != nil {
 			return fmt.Errorf("site-to-site peer and local prefixes: %w", err)
 		}
 	}
