@@ -133,10 +133,41 @@ COMMIT
             "table": "raw",
             "chain": "PREROUTING",
             "selectors": ["address", "interface", "port", "protocol"],
+            "mechanism": "direct_target",
         })
         self.assertEqual(parsed["notrack_rules"][1]["selectors"], [])
+        self.assertEqual(parsed["notrack_rules"][1]["mechanism"], "direct_target")
         self.assertNotIn("203.0.113.7", repr(parsed["notrack_rules"]))
         self.assertNotIn("443", repr(parsed["notrack_rules"]))
+
+    def test_notrack_mechanism_distinguishes_ct_option_and_direct_target(self):
+        fixture = """*raw
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -p tcp --dport 8443 -j CT --notrack
+-A PREROUTING -p udp --dport 9000 -j NOTRACK
+-A PREROUTING -p udp --dport 9001 -j CT --notrack
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(fixture)
+        observed = [rule["mechanism"] for rule in parsed["notrack_rules"]]
+        self.assertEqual(observed, [
+            "ct_target_option",
+            "direct_target",
+            "ct_target_option",
+        ])
+        self.assertNotIn("8443", repr(parsed["notrack_rules"]))
+        self.assertNotIn("9000", repr(parsed["notrack_rules"]))
+
+    def test_ct_xt_target_is_not_guessed_to_be_notrack(self):
+        fixture = {"nftables": [
+            {"rule": {"family": "ip", "table": "raw", "chain": "PREROUTING",
+                      "expr": [{"xt": {"type": "target", "name": "CT"}}]}},
+        ]}
+        parsed = audit.parse_nft_json(fixture)
+        counts = parsed["rules"][("ip", "raw", "PREROUTING")]
+        self.assertEqual(counts["xt_ct_target"], 1)
+        self.assertEqual(counts["xt_target_other"], 0)
+        self.assertEqual(counts["notrack"], 0)
 
     def test_accept_is_counted(self):
         parsed = audit.parse_iptables_save("*filter\n:FORWARD ACCEPT [0:0]\n-A FORWARD -j ACCEPT\nCOMMIT\n")
