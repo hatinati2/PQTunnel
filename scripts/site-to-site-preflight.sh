@@ -76,7 +76,12 @@ read_sysctl() {
     printf '%s=%s\n' "$label" "$value"
     case "$label:$value" in
       ipv4_forwarding:1|ipv6_forwarding:1) report WARN "$label is already enabled; helper apply may refuse this host because it could already be routing traffic." ;;
-      ipv4_rp_filter_all:1|ipv4_rp_filter_all:2|ipv4_rp_filter_default:1|ipv4_rp_filter_default:2) report WARN "$label is enabled/strict; verify policy-routing compatibility before any deployment." ;;
+      ipv4_rp_filter_all:0) report PASS "$label=0 (disabled at the all setting; per-interface values may still enable filtering)." ;;
+      ipv4_rp_filter_all:1) report WARN "$label=1 (strict reverse-path filtering at the all setting; effective per-interface mode is max(all, interface))." ;;
+      ipv4_rp_filter_all:2) report WARN "$label=2 (loose reverse-path filtering at the all setting; effective per-interface mode is max(all, interface))." ;;
+      ipv4_rp_filter_default:0) report PASS "$label=0 (default for newly created interfaces; existing interfaces may differ)." ;;
+      ipv4_rp_filter_default:1) report WARN "$label=1 (strict default for newly created interfaces; inspect effective current interface modes)." ;;
+      ipv4_rp_filter_default:2) report WARN "$label=2 (loose default for newly created interfaces; inspect effective current interface modes)." ;;
       *) report PASS "$label is readable (value=$value)." ;;
     esac
   else report WARN "$label could not be read."; fi
@@ -85,6 +90,48 @@ read_sysctl net.ipv4.ip_forward ipv4_forwarding
 read_sysctl net.ipv6.conf.all.forwarding ipv6_forwarding
 read_sysctl net.ipv4.conf.all.rp_filter ipv4_rp_filter_all
 read_sysctl net.ipv4.conf.default.rp_filter ipv4_rp_filter_default
+
+# Linux computes the effective rp_filter mode as max(conf/all, conf/<interface>).
+# conf/default is a template for newly created interfaces, not the current
+# effective value of every existing interface.
+read_rp_filter_interfaces() {
+  have sysctl || return 0
+  local all_value path iface iface_value effective mode strict_ifaces='' loose_ifaces=''
+
+  if ! all_value=$(sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null) || [[ ! "$all_value" =~ ^[012]$ ]]; then
+    report WARN 'Could not determine conf/all rp_filter; effective per-interface modes are unknown.'
+    return 0
+  fi
+
+  for path in /proc/sys/net/ipv4/conf/*/rp_filter; do
+    [[ -r "$path" ]] || continue
+    iface="${path%/rp_filter}"
+    iface="${iface##*/}"
+    case "$iface" in all|default) continue ;; esac
+
+    if ! iface_value=$(sysctl -n "net.ipv4.conf.${iface}.rp_filter" 2>/dev/null) || [[ ! "$iface_value" =~ ^[012]$ ]]; then
+      report WARN "rp_filter for interface $iface could not be read or interpreted."
+      continue
+    fi
+
+    effective=$all_value
+    if (( iface_value > effective )); then effective=$iface_value; fi
+    case "$effective" in
+      0) mode=disabled ;;
+      1) mode=strict; strict_ifaces+=" $iface" ;;
+      2) mode=loose; loose_ifaces+=" $iface" ;;
+    esac
+    printf 'rp_filter_interface=%s configured=%s effective=%s mode=%s\n' "$iface" "$iface_value" "$effective" "$mode"
+  done
+
+  if [[ -n "$strict_ifaces" ]]; then
+    report WARN "Effective strict reverse-path filtering detected on interface(s):${strict_ifaces}; asymmetric or policy-routed traffic may be affected."
+  fi
+  if [[ -n "$loose_ifaces" ]]; then
+    report WARN "Effective loose reverse-path filtering detected on interface(s):${loose_ifaces}."
+  fi
+}
+read_rp_filter_interfaces
 
 NOTRACK_FOUND=0
 MARK_RULE_FOUND=0
