@@ -28,13 +28,13 @@
 آلمان:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/49f884d00e09fd2686f0947d31b3599028c0fc91/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/558ba23bb947051f349e5ad76631d2d118881a62/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
 ```
 
 ایران:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/49f884d00e09fd2686f0947d31b3599028c0fc91/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/558ba23bb947051f349e5ad76631d2d118881a62/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
 ```
 
 یا از checkout بازبینی‌شدهٔ مخزن:
@@ -53,6 +53,10 @@ bash scripts/site-to-site-preflight.sh --role dialer
 - **PASS:** فقط همان بررسی خواندنی موفق بوده؛ اتصال واقعی دو میزبان اثبات نمی‌شود.
 
 preflight نسخهٔ سیستم‌عامل و ابزارها، مسیرها و تعارض policy ruleها، جدول‌های 518/519، forwarding و reverse-path-filter، موفقیت/شکست پرس‌وجوی فایروال، وجود فایل‌ها و سرویس‌ها، مجوزهای کلید خصوصی و ـ در صورت وجود فایل‌ها ـ انقضای گواهی، اعتبار زنجیره با CA و تطابق گواهی با کلید خصوصی را بررسی می‌کند. خطای پرس‌وجوی فایروال **WARN/نامشخص** است، نه نشانهٔ خالی‌بودن فایروال. محتوای گواهی و کلید خصوصی چاپ نمی‌شود.
+
+preflight همچنین رابط‌های TUN/TAP غیر از `pqtun0` را، در صورت امکان خواندن، گزارش می‌کند. این هشدار مالکیت رابط را مشخص نمی‌کند؛ پیش از هر تغییر شبکه باید کاربرد و مالک آن بررسی شود.
+
+مقادیر `rp_filter` عبارت‌اند از `0=disabled`، `1=strict` و `2=loose`. مقدار مؤثر هر رابط برابر بیشینهٔ `net.ipv4.conf.all.rp_filter` و مقدار همان رابط است؛ `conf.default` فقط مقدار پیش‌فرض رابط‌های تازه‌ساخته‌شده است. حالت strict ممکن است ترافیک نامتقارن یا policy-routed را حذف کند. این مقادیر را صرفاً برای عبور از preflight تغییر نده؛ تغییر آن‌ها می‌تواند روی تونل‌ها و مسیرهای دیگر میزبان هم اثر بگذارد.
 
 نسخهٔ فعلی preflight همچنین خروجی قوانین nftables/iptables/ip6tables را برای `NOTRACK` و قواعد packet-marking بررسی می‌کند. هشدار `NOTRACK` یعنی بعضی جریان‌ها ممکن است از conntrack عبور نکنند و با SNAT/DNAT تداخل داشته باشند؛ packet markهای موجود هم ممکن است با policy routing تداخل کنند. این هشدارها مالک هر قانون را مشخص نمی‌کنند و به‌معنی تأیید سازگاری نیستند. برای معیارهای طراحی و تست همزیستی با فایروال موجود، [یادداشت طراحی](EXISTING-FIREWALL-COEXISTENCE.md) را ببین.
 
