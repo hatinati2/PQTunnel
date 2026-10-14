@@ -83,16 +83,16 @@ curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqt
 Gateway آلمان (نیازمند server.crt، server.key، ca.crt، فایل تنظیمات برنامه و فایل تنظیمات شبکهٔ بازبینی‌شده):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-server --pki-dir /root/pqtunnel-input/germany-pki --server-env-file /root/pqtunnel-input/germany-app.env --network-env-file /root/pqtunnel-input/germany-network.env --start --apply-network
+REF=REPLACE_WITH_REVIEWED_40_CHAR_SHA; curl -fsSL "https://raw.githubusercontent.com/hatinati2/PQTunnel/${REF}/scripts/pqtunnel-bootstrap.sh" | sudo env PQTUNNEL_REF="$REF" bash -s -- install-server --pki-dir /root/pqtunnel-input/germany-pki --server-env-file /root/pqtunnel-input/germany-app.env --network-env-file /root/pqtunnel-input/germany-network.env --start --apply-network
 ```
 
 Dialer ایران (نیازمند client.crt، client.key، ca.crt، فایل تنظیمات کلاینت و فایل تنظیمات شبکهٔ بازبینی‌شده):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-client --pki-dir /root/pqtunnel-input/iran-pki --client-env-file /root/pqtunnel-input/iran-app.env --network-env-file /root/pqtunnel-input/iran-network.env --start
+REF=REPLACE_WITH_REVIEWED_40_CHAR_SHA; curl -fsSL "https://raw.githubusercontent.com/hatinati2/PQTunnel/${REF}/scripts/pqtunnel-bootstrap.sh" | sudo env PQTUNNEL_REF="$REF" bash -s -- install-client --pki-dir /root/pqtunnel-input/iran-pki --client-env-file /root/pqtunnel-input/iran-app.env --network-env-file /root/pqtunnel-input/iran-network.env --start
 ```
 
-مسیرهای بالا نمونه‌اند؛ این فرمان فایل‌های گواهی یا تنظیمات را ایجاد نمی‌کند. عملیات نصب و راه‌اندازی روی تمام وضعیت میزبان به‌صورت تراکنشی برگشت‌پذیر نیست و ابزار ارتقا هم نیست. این روش یک‌خطی اسکریپت فعلی شاخهٔ main را با دسترسی root اجرا می‌کند؛ پیش از استفاده، همان نسخهٔ دقیق اسکریپت را بازبینی کن. در مرحلهٔ فعلی پروژه فقط فرمان preflight فقط‌خواندنی را اجرا کن؛ این دو فرمان نصب/راه‌اندازی را روی سرورهای واقعی اجرا نکن.
+مسیرهای بالا نمونه‌اند؛ این فرمان فایل‌های گواهی یا تنظیمات را ایجاد نمی‌کند. عملیات نصب و راه‌اندازی روی تمام وضعیت میزبان به‌صورت تراکنشی برگشت‌پذیر نیست و ابزار ارتقا هم نیست. جایگزینِ SHA را با یک commit SHA بازبینی‌شدهٔ ۴۰ رقمی و حروف کوچک عوض کن؛ هم bootstrap و هم سورس دانلودشده از همان commit ثابت استفاده می‌کنند و حالت نصب، ref متغیر مثل main را رد می‌کند. در مرحلهٔ فعلی پروژه فقط فرمان preflight فقط‌خواندنی را اجرا کن؛ این دو فرمان نصب/راه‌اندازی را روی سرورهای واقعی اجرا نکن.
 
 ## بسته‌بندی سرور Ubuntu
 
