@@ -66,6 +66,19 @@ STATE_FILE="$STATE_DIR/site-selective-dialer.state"
 PEER_PREFIXES="10.66.0.2/32,fd42:7061:7475::2/128"
 LOCAL_PREFIXES="10.10.0.1/32,fd10:10::1/128"
 
+wait_for_ipv6_addr_ready() {
+  local ns="$1" iface="$2" addr="$3" line i
+  for i in $(seq 1 100); do
+    line="$(ip -n "$ns" -6 addr show dev "$iface" 2>/dev/null | grep -F "$addr/" || true)"
+    if [[ -n "$line" && "$line" != *tentative* && "$line" != *dadfailed* ]]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "FAIL: IPv6 address $addr on $ns/$iface did not finish duplicate-address detection" >&2
+  return 1
+}
+
 cleanup() {
   local rc=$?
   trap - EXIT INT TERM
@@ -191,10 +204,17 @@ ip -n "$VIS_NS" addr add 198.18.0.3/24 dev "$VIS_IF"
 ip -n "$VIS_NS" -6 addr add 2001:db8:feed::3/64 dev "$VIS_IF"
 ip -n "$VIS_NS" link set "$VIS_IF" up
 
+# Wait for IPv6 DAD before using global addresses; otherwise Linux may choose
+# an unusable loopback source while tentative addresses are still converging.
+wait_for_ipv6_addr_ready "$IR_NS" "$IR_IF" "2001:db8:feed::2"
+wait_for_ipv6_addr_ready "$DE_NS" "$DE_IF" "2001:db8:feed::1"
+wait_for_ipv6_addr_ready "$VIS_NS" "$VIS_IF" "2001:db8:feed::3"
+
 ip -n "$DE_NS" link add lande type dummy
 ip -n "$DE_NS" addr add 10.10.0.1/24 dev lande
 ip -n "$DE_NS" -6 addr add fd10:10::1/64 dev lande
 ip -n "$DE_NS" link set lande up
+wait_for_ipv6_addr_ready "$DE_NS" lande "fd10:10::1"
 
 cat > "$LAB_DIR/tcp4.py" <<'PY'
 import socket
@@ -265,6 +285,7 @@ wait_for_tun || { echo 'FAIL: Germany gateway TUN did not appear' >&2; exit 1; }
 ip -n "$DE_NS" addr add 10.66.0.1/24 dev pqtun0
 ip -n "$DE_NS" -6 addr add fd42:7061:7475::1/64 dev pqtun0
 ip -n "$DE_NS" link set pqtun0 up
+wait_for_ipv6_addr_ready "$DE_NS" pqtun0 "fd42:7061:7475::1"
 
 wait_for_listener() {
   local i
@@ -349,6 +370,7 @@ wait_for_client() {
   return 1
 }
 wait_for_client || { echo 'FAIL: Iran dialer did not establish the tunnel to Germany' >&2; exit 1; }
+wait_for_ipv6_addr_ready "$IR_NS" pqtun0 "fd42:7061:7475::2"
 
 # The isolated dialer has no internet-provider default route. Install explicit
 # remote LAN routes in the main table so Linux reverse-path filtering accepts
