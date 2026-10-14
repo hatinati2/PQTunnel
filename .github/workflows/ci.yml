@@ -78,6 +78,8 @@ jobs:
       - name: Test read-only VPS preflight on disposable runner
         shell: bash
         run: bash scripts/test-site-to-site-preflight.sh
+      - name: Test read-only firewall coexistence audit parsers
+        run: python3 scripts/test-site-to-site-coexistence-audit.py
       - name: Install nftables parser for check-only regression test
         run: |
           sudo apt-get update
