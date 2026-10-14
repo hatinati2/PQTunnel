@@ -1,7 +1,8 @@
 package tunnel
 
 import (
-	"context"\n\t"encoding/binary"
+	"context",
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
