@@ -37,3 +37,8 @@ Do not mark PQTunnel stable until these items have been performed and their resu
 - [ ] State clearly that certificate signatures currently use classical Ed25519.
 - [ ] Publish a threat model and independently review the implementation.
 - [ ] Do not use claims such as "unbreakable", "fully post-quantum", "leak-proof" or "production-ready" without evidence.
+- [ ] Run end-to-end tests for both listener/dialer directions with domain, IPv4 and IPv6 transport endpoints.
+- [ ] Test the four Ubuntu 24.04/26.04 pairings (24↔24, 24↔26, 26↔24, 26↔26).
+- [ ] Test routed IPv4/IPv6 prefix allowlists, spoofed source rejection, route overlap behavior, reconnects and DNS behavior in a lab.
+- [ ] Validate endpoint-route pinning before default-route changes; verify IPv4/IPv6 behavior and rollback from console/out-of-band access.
+- [ ] Do not publish as a stable release until a dual-stack site-to-site route/firewall helper and end-to-end tests pass.

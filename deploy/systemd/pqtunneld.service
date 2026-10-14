@@ -7,8 +7,9 @@ Documentation=https://github.com/hatinati2/PQTunnel
 [Service]
 Type=simple
 EnvironmentFile=-/etc/default/pqtunneld
+# For site-to-site mode set PEER_PREFIXES, LOCAL_PREFIXES, PEER_NAME and MAX_CLIENTS=1.
 ExecStartPre=/bin/sh -ec 'ip link show pqtun0 >/dev/null 2>&1 || ip tuntap add dev pqtun0 mode tun; ip address replace 10.66.0.1/24 dev pqtun0; ip link set dev pqtun0 up'
-ExecStart=/usr/local/sbin/pqtunneld --listen ${PQTUNNEL_LISTEN} --tls-cert /etc/pqtunnel/pki/server.crt --tls-key /etc/pqtunnel/pki/server.key --client-ca /etc/pqtunnel/pki/ca.crt --tun pqtun0 --max-clients ${PQTUNNEL_MAX_CLIENTS}
+ExecStart=/usr/local/sbin/pqtunneld
 Restart=on-failure
 RestartSec=3s
 TimeoutStopSec=15s

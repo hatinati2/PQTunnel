@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hatinati2/PQTunnel/internal/packet"
+	"github.com/hatinati2/PQTunnel/internal/prefixset"
 	"github.com/hatinati2/PQTunnel/internal/protocol"
 )
 
@@ -20,21 +21,39 @@ const maxQueuedPackets = 512
 type SocketProtector func(fd uintptr) error
 
 type ClientConfig struct {
-	ServerAddress string
-	ServerName    string
-	LocalIP       netip.Addr
-	TLSConfig     *tls.Config
-	ProtectSocket SocketProtector
+	ServerAddress  string
+	ServerName     string
+	Network        string         // tcp (auto), tcp4, or tcp6
+	LocalIP        netip.Addr     // legacy single-host mode; ignored when LocalPrefixes is set
+	LocalPrefixes  []netip.Prefix // allowed local source/destination ranges for site-to-site links
+	RemotePrefixes []netip.Prefix // permitted remote source/destination ranges; empty means unrestricted
+	TLSConfig      *tls.Config
+	ProtectSocket  SocketProtector
 }
 
-// RunClient reads packets from the local TUN once, then reconnects the TCP/TLS
-// transport with bounded buffering and exponential backoff. IPv6 is dropped.
+// RunClient carries IPv4 and IPv6 layer-3 packets over a TLS connection.
+// When prefixes are configured, it enforces source/destination policy for a
+// server-to-server routed link. With legacy LocalIP only, it remains host mode.
 func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) error {
-	if !cfg.LocalIP.IsValid() || !cfg.LocalIP.Is4() {
-		return fmt.Errorf("local IP must be a valid IPv4 address")
-	}
-	if cfg.TLSConfig == nil || cfg.TLSConfig.ServerName == "" || cfg.ServerAddress == "" {
+	if cfg.ServerAddress == "" || cfg.TLSConfig == nil || cfg.TLSConfig.ServerName == "" {
 		return fmt.Errorf("server address, server name and TLS config are required")
+	}
+	if cfg.Network == "" {
+		cfg.Network = "tcp"
+	}
+	if cfg.Network != "tcp" && cfg.Network != "tcp4" && cfg.Network != "tcp6" {
+		return fmt.Errorf("network must be tcp, tcp4 or tcp6")
+	}
+	localPrefixes := cfg.LocalPrefixes
+	if len(localPrefixes) == 0 {
+		if !cfg.LocalIP.IsValid() {
+			return fmt.Errorf("local IP or local prefixes are required")
+		}
+		bits := 128
+		if cfg.LocalIP.Is4() {
+			bits = 32
+		}
+		localPrefixes = []netip.Prefix{netip.PrefixFrom(cfg.LocalIP, bits)}
 	}
 	out := make(chan []byte, maxQueuedPackets)
 	readErr := make(chan error, 1)
@@ -43,20 +62,26 @@ func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) er
 		for {
 			n, err := dev.Read(buf)
 			if err != nil {
-				readErr <- err
+				select {
+				case readErr <- err:
+				default:
+				}
 				return
 			}
 			if n <= 0 {
 				continue
 			}
-			src, _, p, err := packet.IPv4(buf[:n])
-			if err != nil || src != cfg.LocalIP {
+			src, dst, p, err := packet.IP(buf[:n])
+			if err != nil || !prefixset.Contains(localPrefixes, src) {
+				continue
+			}
+			if len(cfg.RemotePrefixes) > 0 && !prefixset.Contains(cfg.RemotePrefixes, dst) {
 				continue
 			}
 			copyPacket := append([]byte(nil), p...)
 			select {
 			case out <- copyPacket:
-			default: /* bounded queue: drop under congestion */
+			default: // bounded queue: drop under congestion
 			}
 		}
 	}()
@@ -92,11 +117,10 @@ func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) er
 				}
 			}
 		}()
-		readSessionErr := readPackets(sessionCtx, conn, dev, cfg.LocalIP)
+		readSessionErr := readPackets(sessionCtx, conn, dev, localPrefixes, cfg.RemotePrefixes)
 		stopConnClose()
 		cancel()
 		_ = conn.Close()
-		// Discard backlog from a dead stream; TCP applications will retransmit.
 		drain(out)
 		select {
 		case <-ctx.Done():
@@ -106,7 +130,7 @@ func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) er
 		default:
 		}
 		if readSessionErr != nil && !errors.Is(readSessionErr, net.ErrClosed) && !errors.Is(readSessionErr, io.EOF) {
-			// Reconnect on transport/protocol errors; no classical TLS fallback is attempted.
+			// Transport/protocol errors trigger reconnect; no classical TLS fallback.
 			_ = readSessionErr
 		}
 		if !sleepContext(ctx, backoff) {
@@ -127,7 +151,7 @@ func dialTLS(ctx context.Context, cfg ClientConfig) (*tls.Conn, error) {
 			return protectErr
 		}
 	}
-	raw, err := d.DialContext(ctx, "tcp", cfg.ServerAddress)
+	raw, err := d.DialContext(ctx, cfg.Network, cfg.ServerAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +178,7 @@ func writePackets(ctx context.Context, conn net.Conn, packets <-chan []byte) err
 	}
 }
 
-func readPackets(ctx context.Context, conn net.Conn, dev io.Writer, localIP netip.Addr) error {
+func readPackets(ctx context.Context, conn net.Conn, dev io.Writer, localPrefixes, remotePrefixes []netip.Prefix) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -163,8 +187,11 @@ func readPackets(ctx context.Context, conn net.Conn, dev io.Writer, localIP neti
 		if err != nil {
 			return err
 		}
-		_, dst, normalized, err := packet.IPv4(p)
-		if err != nil || dst != localIP {
+		src, dst, normalized, err := packet.IP(p)
+		if err != nil || !prefixset.Contains(localPrefixes, dst) {
+			continue
+		}
+		if len(remotePrefixes) > 0 && !prefixset.Contains(remotePrefixes, src) {
 			continue
 		}
 		n, err := dev.Write(normalized)
@@ -186,6 +213,7 @@ func drain(ch chan []byte) {
 		}
 	}
 }
+
 func sleepContext(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()

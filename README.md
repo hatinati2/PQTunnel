@@ -1,8 +1,8 @@
 # PQTunnel
 
-**Version:** 0.2.0-dev · **Status:** experimental prototype, not production-ready.
+**Version:** 0.3.0-dev · **Status:** experimental prototype, not production-ready.
 
-PQTunnel is an experimental IPv4 layer-3 tunnel using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
+PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
 
 > **Security notice:** This repository has not undergone an independent security audit. Do not use it to protect sensitive activity or deploy it on a production server. The key exchange is post-quantum hybrid; certificate signatures are currently Ed25519 (classical), so the entire authentication system is not post-quantum. No cryptographic construction is unbreakable by definition.
 
@@ -10,8 +10,10 @@ PQTunnel is an experimental IPv4 layer-3 tunnel using TCP with TLS 1.3 and a str
 
 - TLS 1.3 only, with `X25519MLKEM768` explicitly selected and no classical key-exchange fallback.
 - Mutual TLS for client authentication.
-- Per-client IPv4 identity taken from the signed client certificate's Common Name; clients must receive unique addresses in `10.66.0.0/24`.
-- Length-prefixed IPv4 packets, source-address anti-spoofing, bounded active/handshaking connections, bounded packet queue, and reconnect backoff.
+- Legacy single-host mode maps an IP address in the client certificate Common Name to a host prefix.
+- Experimental single-peer server-to-server mode with IPv4/IPv6 CIDR allowlists (`--peer-prefixes`, `--peer-name`, `--local-prefixes`, `--remote-prefixes`) and overlapping-prefix rejection.
+- Length-prefixed IPv4/IPv6 packets, source-prefix anti-spoofing, bounded active/handshaking connections, bounded packet queue, and reconnect backoff.
+- Client transport can connect using a DNS name, IPv4 or bracketed IPv6 endpoint; `--network tcp4` and `--network tcp6` force the underlay address family.
 - Server systemd unit and separate, explicit Ubuntu IPv4 forwarding/NAT script.
 - Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
 - GitHub Actions tests/cross-builds and release packaging.
@@ -43,7 +45,7 @@ go vet ./...
 go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
 ```
 
-CI performs tests and cross-compiles Linux amd64/arm64 and Windows amd64. The Android application is not part of the verified CI build.
+CI runs unit tests, vet and Linux builds on both Ubuntu 24.04 and 26.04, and cross-compiles Linux amd64/arm64 and Windows amd64. These jobs are not end-to-end network tests; the Android application is not part of the verified CI build.
 
 ## PKI workflow
 
@@ -52,11 +54,15 @@ Create the CA and server certificate in a trusted development environment, not o
 ```sh
 go run ./cmd/pqtunnel-pki init --out ./pki --server-name vpn.example.com
 go run ./cmd/pqtunnel-pki issue-client --out ./pki --ip 10.66.0.2
+# For named site-to-site peer certificates:
+go run ./cmd/pqtunnel-pki issue-peer --out ./pki --name iran
+# To create a second server certificate under the same CA:
+go run ./cmd/pqtunnel-pki issue-server --out ./pki --server-name iran.example.com --prefix iran
 ```
 
 Issue a separate client certificate for each device with a unique IP address. Never copy `ca.key` to the server or any client. The server needs only `server.crt`, `server.key`, and `ca.crt`; each client needs `ca.crt` plus its own client certificate and private key. Transfer private keys over a separate trusted channel.
 
-The current certificate signatures use Ed25519. The `X25519MLKEM768` KEM does not make these signatures post-quantum.
+The current certificate signatures use Ed25519. The `X25519MLKEM768` KEM does not make these signatures post-quantum. For site-to-site mode, configure both `PQTUNNEL_PEER_PREFIXES` (allowed peer source/return-route CIDRs) and `PQTUNNEL_LOCAL_PREFIXES` (allowed listener-side destination CIDRs) in `/etc/default/pqtunneld`, set `PQTUNNEL_PEER_NAME`, and set `PQTUNNEL_MAX_CLIENTS=1`. The peer name must exactly match the issued client/peer certificate Common Name. Listener certificate paths can be selected using `PQTUNNEL_TLS_CERT` and `PQTUNNEL_TLS_KEY` when reversing the roles.
 
 ## Ubuntu server packaging
 
@@ -94,6 +100,7 @@ Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build L
 - [فارسی](README.fa.md)
 - [Security notes](SECURITY.md)
 - [Protocol notes](docs/PROTOCOL.md)
+- [Experimental server-to-server guide (Persian)](docs/SITE-TO-SITE.fa.md)
 - [Pre-release checklist](docs/RELEASE-CHECKLIST.md)
 
 ## License

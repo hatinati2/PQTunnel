@@ -26,6 +26,10 @@ func main() {
 		initCA(os.Args[2:])
 	case "issue-client":
 		issueClient(os.Args[2:])
+	case "issue-server":
+		issueAdditionalServer(os.Args[2:])
+	case "issue-peer":
+		issuePeer(os.Args[2:])
 	default:
 		usage()
 	}
@@ -93,6 +97,120 @@ func issueServer(out, host string, ca *x509.Certificate, caKey ed25519.PrivateKe
 		die(err.Error())
 	}
 	writePrivateKey(filepath.Join(out, "server.key"), priv)
+}
+
+func loadCA(out string) (*x509.Certificate, ed25519.PrivateKey) {
+	caPEM, err := os.ReadFile(filepath.Join(out, "ca.crt"))
+	if err != nil {
+		die(err.Error())
+	}
+	block, _ := pem.Decode(caPEM)
+	if block == nil {
+		die("invalid ca.crt")
+	}
+	ca, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		die(err.Error())
+	}
+	keyPEM, err := os.ReadFile(filepath.Join(out, "ca.key"))
+	if err != nil {
+		die(err.Error())
+	}
+	kb, _ := pem.Decode(keyPEM)
+	if kb == nil {
+		die("invalid ca.key")
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(kb.Bytes)
+	if err != nil {
+		die(err.Error())
+	}
+	key, ok := parsed.(ed25519.PrivateKey)
+	if !ok {
+		die("ca.key is not an Ed25519 key")
+	}
+	return ca, key
+}
+
+func issueAdditionalServer(args []string) {
+	fs := flag.NewFlagSet("issue-server", flag.ExitOnError)
+	out := fs.String("out", "./pki", "existing CA directory (contains ca.crt and private ca.key)")
+	host := fs.String("server-name", "", "DNS name or IP SAN for this server certificate")
+	prefix := fs.String("prefix", "peer", "safe filename prefix, e.g. iran or abroad")
+	_ = fs.Parse(args)
+	if *host == "" {
+		die("--server-name is required")
+	}
+	if !safeIdentity(*prefix) {
+		die("--prefix must contain 1-64 letters, digits, dot, underscore or hyphen")
+	}
+	ca, caKey := loadCA(*out)
+	issueServerNamed(*out, *host, *prefix+"-server", ca, caKey)
+	fmt.Printf("Issued server certificate for %s as %s-server.crt/.key. Keep CA key offline.\n", *host, *prefix)
+}
+
+func issuePeer(args []string) {
+	fs := flag.NewFlagSet("issue-peer", flag.ExitOnError)
+	out := fs.String("out", "./pki", "existing CA directory (contains ca.crt and private ca.key)")
+	name := fs.String("name", "", "peer identity; letters, digits, dot, underscore or hyphen")
+	_ = fs.Parse(args)
+	if !safeIdentity(*name) {
+		die("--name is required and must contain 1-64 letters, digits, dot, underscore or hyphen")
+	}
+	ca, caKey := loadCA(*out)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		die(err.Error())
+	}
+	tpl := &x509.Certificate{
+		SerialNumber: serial(),
+		Subject:      pkix.Name{CommonName: *name, OrganizationalUnit: []string{"PQTunnel peer"}},
+		NotBefore:    time.Now().Add(-5 * time.Minute), NotAfter: time.Now().AddDate(1, 0, 0),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, ca, pub, caKey)
+	if err != nil {
+		die(err.Error())
+	}
+	stem := filepath.Join(*out, "peer-"+*name)
+	if err := writePEM(stem+".crt", "CERTIFICATE", der, 0644); err != nil {
+		die(err.Error())
+	}
+	writePrivateKey(stem+".key", priv)
+	fmt.Printf("Issued peer identity %s. Install only %s.crt, %s.key and ca.crt on the peer; keep ca.key offline.\n", *name, stem, stem)
+}
+
+func issueServerNamed(out, host, stem string, ca *x509.Certificate, caKey ed25519.PrivateKey) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		die(err.Error())
+	}
+	tpl := &x509.Certificate{SerialNumber: serial(), Subject: pkix.Name{CommonName: host}, NotBefore: time.Now().Add(-5 * time.Minute), NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		tpl.IPAddresses = []net.IP{ip.AsSlice()}
+	} else {
+		tpl.DNSNames = []string{host}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, ca, pub, caKey)
+	if err != nil {
+		die(err.Error())
+	}
+	if err := writePEM(filepath.Join(out, stem+".crt"), "CERTIFICATE", der, 0644); err != nil {
+		die(err.Error())
+	}
+	writePrivateKey(filepath.Join(out, stem+".key"), priv)
+}
+
+func safeIdentity(s string) bool {
+	if len(s) < 1 || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func issueClient(args []string) {
@@ -182,5 +300,5 @@ func serial() *big.Int {
 }
 func die(s string) { fmt.Fprintln(os.Stderr, "pqtunnel-pki:", s); os.Exit(1) }
 func usage() {
-	die("usage: pqtunnel-pki init --server-name vpn.example.com --out ./pki | issue-client --ip 10.66.0.2 --out ./pki")
+	die("usage: pqtunnel-pki init --server-name vpn.example.com --out ./pki | issue-server --server-name peer.example.com --prefix peer --out ./pki | issue-peer --name iran --out ./pki | issue-client --ip 10.66.0.2 --out ./pki")
 }
