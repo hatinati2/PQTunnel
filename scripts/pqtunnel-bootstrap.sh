@@ -21,14 +21,21 @@ PQTunnel bootstrap. The default "preflight" mode is read-only.
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | bash -s -- preflight --role gateway
   bash scripts/pqtunnel-bootstrap.sh check-config --kind gateway --app-env APP.env --network-env NETWORK.env
 
-Install modes require pre-created certificates and manually reviewed config files:
-  install-server --pki-dir DIR --server-env-file FILE --network-env-file FILE [--start] [--apply-network]
-  install-client --pki-dir DIR --client-env-file FILE --network-env-file FILE [--start]
+Install modes require pre-created certificates and manually reviewed config files.
+One-line examples below change services/network state; use them only on a disposable lab host
+after review, and replace every example path with staged files on the destination host.
+
+  # Germany gateway — starts the daemon and applies gateway networking:
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-server --pki-dir /root/pqtunnel-input/germany-pki --server-env-file /root/pqtunnel-input/germany-app.env --network-env-file /root/pqtunnel-input/germany-network.env --start --apply-network
+
+  # Iran dialer — starts the service, whose helper changes route state:
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-client --pki-dir /root/pqtunnel-input/iran-pki --client-env-file /root/pqtunnel-input/iran-app.env --network-env-file /root/pqtunnel-input/iran-network.env --start
 
 --start is an explicit operational action. Gateway network apply requires the separate
 --apply-network flag. Starting the dialer unit applies its network helper. This project is
 experimental: retain console/out-of-band access, review every file, and test in a lab first.
-No OS packages are installed automatically; existing installations are not overwritten.
+No OS packages are installed automatically; Go 1.24+ and role-specific certificates/configs
+must be staged first. Existing installations are not overwritten.
 USAGE
 }
 
