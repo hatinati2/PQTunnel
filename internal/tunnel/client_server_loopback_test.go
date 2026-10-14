@@ -212,6 +212,7 @@ func TestRunClientLoopbackTLSFiltersOutboundAndInboundPackets(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("client did not deliver an allowed inbound packet to the device")
 		}
+	}
 
 	cancel()
 	select {
