@@ -9,7 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-CATEGORIES = ("notrack", "packet_mark", "nat", "drop_reject", "accept")
+CATEGORIES = ("notrack", "packet_mark", "nat", "drop_reject", "accept", "xt_fallback", "xt_opaque")
 
 def walk_keys(value: Any):
     if isinstance(value, dict):
@@ -20,26 +20,34 @@ def walk_keys(value: Any):
         for child in value:
             yield from walk_keys(child)
 
-def walk_xt_names(value: Any):
-    """Yield names of xtables-compat expressions (not rule selector values)."""
+def walk_xt_entries(value: Any):
+    """Yield (target-or-match name, opaque) for xtables-compat fallback objects."""
     if isinstance(value, dict):
-        xt_obj = value.get("xt")
-        if isinstance(xt_obj, dict):
-            name = xt_obj.get("name")
-            if isinstance(name, str):
-                yield name.lower()
+        if "xt" in value:
+            xt_obj = value.get("xt")
+            if isinstance(xt_obj, dict) and isinstance(xt_obj.get("name"), str):
+                yield xt_obj["name"].lower(), False
+            else:
+                # Some libnftables versions expose only {"xt": null}, which
+                # proves an xtables fallback exists but hides its extension name.
+                yield "", True
         for child in value.values():
-            yield from walk_xt_names(child)
+            yield from walk_xt_entries(child)
     elif isinstance(value, list):
         for child in value:
-            yield from walk_xt_names(child)
+            yield from walk_xt_entries(child)
 
 def expr_categories(expr: Any) -> set[str]:
     keys = set(walk_keys(expr))
-    # iptables-nft can expose targets as {"xt":{"type":"target","name":"NOTRACK"}}
-    # when nftables has no native translation for that xtables extension.
-    xt_names = set(walk_xt_names(expr))
+    # iptables-nft can expose translated targets by name, or an opaque {"xt": null}
+    # fallback when native nftables translation is unavailable/incomplete.
+    xt_entries = list(walk_xt_entries(expr))
+    xt_names = {name for name, opaque in xt_entries if name}
     out: set[str] = set()
+    if xt_entries:
+        out.add("xt_fallback")
+    if any(opaque for _, opaque in xt_entries):
+        out.add("xt_opaque")
     if "notrack" in keys or "notrack" in xt_names:
         out.add("notrack")
     if "mark" in keys or "mangle" in keys or {"mark", "connmark"} & xt_names:
