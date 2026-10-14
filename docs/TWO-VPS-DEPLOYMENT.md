@@ -98,3 +98,14 @@ The helper's rollback tests inject nftables apply failure in a disposable namesp
 ## Current decision
 
 **Read-only preflight and offline config review only. No live installation, service start, route/NAT apply, firewall change or other state-changing VPS command is authorized by this runbook.** The next decision depends on the two redacted preflight summaries and more isolated two-host testing.
+
+
+## Stage 1b — detailed read-only firewall coexistence inventory
+
+After the initial preflight, run this inventory from a reviewed checkout. It summarizes nftables chain hooks/policies and counts of NOTRACK, packet-mark, NAT and verdict rules in nftables/iptables, without printing raw rules, addresses, ports or counters:
+
+```sh
+python3 scripts/site-to-site-coexistence-audit.py --role gateway
+```
+
+Use `--role dialer` on the Iran host. This is read-only, but table and chain names may still reveal service names; review its output before sharing. It helps choose a disposable-lab backend and does not authorize a live firewall change.
