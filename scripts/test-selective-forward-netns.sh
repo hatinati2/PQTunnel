@@ -344,6 +344,12 @@ wait_for_client() {
 }
 wait_for_client || { echo 'FAIL: Iran dialer did not establish the tunnel to Germany' >&2; exit 1; }
 
+# The isolated dialer has no internet-provider default route. Install explicit
+# remote LAN routes in the main table so Linux reverse-path filtering accepts
+# valid packets arriving from those remote prefixes.
+ip -n "$IR_NS" route add 10.10.0.0/24 dev pqtun0
+ip -n "$IR_NS" -6 route add fd10:10::/64 dev pqtun0
+
 # Capture both sides of the TUN link to diagnose whether the forward packet is
 # emitted by the dialer and injected by the gateway. Captures remain namespace-local.
 ip netns exec "$IR_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)' >"$IR_TUN_LOG" 2>&1 & IR_TUN_PID=$!
