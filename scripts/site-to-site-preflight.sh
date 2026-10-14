@@ -72,7 +72,14 @@ else report FAIL 'iproute2 command "ip" is required for meaningful network prefl
 
 read_sysctl() {
   key=$1; label=$2
-  if have sysctl && value=$(sysctl -n "$key" 2>/dev/null); then printf '%s=%s\n' "$label" "$value"; report PASS "$label is readable (value=$value)."; else report WARN "$label could not be read."; fi
+  if have sysctl && value=$(sysctl -n "$key" 2>/dev/null); then
+    printf '%s=%s\n' "$label" "$value"
+    case "$label:$value" in
+      ipv4_forwarding:1|ipv6_forwarding:1) report WARN "$label is already enabled; helper apply may refuse this host because it could already be routing traffic." ;;
+      ipv4_rp_filter_all:1|ipv4_rp_filter_all:2|ipv4_rp_filter_default:1|ipv4_rp_filter_default:2) report WARN "$label is enabled/strict; verify policy-routing compatibility before any deployment." ;;
+      *) report PASS "$label is readable (value=$value)." ;;
+    esac
+  else report WARN "$label could not be read."; fi
 }
 read_sysctl net.ipv4.ip_forward ipv4_forwarding
 read_sysctl net.ipv6.conf.all.forwarding ipv6_forwarding
