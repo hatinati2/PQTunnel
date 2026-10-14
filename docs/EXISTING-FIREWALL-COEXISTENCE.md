@@ -89,3 +89,10 @@ The privacy-preserving audit counts xtables-compat entries by their declared typ
 ### Distinguishing NOTRACK mechanisms without exposing rules
 
 The audit separately labels the iptables-save form as `direct_target` (the NOTRACK target) or `ct_target_option` (the CT target with the `--notrack` option). It reports only these fixed labels, table/chain names, and selector categories; it does not print ports, addresses, or raw expressions. In nft JSON, a named CT target is reported as `xt_ct_target` but is not automatically counted as NOTRACK, because the XT fallback may not expose the target options. Compare the two views at the same raw chain; matching counts are useful evidence but do not reveal the packet values matched by the rules.
+
+
+### Optional privacy-preserving transport-port overlap check
+
+The server's default listener port is TCP 8443. To check a planned listener port against existing IPv4/IPv6 iptables-save NOTRACK rules without printing the port values stored in those rules, pass `--candidate-tcp-port 8443` along with the correct role (`dialer` or `gateway`). Use your configured listener port instead if it differs from the default.
+
+The report adds only `endpoint_port_side` and `candidate_tcp_overlap` to the summary of each relevant raw-chain NOTRACK rule. `match` means the known numeric protocol/port conditions are compatible with the candidate endpoint port; `no_match` means known protocol/port conditions exclude it; `unknown` means other selectors, service-name ports, opposite-side port predicates, or an unsupported form prevent a reliable determination. The command never prints actual rule port values or raw expressions. A `match` is a potential overlap, not proof of a connection failure: NOTRACK disables netfilter conntrack for matched packets, but does not itself disable the host TCP socket state machine. It can affect rules or NAT that rely on conntrack, so keep the fail-closed deployment guard in place.
