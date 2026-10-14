@@ -109,3 +109,40 @@ func testCA(t *testing.T) (*x509.Certificate, ed25519.PrivateKey) {
 	}
 	return cert, priv
 }
+
+func TestValidateCAKeyRejectsMismatchedKey(t *testing.T) {
+	caCert, _ := testCA(t)
+	_, otherKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCAKey(caCert, otherKey); err == nil {
+		t.Fatal("expected mismatched CA key to be rejected")
+	}
+}
+
+func TestValidateCAKeyRejectsNonCA(t *testing.T) {
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	tpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject: pkix.Name{CommonName: "not a CA"},
+		NotBefore: now.Add(-time.Minute),
+		NotAfter: now.Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, pub, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCAKey(cert, key); err == nil {
+		t.Fatal("expected non-CA certificate to be rejected")
+	}
+}
