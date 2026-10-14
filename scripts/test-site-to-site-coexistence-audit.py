@@ -28,6 +28,32 @@ class AuditParserTests(unittest.TestCase):
         self.assertEqual(counts["drop_reject"], 1)
         self.assertEqual(parsed["chains"][("inet", "host", "forward")]["policy"], "drop")
 
+    def test_nft_json_xtables_compat_targets_are_classified(self):
+        fixture = {"nftables": [
+            {"table": {"family": "ip", "name": "raw"}},
+            {"chain": {"family": "ip", "table": "raw", "name": "PREROUTING",
+                       "type": "filter", "hook": "prerouting", "prio": -300,
+                       "policy": "accept"}},
+            {"rule": {"family": "ip", "table": "raw", "chain": "PREROUTING",
+                      "expr": [{"xt": {"type": "target", "name": "NOTRACK"}}]}},
+            {"rule": {"family": "ip", "table": "raw", "chain": "PREROUTING",
+                      "expr": [{"xt": {"type": "target", "name": "DNAT"}}]}},
+            {"rule": {"family": "ip", "table": "raw", "chain": "PREROUTING",
+                      "expr": [{"xt": {"type": "target", "name": "MARK"}}]}},
+            {"rule": {"family": "ip", "table": "raw", "chain": "PREROUTING",
+                      "expr": [{"xt": {"type": "target", "name": "DROP"}}]}},
+            {"rule": {"family": "ip", "table": "raw", "chain": "PREROUTING",
+                      "expr": [{"xt": {"type": "target", "name": "ACCEPT"}}]},
+        ]}
+        parsed = audit.parse_nft_json(fixture)
+        counts = parsed["rules"][("ip", "raw", "PREROUTING")]
+        self.assertEqual(counts["rules"], 5)
+        self.assertEqual(counts["notrack"], 1)
+        self.assertEqual(counts["nat"], 1)
+        self.assertEqual(counts["packet_mark"], 1)
+        self.assertEqual(counts["drop_reject"], 1)
+        self.assertEqual(counts["accept"], 1)
+
     def test_iptables_categories_and_chain_policy(self):
         fixture = """*raw
 :PREROUTING ACCEPT [0:0]
