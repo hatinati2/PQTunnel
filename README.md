@@ -16,7 +16,7 @@ PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets usin
 - Client transport can connect using a DNS name, IPv4 or bracketed IPv6 endpoint; `--network tcp4` and `--network tcp6` force the underlay address family.
 - Server systemd unit and separate, explicit Ubuntu IPv4 forwarding/NAT script.
 - Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
-- GitHub Actions tests/cross-builds and release packaging.
+- GitHub Actions tests/cross-builds, a loopback TLS integration test, and a Linux network-namespace test using real TUN interfaces.
 - Android `VpnService` scaffold and Linux/Windows TUN adapters.
 
 ## Important limitations
@@ -45,7 +45,7 @@ go vet ./...
 go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
 ```
 
-CI runs unit tests, vet and Linux builds on both Ubuntu 24.04 and 26.04, and cross-compiles Linux amd64/arm64 and Windows amd64. These jobs are not end-to-end network tests; the Android application is not part of the verified CI build.
+CI runs unit tests, vet and Linux builds on both Ubuntu 24.04 and 26.04, cross-compiles Linux amd64/arm64 and Windows amd64, and exercises real Linux TUN devices plus IPv4/IPv6 routes between disposable network namespaces. This lab test does not validate public VPS routing, provider firewalls, NAT/port forwarding, DNS leaks, the four cross-version pairings, Windows route management, or Android physical devices.
 
 ## PKI workflow
 
