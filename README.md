@@ -62,12 +62,12 @@ The current certificate signatures use Ed25519. The `X25519MLKEM768` KEM does no
 
 The deployment assets are intentionally split into installation and network setup so that installing the service does not silently modify firewall/NAT policy.
 
-1. Ensure the server PKI directory contains `server.crt`, `server.key`, and `ca.crt` only. Do not place `ca.key` on the server.
-2. Review `scripts/install-server.sh` and `deploy/systemd/pqtunneld.service` before use. The installer builds the daemon with Go 1.24+ and installs the binary, certificates, and systemd unit. By default it does not start/enable the service. The optional `--enable` flag starts it.
-3. `scripts/server-network.sh` supports `status`, `apply --wan-if <actual-uplink-interface>`, and `rollback`. It manages only the dedicated `ip pqtunnel` nftables table and a dedicated sysctl file. It does not update UFW, open TCP port 8443, or change unrelated firewall rules. Review the script and take a backup before applying network changes.
-4. Open the TCP listening port using the host provider firewall and host firewall policy appropriate for your environment. Do not assume the network helper does this.
+1. Ensure the server PKI directory contains `server.crt`, `server.key`, and `ca.crt`; do not place `ca.key` on the server. The installer validates that the server certificate chains to the supplied CA and matches its private key.
+2. Review `scripts/install-server.sh` and `deploy/systemd/pqtunneld.service`. The installer accepts either a source checkout (requires Go 1.24+) or a matching Linux release bundle containing a prebuilt `pqtunneld`. It refuses to overwrite a detected existing installation. By default it does not start/enable the service; `--enable` starts and enables it. This is not an upgrade tool.
+3. `scripts/server-network.sh` is deliberately restricted to a dedicated test host. It refuses to apply if IPv4 forwarding is already enabled, UFW is active, or existing nftables/iptables rules are detected. Its forward chain uses `policy drop`, allowing only traffic between `pqtun0` and the selected WAN interface for the client subnet; other forwarded IPv4 traffic will be blocked. Do not use it on an existing router, multi-tunnel host, or production VPS without a specific firewall review.
+4. The network helper does not open TCP port 8443 in the provider firewall. Firewall integration (including UFW) must be separately reviewed.
 
-Do not run server network scripts on a remote host without console/out-of-band recovery access. The project maintainer has not tested these scripts against your existing firewall, provider firewall, or routing rules.
+Do not run server installation or network scripts on a remote host without console/out-of-band recovery access. These scripts have not been tested against your existing server, active tunnels, provider firewall, or routing rules. Do not deploy on your current VPS until this review and a separate lab test are complete.
 
 ## Linux client route helper
 

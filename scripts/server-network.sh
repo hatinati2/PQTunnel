@@ -10,23 +10,26 @@ NFT_TABLE="pqtunnel"
 
 usage() {
   cat <<'USAGE'
-Explicitly enable/disable IPv4 forwarding and NAT for PQTunnel on Ubuntu.
+Explicitly enable/disable IPv4 forwarding and NAT for PQTunnel on a dedicated Ubuntu test host.
 
 Usage:
   sudo ./scripts/server-network.sh status
   sudo ./scripts/server-network.sh apply --wan-if eth0
   sudo ./scripts/server-network.sh rollback
 
-apply requires pqtun0 to exist (start pqtunneld first). It creates only the
-nftables table named 'ip pqtunnel' and /etc/sysctl.d/99-pqtunnel.conf; it refuses
-to overwrite either if already present. It does NOT modify UFW or other firewall
-rules. If UFW/another firewall blocks forwarding, configure that separately.
-rollback removes only this script's table/file and restores the previous value
-of net.ipv4.ip_forward if it is still set to 1.
+SAFETY: apply refuses to run when IPv4 forwarding is already enabled, UFW is active,
+or existing nftables/iptables rules are detected. It is intended only for a dedicated
+host where forwarding is currently disabled and no existing firewall policy is installed.
+The forward chain has a DROP policy and allows only client-subnet traffic between pqtun0
+and the selected WAN interface. Other forwarded IPv4 traffic will be blocked.
+
+This script does not open TCP port 8443 in the provider firewall. Review the script first
+and maintain console/out-of-band recovery access. Do not use this helper on an existing
+router, multi-tunnel host, or production VPS without a network/firewall-specific review.
 USAGE
 }
 fail() { echo "server-network: $*" >&2; exit 1; }
-need_root() { [[ $EUID -eq 0 ]] || fail 'run with sudo on the Ubuntu server'; }
+need_root() { [[ $EUID -eq 0 ]] || fail 'run with sudo on a dedicated Ubuntu test host'; }
 
 MODE="${1:-}"
 if [[ "$MODE" == -h || "$MODE" == --help || -z "$MODE" ]]; then usage; exit 0; fi
@@ -47,8 +50,7 @@ case "$MODE" in
     if nft list table ip "$NFT_TABLE" >/dev/null 2>&1; then echo 'nftables table ip pqtunnel: present'; else echo 'nftables table ip pqtunnel: absent'; fi
     [[ -f "$SYSCTL_FILE" ]] && echo "$SYSCTL_FILE: present" || echo "$SYSCTL_FILE: absent"
     exit 0 ;;
-  apply) ;;
-  rollback) ;;
+  apply|rollback) ;;
   *) usage >&2; exit 2 ;;
 esac
 need_root
@@ -58,14 +60,30 @@ command -v sysctl >/dev/null || fail 'sysctl is required'
 
 if [[ "$MODE" == apply ]]; then
   [[ "$WAN_IF" =~ ^[a-zA-Z0-9_.:-]{1,15}$ ]] || fail 'supply a valid --wan-if interface name'
+  [[ "$WAN_IF" != "$TUN_IF" ]] || fail '--wan-if must not be pqtun0'
   ip link show dev "$WAN_IF" >/dev/null 2>&1 || fail "WAN interface '$WAN_IF' not found"
   ip link show dev "$TUN_IF" >/dev/null 2>&1 || fail "TUN interface '$TUN_IF' not found; start pqtunneld first"
   [[ ! -e "$STATE_FILE" ]] || fail "state file already exists ($STATE_FILE); inspect it or use rollback first"
   [[ ! -e "$SYSCTL_FILE" ]] || fail "$SYSCTL_FILE already exists; refusing to overwrite it"
   nft list table ip "$NFT_TABLE" >/dev/null 2>&1 && fail "nftables table ip $NFT_TABLE already exists; refusing to modify it"
 
-  install -d -o root -g root -m 0700 "$STATE_DIR"
   old_forward="$(cat /proc/sys/net/ipv4/ip_forward)"
+  [[ "$old_forward" == 0 ]] || fail 'IPv4 forwarding is already enabled. Refusing to change a host that may already be routing traffic; no changes were made.'
+  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    fail 'UFW is active. This helper intentionally refuses to modify or bypass it; integrate and test the forwarding rules separately. No changes were made.'
+  fi
+  ruleset="$(nft list ruleset 2>/dev/null || true)"
+  if grep -Eq '^[[:space:]]*table[[:space:]]' <<< "$ruleset"; then
+    fail 'an existing nftables ruleset was detected. Refusing to add a base chain that could conflict with existing rules; no changes were made.'
+  fi
+  if command -v iptables-save >/dev/null; then
+    iptables_rules="$(iptables-save 2>/dev/null || true)"
+    if grep -qE '^-A[[:space:]]' <<< "$iptables_rules"; then
+      fail 'existing iptables rules were detected. Refusing to change global forwarding without reviewing them; no changes were made.'
+    fi
+  fi
+
+  install -d -o root -g root -m 0700 "$STATE_DIR"
   printf '%s\n%s\n' "$WAN_IF" "$old_forward" > "$STATE_FILE"
   chmod 0600 "$STATE_FILE"
   tmp="$(mktemp)"
@@ -73,8 +91,8 @@ if [[ "$MODE" == apply ]]; then
   cat > "$tmp" <<NFT
  table ip pqtunnel {
    chain forward {
-     type filter hook forward priority filter; policy accept;
-     iifname "$TUN_IF" oifname "$WAN_IF" ip saddr $SUBNET counter accept
+     type filter hook forward priority filter; policy drop;
+     iifname "$TUN_IF" oifname "$WAN_IF" ip saddr $SUBNET ct state new,established,related counter accept
      iifname "$WAN_IF" oifname "$TUN_IF" ip daddr $SUBNET ct state established,related counter accept
    }
    chain postrouting {
@@ -90,11 +108,9 @@ NFT
     rm -f "$STATE_FILE"
     fail 'apply failed; attempted to restore the original forwarding value'
   fi
-  echo 'PQTunnel IPv4 forwarding/NAT rules applied.'
-  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q 'Status: active'; then
-    echo 'WARNING: UFW is active. It may still block forwarded traffic; this script did not modify UFW.' >&2
-  fi
-  echo 'Review `sudo nft list table ip pqtunnel` and test from one client before adding more devices.'
+  echo 'PQTunnel IPv4 forwarding/NAT rules applied on this dedicated host.'
+  echo 'WARNING: the nftables forward chain uses policy drop; other forwarded IPv4 traffic is blocked.'
+  echo 'TCP port 8443 must be reviewed separately in the host/provider firewall.'
 else
   [[ -f "$STATE_FILE" ]] || fail "state file $STATE_FILE not found; nothing to roll back"
   mapfile -t state < "$STATE_FILE"
@@ -110,5 +126,5 @@ else
   current_forward="$(cat /proc/sys/net/ipv4/ip_forward)"
   if [[ "$current_forward" == 1 ]]; then sysctl -w "net.ipv4.ip_forward=$old_forward" >/dev/null; fi
   rm -f "$STATE_FILE"
-  echo 'PQTunnel NAT table removed; prior IPv4 forwarding value restored where safe.'
+  echo 'PQTunnel nftables table removed; prior IPv4 forwarding value restored where safe.'
 fi
