@@ -136,8 +136,15 @@ func loadCA(out string) (*x509.Certificate, ed25519.PrivateKey) {
 }
 
 func validateCAKey(ca *x509.Certificate, key ed25519.PrivateKey) error {
-	if ca == nil || !ca.IsCA || ca.KeyUsage&x509.KeyUsageCertSign == 0 {
+	if ca == nil || !ca.IsCA || !ca.BasicConstraintsValid || ca.KeyUsage&x509.KeyUsageCertSign == 0 {
 		return fmt.Errorf("ca.crt is not a valid certificate-signing CA")
+	}
+	now := time.Now()
+	if now.Before(ca.NotBefore) || !now.Before(ca.NotAfter) {
+		return fmt.Errorf("ca.crt is not currently valid")
+	}
+	if len(key) != ed25519.PrivateKeySize {
+		return fmt.Errorf("ca.key has an invalid Ed25519 private-key length")
 	}
 	pub, ok := ca.PublicKey.(ed25519.PublicKey)
 	if !ok || !bytes.Equal(pub, key.Public().(ed25519.PublicKey)) {
