@@ -87,20 +87,25 @@ read_sysctl net.ipv4.conf.all.rp_filter ipv4_rp_filter_all
 read_sysctl net.ipv4.conf.default.rp_filter ipv4_rp_filter_default
 
 if have nft; then
-  NFT_TABLES=$(nft list tables 2>/dev/null || true)
-  if [[ -n "$NFT_TABLES" ]]; then
-    NFT_COUNT=$(printf '%s\n' "$NFT_TABLES" | grep -c '^table ' || true)
-    report WARN "Existing nftables tables detected (count=$NFT_COUNT); review before any apply."
-    if printf '%s\n' "$NFT_TABLES" | grep -Eq '^table inet (pqtunnel_selective|pqtunnel_gateway)$'; then report WARN 'A PQTunnel-named nftables table already exists.'; fi
-  else report PASS 'No nftables tables were reported (permission errors may appear empty).'; fi
+  if NFT_TABLES=$(nft list tables 2>/dev/null); then
+    if [[ -n "$NFT_TABLES" ]]; then
+      NFT_COUNT=$(printf '%s\n' "$NFT_TABLES" | grep -c '^table ' || true)
+      report WARN "Existing nftables tables detected (count=$NFT_COUNT); review before any apply."
+      if printf '%s\n' "$NFT_TABLES" | grep -Eq '^table inet (pqtunnel_selective|pqtunnel_gateway)$'; then report WARN 'A PQTunnel-named nftables table already exists.'; fi
+    else report PASS 'nftables query succeeded and reported no tables.'; fi
+  else report WARN 'nftables query failed; state is unknown (possibly permissions or missing kernel support).'; fi
 else report WARN 'nft unavailable; nftables state was not checked.'; fi
 
 if have ufw; then
-  UFW_STATUS=$(ufw status 2>/dev/null | awk 'NR==1{print $2}')
-  if [[ "$UFW_STATUS" == active ]]; then report WARN 'UFW is active; current network helper deliberately refuses this host.'; else report PASS 'UFW is not reported active.'; fi
+  if UFW_OUTPUT=$(ufw status 2>/dev/null); then
+    UFW_STATUS=$(printf '%s\n' "$UFW_OUTPUT" | awk 'NR==1{print $2}')
+    if [[ "$UFW_STATUS" == active ]]; then report WARN 'UFW is active; current network helper deliberately refuses this host.'; elif [[ "$UFW_STATUS" == inactive ]]; then report PASS 'UFW reports inactive.'; else report WARN 'UFW status output was not understood; state is unknown.'; fi
+  else report WARN 'UFW status query failed; firewall state is unknown.'; fi
 else report WARN 'ufw unavailable; UFW status could not be checked.'; fi
 if have iptables-save; then
-  if iptables-save 2>/dev/null | grep -qE '^-A[[:space:]]'; then report WARN 'Existing iptables rules detected; review before any apply.'; else report PASS 'No iptables -A rules were reported.'; fi
+  if IPTABLES_OUTPUT=$(iptables-save 2>/dev/null); then
+    if grep -qE '^-A[[:space:]]' <<< "$IPTABLES_OUTPUT"; then report WARN 'Existing iptables rules detected; review before any apply.'; else report PASS 'iptables-save query succeeded and reported no -A rules.'; fi
+  else report WARN 'iptables-save query failed; legacy firewall state is unknown.'; fi
 else report WARN 'iptables-save unavailable; legacy iptables rules were not checked.'; fi
 
 check_file() {
@@ -120,6 +125,40 @@ check_file() {
   fi
 }
 
+
+check_certificate_bundle() {
+  local cert="$1" key="$2" ca="$3" purpose="$4" label="$5"
+  local cert_pub key_pub
+  [[ -s "$cert" && -s "$key" && -s "$ca" ]] || return 0
+
+  if openssl x509 -in "$cert" -checkend 0 -noout >/dev/null 2>&1; then
+    report PASS "$label certificate is parseable and not expired."
+  else
+    report FAIL "$label certificate is expired or unreadable."
+  fi
+  if openssl verify -purpose "$purpose" -CAfile "$ca" "$cert" >/dev/null 2>&1; then
+    report PASS "$label certificate verifies against the configured CA for $purpose."
+  else
+    report FAIL "$label certificate does not verify against the configured CA for $purpose."
+  fi
+  if cert_pub="$(openssl x509 -in "$cert" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)" &&
+     key_pub="$(openssl pkey -in "$key" -passin pass: -pubout -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)" &&
+     [[ -n "$cert_pub" && -n "$key_pub" ]]; then
+    if [[ "$cert_pub" == "$key_pub" ]]; then report PASS "$label certificate matches its private key."; else report FAIL "$label certificate does not match its private key."; fi
+  else
+    report FAIL "$label public/private key consistency could not be verified without prompting."
+  fi
+}
+check_ca_certificate() {
+  local cert="$1" label="$2"
+  [[ -s "$cert" ]] || return 0
+  if openssl x509 -in "$cert" -checkend 0 -noout >/dev/null 2>&1; then
+    report PASS "$label CA certificate is parseable and not expired."
+  else
+    report FAIL "$label CA certificate is expired or unreadable."
+  fi
+}
+
 if [[ "$ROLE" == gateway || "$ROLE" == both ]]; then
   printf '%s\n' '--- gateway/listener checks ---'
   check_file /usr/local/sbin/pqtunneld 'pqtunneld binary'
@@ -131,12 +170,13 @@ if [[ "$ROLE" == gateway || "$ROLE" == both ]]; then
     if systemctl is-active --quiet pqtunneld 2>/dev/null; then report WARN 'pqtunneld service is active.'; else report PASS 'pqtunneld service is not active.'; fi
     if systemctl is-enabled --quiet pqtunneld 2>/dev/null; then report WARN 'pqtunneld is enabled at boot.'; else report PASS 'pqtunneld is not enabled at boot.'; fi
   fi
-  if have openssl && [[ -s /etc/pqtunnel/pki/server.crt ]]; then
-    END_DATE=$(openssl x509 -in /etc/pqtunnel/pki/server.crt -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
-    if [[ -n "$END_DATE" ]]; then
-      printf 'server_certificate_not_after=%s\n' "$END_DATE"
-      if openssl x509 -in /etc/pqtunnel/pki/server.crt -checkend 0 -noout >/dev/null 2>&1; then report PASS 'Server certificate is not expired.'; else report FAIL 'Server certificate has expired or could not be validated.'; fi
+  if have openssl; then
+    if [[ -s /etc/pqtunnel/pki/server.crt ]]; then
+      END_DATE=$(openssl x509 -in /etc/pqtunnel/pki/server.crt -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
+      [[ -z "$END_DATE" ]] || printf 'server_certificate_not_after=%s\n' "$END_DATE"
     fi
+    check_certificate_bundle /etc/pqtunnel/pki/server.crt /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/ca.crt sslserver 'Server'
+    check_ca_certificate /etc/pqtunnel/pki/ca.crt 'Peer'
   fi
 fi
 
@@ -154,6 +194,10 @@ if [[ "$ROLE" == dialer || "$ROLE" == both ]]; then
   fi
   if have systemctl; then
     if systemctl is-active --quiet pqtunnel-client 2>/dev/null; then report WARN 'pqtunnel-client systemd unit is active.'; else report PASS 'pqtunnel-client systemd unit is not active.'; fi
+  fi
+  if have openssl; then
+    check_certificate_bundle /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/pqtunnel/pki/ca.crt sslclient 'Client/peer'
+    check_ca_certificate /etc/pqtunnel/pki/ca.crt 'Server'
   fi
 fi
 
