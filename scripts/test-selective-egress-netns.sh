@@ -156,6 +156,12 @@ ip netns add "$IR_NS"
 ip netns add "$DE_NS"
 ip netns add "$NET_NS"
 ip netns add "$SW_NS"
+# Linux network namespaces inherit selected forwarding sysctl defaults from the runner.
+# Set a known baseline only inside these disposable namespaces before helper apply.
+for ns in "$IR_NS" "$DE_NS"; do
+  ip netns exec "$ns" sysctl -w net.ipv4.ip_forward=0 >/dev/null
+  ip netns exec "$ns" sysctl -w net.ipv6.conf.all.forwarding=0 >/dev/null
+done
 # A switch namespace keeps all WAN-side links isolated from the CI host.
 ip link add "$IR_IF" type veth peer name "$SW_IR_IF"
 ip link set "$IR_IF" netns "$IR_NS"
