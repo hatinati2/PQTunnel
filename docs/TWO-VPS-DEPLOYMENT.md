@@ -34,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/558ba23bb947051f
 Iran:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/413bfbab0a7c2f7896ec86bdb3902728107024c9/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/558ba23bb947051f349e5ad76631d2d118881a62/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
 ```
 
 Or run from a reviewed checkout:
