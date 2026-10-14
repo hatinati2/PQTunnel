@@ -106,7 +106,7 @@ jobs:
       - name: Install namespace ping tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y iproute2 iputils-ping nftables
+          sudo apt-get install -y iproute2 iputils-ping nftables tcpdump
       - name: Run isolated dual-stack site-to-site TUN test
         run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-site-to-site-netns.sh
       - name: Test selective TCP/UDP port forwarding over dual-stack TUN
