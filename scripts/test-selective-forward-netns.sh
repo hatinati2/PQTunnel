@@ -6,7 +6,7 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT"
 [[ $EUID -eq 0 ]] || { echo 'FAIL: run this test with sudo/root on an isolated Linux host' >&2; exit 2; }
-for cmd in ip ss nft tcpdump python3 go ping; do
+for cmd in ip ss nft tcpdump python3 go; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "FAIL: required command missing: $cmd" >&2; exit 2; }
 done
 [[ -c /dev/net/tun ]] || { echo 'FAIL: /dev/net/tun is unavailable' >&2; exit 2; }
@@ -46,6 +46,8 @@ TCP4_PID=""
 UDP4_PID=""
 TCP6_PID=""
 UDP6_PID=""
+TCP_HEALTH4_PID=""
+TCP_HEALTH6_PID=""
 TRACE_PID=""
 IR_TUN_PID=""
 DE_TUN_PID=""
@@ -60,6 +62,8 @@ TCP4_LOG="$LAB_DIR/tcp4.log"
 UDP4_LOG="$LAB_DIR/udp4.log"
 TCP6_LOG="$LAB_DIR/tcp6.log"
 UDP6_LOG="$LAB_DIR/udp6.log"
+TCP_HEALTH4_LOG="$LAB_DIR/tcp-health4.log"
+TCP_HEALTH6_LOG="$LAB_DIR/tcp-health6.log"
 DIALER_CONFIG="$LAB_DIR/dialer.env"
 STATE_DIR="$LAB_DIR/dialer-state"
 STATE_FILE="$STATE_DIR/site-selective-dialer.state"
@@ -121,7 +125,7 @@ cleanup() {
         bash "$ROOT/scripts/site-to-site-selective.sh" dialer-down >/dev/null 2>&1
     fi
   fi
-  for pid in "$TCP4_PID" "$UDP4_PID" "$TCP6_PID" "$UDP6_PID" "$SERVER_PID"; do
+  for pid in "$TCP4_PID" "$UDP4_PID" "$TCP6_PID" "$UDP6_PID" "$TCP_HEALTH4_PID" "$TCP_HEALTH6_PID" "$SERVER_PID"; do
     if [[ -n "$pid" ]]; then kill -TERM "$pid" >/dev/null 2>&1; wait "$pid" >/dev/null 2>&1; fi
   done
   ip netns del "$VIS_NS" >/dev/null 2>&1
@@ -130,7 +134,7 @@ cleanup() {
   ip netns del "$SW_NS" >/dev/null 2>&1
   for iface in "$IR_IF" "$DE_IF" "$VIS_IF" "$SW_IR_IF" "$SW_DE_IF" "$SW_VIS_IF"; do ip link del "$iface" >/dev/null 2>&1; done
   if (( rc != 0 )); then
-    for log in "$SERVER_LOG" "$CLIENT_LOG" "$TCP4_LOG" "$UDP4_LOG" "$TCP6_LOG" "$UDP6_LOG" "$IR_TUN_LOG" "$DE_TUN_LOG" "$IR_WAN_LOG"; do
+    for log in "$SERVER_LOG" "$CLIENT_LOG" "$TCP4_LOG" "$UDP4_LOG" "$TCP6_LOG" "$UDP6_LOG" "$TCP_HEALTH4_LOG" "$TCP_HEALTH6_LOG" "$IR_TUN_LOG" "$DE_TUN_LOG" "$IR_WAN_LOG"; do
       if [[ -s "$log" ]]; then echo "--- $log ---" >&2; cat "$log" >&2; fi
     done
   fi
@@ -256,10 +260,40 @@ data, addr = s.recvfrom(4096)
 s.sendto(b"udp6:" + data, addr)
 s.close()
 PY
+# Separate direct-TUN readiness services avoid consuming the one-shot port-forward
+# listeners before the visitor tests run.
+cat > "$LAB_DIR/tcp-health4.py" <<'PY'
+import socket
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("10.10.0.1", 8180))
+s.listen(8)
+while True:
+    c, _ = s.accept()
+    with c:
+        data = c.recv(4096)
+        if data:
+            c.sendall(b"ready4:" + data)
+PY
+cat > "$LAB_DIR/tcp-health6.py" <<'PY'
+import socket
+s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("fd10:10::1", 8180, 0, 0))
+s.listen(8)
+while True:
+    c, _ = s.accept()
+    with c:
+        data = c.recv(4096)
+        if data:
+            c.sendall(b"ready6:" + data)
+PY
 ip netns exec "$DE_NS" python3 -u "$LAB_DIR/tcp4.py" >"$TCP4_LOG" 2>&1 & TCP4_PID=$!
 ip netns exec "$DE_NS" python3 -u "$LAB_DIR/udp4.py" >"$UDP4_LOG" 2>&1 & UDP4_PID=$!
 ip netns exec "$DE_NS" python3 -u "$LAB_DIR/tcp6.py" >"$TCP6_LOG" 2>&1 & TCP6_PID=$!
 ip netns exec "$DE_NS" python3 -u "$LAB_DIR/udp6.py" >"$UDP6_LOG" 2>&1 & UDP6_PID=$!
+ip netns exec "$DE_NS" python3 -u "$LAB_DIR/tcp-health4.py" >"$TCP_HEALTH4_LOG" 2>&1 & TCP_HEALTH4_PID=$!
+ip netns exec "$DE_NS" python3 -u "$LAB_DIR/tcp-health6.py" >"$TCP_HEALTH6_LOG" 2>&1 & TCP_HEALTH6_PID=$!
 
 ip netns exec "$DE_NS" "$PQTUNNEL_BIN_DIR/pqtunneld" \
   --listen 198.18.0.1:8443 \
@@ -311,6 +345,7 @@ wait_for_service() {
 wait_for_listener || { echo 'FAIL: Germany gateway listener did not start' >&2; exit 1; }
 for port in 8080; do wait_for_service tcp "$port" || { echo "FAIL: TCP test target $port did not start" >&2; exit 1; }; done
 for port in 5353; do wait_for_service udp "$port" || { echo "FAIL: UDP test target $port did not start" >&2; exit 1; }; done
+wait_for_service tcp 8180 || { echo "FAIL: direct-TUN health service 8180 did not start" >&2; exit 1; }
 
 # This deliberately changes only the dialer namespace. All routes, nftables,
 # forwarding sysctls and TUN changes are confined to the disposable Iran namespace.
@@ -385,24 +420,37 @@ ip netns exec "$DE_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)
 ip netns exec "$IR_NS" tcpdump -n -l -i "$IR_IF" '(tcp or udp or icmp6)' >"$IR_WAN_LOG" 2>&1 & IR_WAN_PID=$!
 sleep 0.1
 
-# Wait for the newly established peer session to complete a basic packet
-# round trip before starting conntrack/NAT-sensitive TCP port-forward tests.
-# This catches a TCP-established-but-not-yet-ready TLS peer during startup.
-ping_until_success() {
-  local family="$1" target="$2" i
-  for i in $(seq 1 10); do
-    if [[ "$family" == 4 ]]; then
-      ip netns exec "$IR_NS" ping -n -c 1 -W 1 -I pqtun0 "$target" >/dev/null 2>&1 && return 0
-    else
-      ip netns exec "$IR_NS" ping -6 -n -c 1 -W 1 -I pqtun0 "$target" >/dev/null 2>&1 && return 0
-    fi
-    sleep 0.2
-  done
-  echo "FAIL: $family site-to-site health check to $target failed before port-forward test" >&2
-  return 1
-}
-ping_until_success 4 10.10.0.1
-ping_until_success 6 fd10:10::1
+# Confirm that authenticated packet traffic completes over the real TUN
+# in both families before starting conntrack/NAT-sensitive port-forward tests.
+ip netns exec "$IR_NS" python3 - <<'PY'
+import socket
+import time
+
+tests = [
+    ("tcp-health4", socket.AF_INET, ("10.10.0.1", 8180), b"tunnel-ready-v4", b"ready4:tunnel-ready-v4"),
+    ("tcp-health6", socket.AF_INET6, ("fd10:10::1", 8180, 0, 0), b"tunnel-ready-v6", b"ready6:tunnel-ready-v6"),
+]
+for name, family, endpoint, payload, expected in tests:
+    last_error = "no response"
+    for _ in range(20):
+        s = socket.socket(family, socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        try:
+            s.connect(endpoint)
+            s.sendall(payload)
+            received = s.recv(256)
+            if received == expected:
+                print(f"PASS: real-TUN readiness {name}", flush=True)
+                break
+            last_error = f"unexpected response {received!r}"
+        except OSError as exc:
+            last_error = str(exc)
+        finally:
+            s.close()
+        time.sleep(0.2)
+    else:
+        raise SystemExit(f"FAIL: real-TUN readiness {name} failed: {last_error}")
+PY
 
 ip netns exec "$VIS_NS" python3 - <<'PY'
 import socket
