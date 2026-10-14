@@ -111,6 +111,10 @@ chmod 0600 "$DIALER_CONFIG"
 ip netns add "$IR_NS"
 ip netns add "$DE_NS"
 ip netns add "$VIS_NS"
+# Some hosted kernels enable forwarding by default. Reset only the disposable
+# Iran namespace so the helper can verify and record a known starting state.
+ip netns exec "$IR_NS" sysctl -w net.ipv4.ip_forward=0 >/dev/null
+ip netns exec "$IR_NS" sysctl -w net.ipv6.conf.all.forwarding=0 >/dev/null
 ip link add "$IR_DE_IF" type veth peer name "$DE_IF"
 ip link set "$IR_DE_IF" netns "$IR_NS"
 ip link set "$DE_IF" netns "$DE_NS"
