@@ -134,6 +134,7 @@ Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build L
 
 - [فارسی](README.fa.md)
 - [Security notes](SECURITY.md)
+- [Two-VPS deployment readiness and recovery runbook](docs/TWO-VPS-DEPLOYMENT.md)
 - [Protocol notes](docs/PROTOCOL.md)
 - [Experimental server-to-server guide (Persian)](docs/SITE-TO-SITE.fa.md)
 - [Pre-release checklist](docs/RELEASE-CHECKLIST.md)
