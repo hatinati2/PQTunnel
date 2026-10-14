@@ -84,3 +84,8 @@ Some libnftables versions serialize an xtables-compatibility statement as `{"xt"
 ### Distinguishing XT matches from XT targets
 
 The privacy-preserving audit counts xtables-compat entries by their declared type (`match`, `target`, or `watcher`). It only classifies names such as NOTRACK, MARK, NAT targets, DROP/REJECT, and ACCEPT as actions when the XT entry type is `target`. A match extension with a similar name must not be mistaken for an action. `xt_fallback` by itself only means that a rule includes an xtables-compat entry; it does not identify which action the rule performs. The audit reports only aggregate categories, never the extension's raw name or the rule's selector values.
+
+
+### Distinguishing NOTRACK mechanisms without exposing rules
+
+The audit separately labels the iptables-save form as `direct_target` (the NOTRACK target) or `ct_target_option` (the CT target with the `--notrack` option). It reports only these fixed labels, table/chain names, and selector categories; it does not print ports, addresses, or raw expressions. In nft JSON, a named CT target is reported as `xt_ct_target` but is not automatically counted as NOTRACK, because the XT fallback may not expose the target options. Compare the two views at the same raw chain; matching counts are useful evidence but do not reveal the packet values matched by the rules.
