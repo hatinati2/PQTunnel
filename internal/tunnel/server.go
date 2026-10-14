@@ -241,18 +241,24 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 		}
 		src, dst, pkt, err := packet.IP(packetBytes)
 		if err != nil {
+			tracePacketFlow("server peer->tun drop=malformed bytes=%d err=%v", len(packetBytes), err)
 			continue
 		}
+		tracePacketFlow("server peer->tun received peer=%s src=%s dst=%s bytes=%d", identity, src, dst, len(pkt))
 		if !peerPacketAllowed(src, dst, p.prefixes, s.LocalPrefixes) {
 			if !prefixset.Contains(p.prefixes, src) {
+				tracePacketFlow("server peer->tun drop=unauthorized-source peer=%s src=%s dst=%s", identity, src, dst)
 				return // spoofed source: terminate session
 			}
+			tracePacketFlow("server peer->tun drop=destination-outside-local-prefixes peer=%s src=%s dst=%s", identity, src, dst)
 			continue // destination is outside this listener's configured prefixes
 		}
 		if !s.AllowedDstPorts.AllowsPacket(pkt) {
+			tracePacketFlow("server peer->tun drop=destination-port-policy peer=%s src=%s dst=%s", identity, src, dst)
 			continue // destination protocol/port is not in the configured allowlist
 		}
 		n, writeErr := s.Device.Write(pkt)
+		tracePacketFlow("server peer->tun injected peer=%s src=%s dst=%s bytes=%d written=%d err=%v", identity, src, dst, len(pkt), n, writeErr)
 		if writeErr != nil || n != len(pkt) {
 			return
 		}
@@ -272,14 +278,16 @@ func (s *Server) routePackets(ctx context.Context) {
 		if n <= 0 {
 			continue
 		}
-		_, dst, pkt, err := packet.IP(buf[:n])
+		src, dst, pkt, err := packet.IP(buf[:n])
 		if err != nil {
+			tracePacketFlow("server tun->peer drop=malformed bytes=%d err=%v", n, err)
 			continue
 		}
 		s.mu.RLock()
 		target := peerForDestination(s.clients, dst)
 		s.mu.RUnlock()
 		if target == nil {
+			tracePacketFlow("server tun->peer drop=no-unique-peer-route src=%s dst=%s bytes=%d", src, dst, len(pkt))
 			continue // no route or ambiguous route
 		}
 		target.writeMu.Lock()
@@ -288,8 +296,11 @@ func (s *Server) routePackets(ctx context.Context) {
 		_ = target.conn.SetWriteDeadline(time.Time{})
 		target.writeMu.Unlock()
 		if err != nil {
+			tracePacketFlow("server tun->peer write-failed peer=%s src=%s dst=%s bytes=%d err=%v", target.identity, src, dst, len(pkt), err)
 			_ = target.conn.Close()
+			continue
 		}
+		tracePacketFlow("server tun->peer forwarded peer=%s src=%s dst=%s bytes=%d", target.identity, src, dst, len(pkt))
 	}
 }
 
