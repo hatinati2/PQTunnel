@@ -28,13 +28,13 @@
 آلمان:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/01cfe2073ffa2bda88b25ce8ea05c2e6b209aa6c/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/413bfbab0a7c2f7896ec86bdb3902728107024c9/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
 ```
 
 ایران:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/01cfe2073ffa2bda88b25ce8ea05c2e6b209aa6c/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/413bfbab0a7c2f7896ec86bdb3902728107024c9/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
 ```
 
 یا از checkout بازبینی‌شدهٔ مخزن:
@@ -53,6 +53,8 @@ bash scripts/site-to-site-preflight.sh --role dialer
 - **PASS:** فقط همان بررسی خواندنی موفق بوده؛ اتصال واقعی دو میزبان اثبات نمی‌شود.
 
 preflight نسخهٔ سیستم‌عامل و ابزارها، مسیرها و تعارض policy ruleها، جدول‌های 518/519، forwarding و reverse-path-filter، موفقیت/شکست پرس‌وجوی فایروال، وجود فایل‌ها و سرویس‌ها، مجوزهای کلید خصوصی و ـ در صورت وجود فایل‌ها ـ انقضای گواهی، اعتبار زنجیره با CA و تطابق گواهی با کلید خصوصی را بررسی می‌کند. خطای پرس‌وجوی فایروال **WARN/نامشخص** است، نه نشانهٔ خالی‌بودن فایروال. محتوای گواهی و کلید خصوصی چاپ نمی‌شود.
+
+نسخهٔ فعلی preflight همچنین خروجی قوانین nftables/iptables/ip6tables را برای `NOTRACK` و قواعد packet-marking بررسی می‌کند. هشدار `NOTRACK` یعنی بعضی جریان‌ها ممکن است از conntrack عبور نکنند و با SNAT/DNAT تداخل داشته باشند؛ packet markهای موجود هم ممکن است با policy routing تداخل کنند. این هشدارها مالک هر قانون را مشخص نمی‌کنند و به‌معنی تأیید سازگاری نیستند. برای معیارهای طراحی و تست همزیستی با فایروال موجود، [یادداشت طراحی](EXISTING-FIREWALL-COEXISTENCE.md) را ببین.
 
 برای اشتراک نتیجه، فقط نقش، نسخهٔ Ubuntu، تعداد PASS/WARN/FAIL، متن هشدار و وضعیت وجود/مجوز امن فایل‌های لازم را بفرست. در صورت لزوم hostname، آدرس‌ها و شناسهٔ ارائه‌دهنده را حذف کن. هرگز کلید خصوصی، تنظیمات بدون ویرایش یا خروجی خام محیط systemd را ارسال نکن.
 
