@@ -209,12 +209,12 @@ case "$MODE" in
     CERT_PUB="$(openssl x509 -in "$PKI_DIR/client.crt" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')"
     KEY_PUB="$(openssl pkey -in "$PKI_DIR/client.key" -pubout -outform DER | sha256sum | awk '{print $1}')"
     [[ "$CERT_PUB" == "$KEY_PUB" ]] || fail 'client.key does not match client.crt.'
-    for local_file in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh /usr/local/lib/pqtunnel/run-client.sh; do [[ ! -e "$local_file" ]] || fail "existing artifact at $local_file; refusing to overwrite."; done
+    for local_file in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh /usr/local/lib/pqtunnel/run-client.sh /usr/local/lib/pqtunnel/stop-client-network.sh; do [[ ! -e "$local_file" ]] || fail "existing artifact at $local_file; refusing to overwrite."; done
     get_source
     echo 'Read-only preflight on this host (no network changes):'
     bash "$SOURCE_DIR/scripts/site-to-site-preflight.sh" --role dialer
     BUILD_DIR="$(mktemp -d)"
-    WORK_DIR_OLD="$WORK_DIR"; WORK_DIR="$BUILD_DIR"
+    
     (
       cd "$SOURCE_DIR"
       GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$BUILD_DIR/pqtunnel-client" ./cmd/pqtunnel-client
