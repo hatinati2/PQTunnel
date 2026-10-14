@@ -10,6 +10,8 @@ bash -n "$ROOT/scripts/pqtunnel-bootstrap.sh"
 BOOTSTRAP_HELP="$(bash "$ROOT/scripts/pqtunnel-bootstrap.sh" --help)"
 grep -q 'install-server' <<< "$BOOTSTRAP_HELP"
 grep -q 'install-client' <<< "$BOOTSTRAP_HELP"
+grep -q 'curl -fsSL .* install-server .*--start --apply-network' <<< "$BOOTSTRAP_HELP"
+grep -q 'curl -fsSL .* install-client .*--start' <<< "$BOOTSTRAP_HELP"
 bash "$ROOT/scripts/pqtunnel-bootstrap.sh" check-config --kind gateway --app-env "$ROOT/scripts/pqtunneld.site-to-site.env.example" --network-env "$ROOT/scripts/site-to-site-gateway.env.example"
 bash "$ROOT/scripts/pqtunnel-bootstrap.sh" check-config --kind dialer --app-env "$ROOT/scripts/pqtunnel-client.env.example" --network-env "$ROOT/scripts/site-to-site.env.example"
 
