@@ -26,8 +26,6 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   if [[ -n "$SERVER_PID" ]]; then kill -TERM "$SERVER_PID" >/dev/null 2>&1; wait "$SERVER_PID" >/dev/null 2>&1; fi
-  for ns in "$SRC_NS" "$RTR_NS" "$DST_NS"; do ip netns del "$ns" >/dev/null 2>&1; done
-  for iface in "$SRC_HOST_IF" "$SRC_ROUTER_IF" "$ROUTER_DST_IF" "$DST_HOST_IF"; do ip link del "$iface" >/dev/null 2>&1; done
   if (( rc != 0 )); then
     for ns in "$SRC_NS" "$RTR_NS" "$DST_NS"; do
       if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
@@ -39,6 +37,8 @@ cleanup() {
     done
     [[ ! -f "$LAB_DIR/server.log" ]] || cat "$LAB_DIR/server.log" >&2
   fi
+  for ns in "$SRC_NS" "$RTR_NS" "$DST_NS"; do ip netns del "$ns" >/dev/null 2>&1; done
+  for iface in "$SRC_HOST_IF" "$SRC_ROUTER_IF" "$ROUTER_DST_IF" "$DST_HOST_IF"; do ip link del "$iface" >/dev/null 2>&1; done
   rm -rf "$LAB_DIR"
   exit "$rc"
 }
@@ -149,8 +149,11 @@ fi
 
 # A compatible integration must be made in the chain managed by the firewall
 # owner (or its supported config), before that chain's final drop/policy.
-ip netns exec "$RTR_NS" nft insert rule inet host_firewall forward iifname '"wan0"' oifname '"lan0"' ip saddr 192.0.2.2 ip daddr 198.51.100.2 tcp dport 8080 ct state new accept
-ip netns exec "$RTR_NS" nft insert rule inet host_firewall forward iifname '"lan0"' oifname '"wan0"' ip saddr 198.51.100.2 ip daddr 192.0.2.2 tcp sport 8080 ct state established accept
+ip netns exec "$RTR_NS" nft -f - <<'NFT'
+add rule inet host_firewall forward iifname "wan0" oifname "lan0" ip saddr 192.0.2.2 ip daddr 198.51.100.2 tcp dport 8080 ct state new accept
+add rule inet host_firewall forward iifname "lan0" oifname "wan0" ip saddr 198.51.100.2 ip daddr 192.0.2.2 tcp sport 8080 ct state established accept
+NFT
+ip netns exec "$RTR_NS" nft list chain inet host_firewall forward
 
 ip netns exec "$SRC_NS" python3 - <<'PY'
 import socket
