@@ -8,7 +8,38 @@ permissions:
   contents: write
 
 jobs:
+  integration-test:
+    name: netns integration (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: true
+      - name: Build isolated lab binaries
+        run: |
+          mkdir -p "$RUNNER_TEMP/pqtunnel-bin"
+          go build -o "$RUNNER_TEMP/pqtunnel-bin/pqtunneld" ./cmd/pqtunneld
+          go build -o "$RUNNER_TEMP/pqtunnel-bin/pqtunnel-client" ./cmd/pqtunnel-client
+          go build -o "$RUNNER_TEMP/pqtunnel-bin/pqtunnel-pki" ./cmd/pqtunnel-pki
+      - name: Install namespace test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 iputils-ping nftables tcpdump
+      - name: Run isolated dual-stack site-to-site TUN test
+        run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-site-to-site-netns.sh
+      - name: Test selective TCP/UDP port forwarding over dual-stack TUN
+        run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-selective-forward-netns.sh
+
   release:
+    needs: integration-test
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
