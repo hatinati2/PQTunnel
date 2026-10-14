@@ -173,6 +173,8 @@ ip link set "$SW_VIS_IF" netns "$SW_NS"
 
 for ns in "$IR_NS" "$DE_NS" "$VIS_NS" "$SW_NS"; do ip -n "$ns" link set lo up; done
 ip -n "$SW_NS" link add brlab type bridge
+# Forward IPv6 neighbor-solicitation multicast between isolated lab veths.
+ip -n "$SW_NS" link set brlab type bridge mcast_snooping 0
 ip -n "$SW_NS" link set "$SW_IR_IF" master brlab
 ip -n "$SW_NS" link set "$SW_DE_IF" master brlab
 ip -n "$SW_NS" link set "$SW_VIS_IF" master brlab
@@ -358,7 +360,7 @@ ip -n "$IR_NS" -6 route add fd10:10::/64 dev pqtun0
 # emitted by the dialer and injected by the gateway. Captures remain namespace-local.
 ip netns exec "$IR_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)' >"$IR_TUN_LOG" 2>&1 & IR_TUN_PID=$!
 ip netns exec "$DE_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)' >"$DE_TUN_LOG" 2>&1 & DE_TUN_PID=$!
-ip netns exec "$IR_NS" tcpdump -n -l -i "$IR_IF" 'host 198.18.0.3 and (tcp or udp)' >"$IR_WAN_LOG" 2>&1 & IR_WAN_PID=$!
+ip netns exec "$IR_NS" tcpdump -n -l -i "$IR_IF" '(tcp or udp or icmp6)' >"$IR_WAN_LOG" 2>&1 & IR_WAN_PID=$!
 sleep 0.1
 
 ip netns exec "$VIS_NS" python3 - <<'PY'
