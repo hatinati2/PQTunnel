@@ -304,8 +304,10 @@ table inet pqtunnel_trace {
     udp sport 5353 meta nftrace set 1
   }
   chain forward_trace { type filter hook forward priority raw; policy accept;
-    tcp sport 8080 meta nftrace set 1\n    tcp dport 8080 meta nftrace set 1
-    udp sport 5353 meta nftrace set 1\n    udp dport 5353 meta nftrace set 1
+    tcp sport 8080 meta nftrace set 1
+    tcp dport 8080 meta nftrace set 1
+    udp sport 5353 meta nftrace set 1
+    udp dport 5353 meta nftrace set 1
   }
   chain input_trace { type filter hook input priority raw; policy accept;
     tcp sport 8080 meta nftrace set 1
