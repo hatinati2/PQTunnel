@@ -58,7 +58,7 @@ validate_env_file() {
     key="${line%%=*}"
     value="${line#*=}"
     [[ "$key" =~ ^PQTUNNEL_[A-Z0-9_]+$ ]] || fail "only PQTUNNEL_* keys are allowed: $file"
-    [[ "$value" =~ ^([A-Za-z0-9_.,:/=-]|\\[|\\])*$ ]] || fail "unsupported characters or whitespace in configuration value: $file"
+    [[ "$value" =~ ^([A-Za-z0-9_.,:/=-]|\[|\])*$ ]] || fail "unsupported characters or whitespace in configuration value: $file"
   done < "$file"
   if ! awk -F= '/^[[:space:]]*PQTUNNEL_[A-Z0-9_]+=/ { key=$1; gsub(/[[:space:]]/, "", key); if (seen[key]++) exit 1 }' "$file"; then
     fail "configuration contains duplicate keys: $file"
