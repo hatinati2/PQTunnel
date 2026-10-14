@@ -51,17 +51,16 @@ get_source() {
 }
 
 validate_env_file() {
-  local file="$1" line key value extra mode perm
+  local file="$1" line key value mode perm
   [[ -f "$file" && -r "$file" ]] || fail "configuration file missing or unreadable: $file"
   mode="$(stat -c '%a' "$file" 2>/dev/null || printf 777)"
   perm=$((8#$mode))
   (( (perm & 0022) == 0 )) || fail "configuration must not be group/world-writable: $file"
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]] && continue
-    IFS='=' read -r key value extra <<< "$line"
+    IFS='=' read -r key value <<< "$line"
     [[ "$key" =~ ^PQTUNNEL_[A-Z0-9_]+$ ]] || fail "configuration has a non-PQTUNNEL key: $file"
-    [[ -z "$extra" ]] || fail "configuration line must contain exactly one '=': $file"
-    [[ "$value" =~ ^([A-Za-z0-9_.,:/-]|\[|\])*$ ]] || fail "configuration contains unsupported characters/whitespace: $file"
+    [[ "$value" =~ ^([A-Za-z0-9_.,:/=-]|\[|\])*$ ]] || fail "configuration contains unsupported characters/whitespace: $file"
   done < "$file"
   if ! awk -F= '/^[[:space:]]*PQTUNNEL_[A-Z0-9_]+=/ { key=$1; gsub(/[[:space:]]/, "", key); if (seen[key]++) exit 1 }' "$file"; then
     fail "configuration contains duplicate keys: $file"
