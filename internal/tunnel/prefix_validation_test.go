@@ -36,7 +36,7 @@ func TestValidateDisjointPrefixes(t *testing.T) {
 }
 
 func TestValidateDisjointPrefixesRejectsNonCanonicalInput(t *testing.T) {
-	_, err := validateDisjointPrefixes(
+	err := validateDisjointPrefixes(
 		[]netip.Prefix{netip.MustParsePrefix("10.1.2.3/24")},
 		[]netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, false,
 	)
