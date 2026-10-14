@@ -317,6 +317,10 @@ table inet pqtunnel_trace {
     tcp sport 8080 meta nftrace set 1
     udp sport 5353 meta nftrace set 1
   }
+  chain postroute_trace { type filter hook postrouting priority 110; policy accept;
+    tcp sport 8080 meta nftrace set 1
+    udp sport 5353 meta nftrace set 1
+  }
 }
 NFT
 ip netns exec "$IR_NS" nft monitor trace >"$TRACE_LOG" 2>&1 &
