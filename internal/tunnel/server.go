@@ -127,8 +127,12 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		s.mu.RUnlock()
 	}()
-	go s.routePackets(runCtx)
-	errCh := make(chan error, len(listeners))
+	errCh := make(chan error, len(listeners)+1)
+	go func() {
+		if err := s.routePackets(runCtx); err != nil {
+			errCh <- fmt.Errorf("route packets from TUN: %w", err)
+		}
+	}()
 	for _, ln := range listeners {
 		go func(listener net.Listener) { errCh <- s.acceptLoop(runCtx, listener, slots) }(ln)
 	}
@@ -265,15 +269,19 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	}
 }
 
-func (s *Server) routePackets(ctx context.Context) {
+func (s *Server) routePackets(ctx context.Context) error {
 	buf := make([]byte, protocol.MaxFrameSize)
 	for {
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 		n, err := s.Device.Read(buf)
 		if err != nil {
-			return
+			if ctx.Err() != nil {
+				return nil
+			}
+			tracePacketFlow("server tun->peer read-error err=%v", err)
+			return fmt.Errorf("read TUN device: %w", err)
 		}
 		if n <= 0 {
 			continue
