@@ -28,13 +28,13 @@ Run the correct role-specific command separately on each VPS. These commands fet
 Germany:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/49f884d00e09fd2686f0947d31b3599028c0fc91/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/558ba23bb947051f349e5ad76631d2d118881a62/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
 ```
 
 Iran:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/49f884d00e09fd2686f0947d31b3599028c0fc91/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/558ba23bb947051f349e5ad76631d2d118881a62/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
 ```
 
 Or run from a reviewed checkout:
@@ -53,6 +53,10 @@ The optional `--endpoint HOST_OR_IP` checks the current route to the endpoint; h
 - **PASS:** that individual read-only check passed; it does not prove two-host connectivity.
 
 Preflight checks OS/tool availability, routes and policy-rule collisions, routing tables 518/519, forwarding and reverse-path-filter sysctls, firewall query success/failure, service/binary/config presence, private-key permissions, and—when files exist—certificate expiry, CA verification and certificate/private-key match. Firewall query failures are reported as **unknown/WARN**, not incorrectly assumed to mean an empty firewall. Certificate and private-key contents are never printed.
+
+When available, preflight also reports TUN/TAP interfaces other than `pqtun0`. This only identifies device presence, not ownership; review each interface before changing network state.
+
+Linux `rp_filter` values are `0=disabled`, `1=strict`, and `2=loose`. The effective value per interface is `max(net.ipv4.conf.all.rp_filter, net.ipv4.conf.<interface>.rp_filter)`; `conf.default` is a template for newly created interfaces, not a substitute for inspecting existing interfaces. Strict reverse-path filtering may drop asymmetric or policy-routed traffic. Do not change these values merely to pass preflight: doing so can affect unrelated tunnels and routes.
 
 The current preflight also inspects nftables/iptables/ip6tables output for `NOTRACK` and packet-marking rules. `NOTRACK` means matching flows may bypass conntrack and conflict with SNAT/DNAT; existing packet marks may interact with PQTunnel policy routing. These warnings do not identify rule ownership or establish coexistence safety. See the [existing-firewall coexistence design note](EXISTING-FIREWALL-COEXISTENCE.md) for requirements and lab validation gates.
 
