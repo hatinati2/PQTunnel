@@ -2,6 +2,11 @@
 
 ## 0.3.0-dev
 
+- Added opt-in TCP/UDP destination-port allowlists for packets injected by the authenticated peer.
+- Added an experimental Iran-side network helper for selected outbound ports and inbound TCP/UDP DNAT/SNAT port forwards to a Germany-side address.
+- Added a separate experimental Germany-side dual-stack forwarding/NAT helper; it is restricted to isolated test hosts because its forwarding base chain uses a DROP policy.
+- Added IPv4/IPv6 transport-port inspection with fail-closed handling for fragments in port-policy mode.
+
 - Added normal IPv6 packet framing/parsing alongside IPv4 (IPv6 jumbograms remain unsupported).
 - Added experimental single-peer server-to-server route profiles with separate peer-source/return-route and listener-destination CIDR allowlists, plus explicit peer certificate identity pinning.
 - Added DNS/IPv4/IPv6 endpoint selection for the dialer (`tcp`, `tcp4`, `tcp6`).
