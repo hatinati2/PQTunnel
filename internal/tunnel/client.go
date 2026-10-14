@@ -63,7 +63,7 @@ func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) er
 		localPrefixes = []netip.Prefix{netip.PrefixFrom(cfg.LocalIP, bits)}
 	}
 	if len(cfg.RemotePrefixes) > 0 {
-		if err := validateDisjointPrefixes(localPrefixes, cfg.RemotePrefixes); err != nil {
+		if err := validateDisjointPrefixes(localPrefixes, cfg.RemotePrefixes, true); err != nil {
 			return fmt.Errorf("site-to-site local and remote prefixes: %w", err)
 		}
 	}
