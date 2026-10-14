@@ -95,3 +95,6 @@ jobs:
             dist/*.tar.gz
             dist/SHA256SUMS
           generate_release_notes: true
+          # SemVer prerelease identifiers (for example, -rc1, -beta.2, or -alpha)
+          # contain a hyphen; stable release tags do not.
+          prerelease: ${{ contains(github.ref_name, '-') }}
