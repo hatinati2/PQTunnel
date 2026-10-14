@@ -10,6 +10,10 @@ for cmd in ip ss nft python3 go; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "FAIL: required command missing: $cmd" >&2; exit 2; }
 done
 [[ -c /dev/net/tun ]] || { echo 'FAIL: /dev/net/tun is unavailable' >&2; exit 2; }
+[[ -n "${PQTUNNEL_BIN_DIR:-}" && -d "$PQTUNNEL_BIN_DIR" ]] || { echo 'FAIL: set PQTUNNEL_BIN_DIR to the CI-built binaries directory' >&2; exit 2; }
+for bin in pqtunneld pqtunnel-client pqtunnel-pki; do
+  [[ -x "$PQTUNNEL_BIN_DIR/$bin" ]] || { echo "FAIL: missing executable $PQTUNNEL_BIN_DIR/$bin" >&2; exit 2; }
+done
 
 SUFFIX="$$"
 IR_NS="pqt-sir-$SUFFIX"
