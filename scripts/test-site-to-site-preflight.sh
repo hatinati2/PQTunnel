@@ -12,6 +12,21 @@ grep -q 'install-server' <<< "$BOOTSTRAP_HELP"
 grep -q 'install-client' <<< "$BOOTSTRAP_HELP"
 bash "$ROOT/scripts/pqtunnel-bootstrap.sh" check-config --kind gateway --app-env "$ROOT/scripts/pqtunneld.site-to-site.env.example" --network-env "$ROOT/scripts/site-to-site-gateway.env.example"
 bash "$ROOT/scripts/pqtunnel-bootstrap.sh" check-config --kind dialer --app-env "$ROOT/scripts/pqtunnel-client.env.example" --network-env "$ROOT/scripts/site-to-site.env.example"
+
+# A shell-expression payload must be rejected as data, never evaluated.
+TMP_CONFIG_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_CONFIG_DIR" /tmp/pqtunnel-config-pwned' EXIT
+cp "$ROOT/scripts/pqtunneld.site-to-site.env.example" "$TMP_CONFIG_DIR/gateway.env"
+sed -i 's|^PQTUNNEL_PEER_NAME=.*|PQTUNNEL_PEER_NAME=$(touch /tmp/pqtunnel-config-pwned)|' "$TMP_CONFIG_DIR/gateway.env"
+if bash "$ROOT/scripts/pqtunnel-bootstrap.sh" check-config --kind gateway --app-env "$TMP_CONFIG_DIR/gateway.env" --network-env "$ROOT/scripts/site-to-site-gateway.env.example" >/dev/null 2>&1; then
+  echo "unsafe shell expression was unexpectedly accepted" >&2
+  exit 1
+fi
+if [[ -e /tmp/pqtunnel-config-pwned ]]; then
+  echo "configuration validator evaluated a shell expression" >&2
+  exit 1
+fi
+
 HELP="$(bash "$PREFLIGHT" --help)"
 grep -q 'READ-ONLY' <<< "$HELP"
 if bash "$PREFLIGHT" --role invalid >/dev/null 2>&1; then
