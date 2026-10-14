@@ -104,9 +104,14 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}()
 
+	// A child context lets Serve tear down all background work even when it
+	// returns because an accept loop fails rather than because the caller cancels.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	slots := make(chan struct{}, s.MaxClients)
 	go func() {
-		<-ctx.Done()
+		<-runCtx.Done()
 		for _, ln := range listeners {
 			_ = ln.Close()
 		}
@@ -117,13 +122,13 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		s.mu.RUnlock()
 	}()
-	go s.routePackets(ctx)
+	go s.routePackets(runCtx)
 	errCh := make(chan error, len(listeners))
 	for _, ln := range listeners {
-		go func(listener net.Listener) { errCh <- s.acceptLoop(ctx, listener, slots) }(ln)
+		go func(listener net.Listener) { errCh <- s.acceptLoop(runCtx, listener, slots) }(ln)
 	}
 	select {
-	case <-ctx.Done():
+	case <-runCtx.Done():
 		return ctx.Err()
 	case err := <-errCh:
 		return err
