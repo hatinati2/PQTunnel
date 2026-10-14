@@ -34,7 +34,7 @@ jobs:
             done
             cp README.md README.fa.md SECURITY.md LICENSE CHANGELOG.md "dist/$pkg/"
             cp -R scripts deploy docs "dist/$pkg/"
-            tar -C dist -czf "dist/${pkg}.tar.gz" "$pkg"
+            (cd dist && tar -czf "${pkg}.tar.gz" "$pkg")
           done
           (cd dist && sha256sum ./*.tar.gz > SHA256SUMS)
       - name: Publish release
