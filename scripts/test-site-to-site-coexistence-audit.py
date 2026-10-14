@@ -169,6 +169,63 @@ COMMIT
         self.assertEqual(counts["xt_target_other"], 0)
         self.assertEqual(counts["notrack"], 0)
 
+    def test_candidate_tcp_port_overlap_is_role_aware_and_redacted(self):
+        fixture = """*raw
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp -m tcp --dport 8443 -j NOTRACK
+-A OUTPUT -p tcp --sport 443 -j NOTRACK
+-A OUTPUT -p udp --dport 8443 -j NOTRACK
+-A OUTPUT -p tcp -m multiport --dports 443,8443 -j NOTRACK
+-A OUTPUT -p tcp --dport 9000:9100 -j NOTRACK
+-A OUTPUT -p tcp --dport 8443 -m conntrack --ctstate NEW -j NOTRACK
+-A OUTPUT -p tcp ! --dport 8443 -j NOTRACK
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -p tcp --sport 8443 -j NOTRACK
+-A PREROUTING -p tcp --dport 8443 -j NOTRACK
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(fixture, candidate_port=8443, role="dialer")
+        observed = [r["candidate_overlap"] for r in parsed["notrack_rules"]]
+        self.assertEqual(observed, [
+            "match", "unknown", "no_match", "match", "no_match",
+            "unknown", "no_match", "match", "unknown",
+        ])
+        self.assertEqual(
+            [r["endpoint_port_side"] for r in parsed["notrack_rules"]],
+            ["destination"] * 7 + ["source"] * 2,
+        )
+        self.assertNotIn("8443", repr(parsed["notrack_rules"]))
+        self.assertNotIn("9000", repr(parsed["notrack_rules"]))
+
+    def test_candidate_port_matches_default_tcp_rule_without_port_selector(self):
+        fixture = """*raw
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp -j NOTRACK
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(fixture, candidate_port=8443, role="dialer")
+        self.assertEqual(parsed["notrack_rules"][0]["candidate_overlap"], "match")
+
+    def test_candidate_port_with_service_name_is_unknown_without_resolving(self):
+        fixture = """*raw
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp --dport https -j NOTRACK
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(fixture, candidate_port=8443, role="dialer")
+        self.assertEqual(parsed["notrack_rules"][0]["candidate_overlap"], "unknown")
+        self.assertNotIn("https", repr(parsed["notrack_rules"]))
+
+    def test_candidate_port_is_unknown_without_dialer_or_gateway_role(self):
+        fixture = """*raw
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp --dport 8443 -j NOTRACK
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(fixture, candidate_port=8443, role="both")
+        self.assertEqual(parsed["notrack_rules"][0]["candidate_overlap"], "unknown")
+        self.assertEqual(parsed["notrack_rules"][0]["endpoint_port_side"], "unknown")
+
     def test_accept_is_counted(self):
         parsed = audit.parse_iptables_save("*filter\n:FORWARD ACCEPT [0:0]\n-A FORWARD -j ACCEPT\nCOMMIT\n")
         self.assertEqual(parsed["rules"][("filter", "FORWARD")]["accept"], 1)
