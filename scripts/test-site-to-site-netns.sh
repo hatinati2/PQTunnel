@@ -5,6 +5,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 [[ $EUID -eq 0 ]] || { echo 'FAIL: run with sudo/root on a disposable Linux host' >&2; exit 2; }
 for cmd in ip ss ping go; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "FAIL: required command not found: $cmd" >&2; exit 2; }
