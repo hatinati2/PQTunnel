@@ -81,6 +81,24 @@ curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqt
 
 The same bootstrap also has guarded `install-server` and `install-client` modes. Both require certificates and reviewed role-specific environment files to be staged first; the client build requires Go 1.24+ already installed. `install-server` stages the listener and network-helper configuration; `--start` starts the daemon, and the additional `--apply-network` flag is required to explicitly apply gateway routes/NAT. `install-client` stages the dialer service; its `--start` option activates the systemd unit, which applies the dialer network helper and invokes rollback after the service stops. Both modes refuse existing artifacts and do not install operating-system packages. Example settings use documentation-only IP prefixes and must be replaced. These helpers are not a substitute for a reviewed recovery plan and have not been run on your VPS. CI exercises them only in the disposable GitHub runner.
 
+### One-line install and launch (explicit, network-changing mode)
+
+These commands are intentionally separate from the default read-only bootstrap. Before using them, stage the named PKI/config files on the destination host, replace the example paths, review every setting, and complete a disposable-lab test. They are **not approved for your live VPS yet**. The gateway command starts the service and applies its network helper; the dialer command starts a service that changes route state. Keep out-of-band console access available. The installer does not install OS packages, open provider firewall ports, or overwrite detected existing artifacts.
+
+Germany gateway (requires server.crt, server.key, ca.crt, a reviewed server env file, and a reviewed gateway network env file):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-server --pki-dir /root/pqtunnel-input/germany-pki --server-env-file /root/pqtunnel-input/germany-app.env --network-env-file /root/pqtunnel-input/germany-network.env --start --apply-network
+```
+
+Iran dialer (requires client.crt, client.key, ca.crt, a reviewed client env file, and a reviewed dialer network env file):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | sudo bash -s -- install-client --pki-dir /root/pqtunnel-input/iran-pki --client-env-file /root/pqtunnel-input/iran-app.env --network-env-file /root/pqtunnel-input/iran-network.env --start
+```
+
+The paths above are examples, not files created by the command. These operations are not transactional across the full host configuration and are not an upgrade path. The one-line form executes the repository's current main bootstrap as root, so review the exact script/ref before use. For the current project stage, run only the read-only preflight command above; do not run these install/launch lines on the live servers.
+
 ## Ubuntu server packaging
 
 The deployment assets are intentionally split into installation and network setup so that installing the service does not silently modify firewall/NAT policy.
