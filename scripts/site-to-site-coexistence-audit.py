@@ -253,14 +253,12 @@ def candidate_tcp_overlap(line: str, port: int, role: str, chain: str) -> str:
     # Establish whether the rule's protocol predicate can match an outer TCP packet.
     if protocol is not None:
         proto = protocol
-        if proto in ("tcp", "6"):
+        if proto in ("tcp", "6", "all", "0"):
             protocol_matches_tcp = not protocol_negated
-        elif proto in ("all", "0"):
-            protocol_matches_tcp = not protocol_negated
-        elif proto in ("udp", "17", "icmp", "1", "icmpv6", "icmp6", "ipv6-icmp", "58"):
-            protocol_matches_tcp = protocol_negated
         else:
-            return "unknown"
+            # A positive exact protocol other than TCP cannot match a TCP
+            # transport packet; its negated form can.
+            protocol_matches_tcp = protocol_negated
         if not protocol_matches_tcp:
             return "no_match"
     elif "udp" in modules:
