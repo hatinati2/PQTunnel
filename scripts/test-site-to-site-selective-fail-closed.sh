@@ -148,7 +148,40 @@ assert_forwarding_zero 'policy rule conflict'
 echo 'PASS: existing policy-routing priority is rejected before apply.'
 ip -n "$NS" rule del priority 10518 fwmark 20561 table 518
 
-# 3. Inject an nftables apply failure after the helper has created TUN/routes/
+# 3. A pre-existing nftables table must be rejected before any network changes.
+ip netns exec "$NS" nft add table inet host_firewall
+if run_helper "$GOOD_CONFIG" dialer-up >"$LAB_DIR/preexisting-firewall.log" 2>&1; then
+  fail 'dialer-up unexpectedly accepted a pre-existing nftables table'
+fi
+assert_no_tun 'pre-existing firewall'
+assert_no_saved_state 'pre-existing firewall'
+assert_no_helper_policy 'pre-existing firewall'
+assert_forwarding_zero 'pre-existing firewall'
+if ! grep -q 'existing nftables table/ruleset was detected' "$LAB_DIR/preexisting-firewall.log"; then
+  fail 'pre-existing firewall test did not reach the fail-closed firewall guard'
+fi
+ip netns exec "$NS" nft delete table inet host_firewall
+echo 'PASS: pre-existing nftables state is rejected before applying network changes.'
+
+# 4. Pre-enabled forwarding must be preserved and rejected before state is written.
+ip netns exec "$NS" sysctl -w net.ipv4.ip_forward=1 >/dev/null
+if run_helper "$GOOD_CONFIG" dialer-up >"$LAB_DIR/preenabled-forwarding.log" 2>&1; then
+  fail 'dialer-up unexpectedly accepted pre-enabled IPv4 forwarding'
+fi
+assert_no_tun 'pre-enabled forwarding'
+assert_no_saved_state 'pre-enabled forwarding'
+assert_no_helper_policy 'pre-enabled forwarding'
+forward4="$(ip netns exec "$NS" cat /proc/sys/net/ipv4/ip_forward)"
+forward6="$(ip netns exec "$NS" cat /proc/sys/net/ipv6/conf/all/forwarding)"
+[[ "$forward4" == 1 && "$forward6" == 0 ]] || fail "helper changed pre-enabled forwarding (IPv4=$forward4 IPv6=$forward6)"
+if ! grep -q 'forwarding is already enabled' "$LAB_DIR/preenabled-forwarding.log"; then
+  fail 'pre-enabled forwarding test did not reach the fail-closed forwarding guard'
+fi
+ip netns exec "$NS" sysctl -w net.ipv4.ip_forward=0 >/dev/null
+assert_forwarding_zero 'pre-enabled forwarding test cleanup'
+echo 'PASS: pre-enabled forwarding is rejected without changing its prior value.'
+
+# 5. Inject an nftables apply failure after the helper has created TUN/routes/
 # rules and enabled forwarding. Check-only validation still uses real nft.
 mkdir -m 0700 "$WRAPPER_DIR"
 cat >"$WRAPPER_DIR/nft" <<'WRAPPER'
