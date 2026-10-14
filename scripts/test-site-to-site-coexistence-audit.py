@@ -197,6 +197,26 @@ COMMIT
         self.assertNotIn("8443", repr(parsed["notrack_rules"]))
         self.assertNotIn("9000", repr(parsed["notrack_rules"]))
 
+    def test_candidate_tcp_port_overlap_is_gateway_direction_aware(self):
+        fixture = """*raw
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -p tcp --dport 8443 -j NOTRACK
+-A PREROUTING -p tcp --sport 8443 -j NOTRACK
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp --sport 8443 -j NOTRACK
+-A OUTPUT -p tcp --dport 8443 -j NOTRACK
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(fixture, candidate_port=8443, role="gateway")
+        self.assertEqual(
+            [r["candidate_overlap"] for r in parsed["notrack_rules"]],
+            ["match", "unknown", "match", "unknown"],
+        )
+        self.assertEqual(
+            [r["endpoint_port_side"] for r in parsed["notrack_rules"]],
+            ["destination", "destination", "source", "source"],
+        )
+
     def test_candidate_port_matches_default_tcp_rule_without_port_selector(self):
         fixture = """*raw
 :OUTPUT ACCEPT [0:0]
