@@ -1,40 +1,36 @@
 #!/usr/bin/env bash
-# PQTunnel one-line bootstrap. Default mode is read-only preflight.
+# PQTunnel bootstrap: read-only preflight by default; operational modes are explicit.
 set -Eeuo pipefail
 
-REPO_API="https://api.github.com/repos/hatinati2/PQTunnel/tarball/main"
-RAW_BASE="https://raw.githubusercontent.com/hatinati2/PQTunnel/main"
 MODE=preflight
-if (($#)); then MODE=$1; shift; fi
+if (($#)); then MODE="$1"; shift; fi
+RAW_BASE="https://raw.githubusercontent.com/hatinati2/PQTunnel/main"
+API_TARBALL="https://api.github.com/repos/hatinati2/PQTunnel/tarball/main"
 WORK_DIR=
+
+fail() { printf 'pqtunnel-bootstrap: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
 cleanup() { [[ -z "$WORK_DIR" ]] || rm -rf "$WORK_DIR"; }
 trap cleanup EXIT
 
 usage() {
   cat <<'USAGE'
-PQTunnel one-line bootstrap
+PQTunnel bootstrap. The default "preflight" mode is read-only.
 
-Read-only first step (default):
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | bash
-  ... | bash -s -- preflight --role gateway
-  ... | bash -s -- preflight --role dialer
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | bash -s -- preflight --role gateway
+  bash scripts/pqtunnel-bootstrap.sh check-config --kind gateway --app-env APP.env --network-env NETWORK.env
 
-Gateway install (PKI and reviewed config files must already exist on the host):
-  ... | sudo bash -s -- install-server --pki-dir /root/pki --server-env-file /root/pqtunneld.env --network-env-file /root/site-to-site.env
-  Append --start to enable/start the daemon; append --apply-network too only after preflight/recovery review.
+Install modes require pre-created certificates and manually reviewed config files:
+  install-server --pki-dir DIR --server-env-file FILE --network-env-file FILE [--start] [--apply-network]
+  install-client --pki-dir DIR --client-env-file FILE --network-env-file FILE [--start]
 
-Dialer install (Go 1.24+ must already be installed):
-  ... | sudo bash -s -- install-client --pki-dir /root/pki --client-env-file /root/pqtunnel-client.env --network-env-file /root/site-to-site.env
-  Append --start only when ready to apply dialer networking and start the client.
-
-The default mode is read-only. Install modes refuse existing artifacts, do not install OS
-packages, and do not evaluate configuration as shell when validating it. The dialer service
-applies the selective network helper at start and calls its rollback action after stopping.
-This project remains experimental; review the scripts and keep console/out-of-band recovery.
+--start is an explicit operational action. Gateway network apply requires the separate
+--apply-network flag. Starting the dialer unit applies its network helper. This project is
+experimental: retain console/out-of-band access, review every file, and test in a lab first.
+No OS packages are installed automatically; existing installations are not overwritten.
 USAGE
 }
-fail() { echo "pqtunnel-bootstrap: $*" >&2; exit 1; }
-have() { command -v "$1" >/dev/null 2>&1; }
 
 get_source() {
   if [[ -f ./go.mod && -f ./scripts/install-server.sh ]] && grep -Fxq 'module github.com/hatinati2/PQTunnel' ./go.mod; then
@@ -45,22 +41,24 @@ get_source() {
   have tar || fail 'tar is required; no changes made.'
   WORK_DIR="$(mktemp -d)"
   mkdir -p "$WORK_DIR/src"
-  curl --fail --silent --show-error --location "$REPO_API" -o "$WORK_DIR/repo.tar.gz"
-  tar -xzf "$WORK_DIR/repo.tar.gz" --strip-components=1 -C "$WORK_DIR/src"
+  curl --fail --silent --show-error --location "$API_TARBALL" -o "$WORK_DIR/source.tar.gz"
+  tar -xzf "$WORK_DIR/source.tar.gz" --strip-components=1 -C "$WORK_DIR/src"
   SOURCE_DIR="$WORK_DIR/src"
 }
 
 validate_env_file() {
   local file="$1" line key value mode perm
-  [[ -f "$file" && -r "$file" ]] || fail "configuration file missing or unreadable: $file"
+  [[ -n "$file" && -f "$file" && -r "$file" ]] || fail "configuration file missing or unreadable: $file"
   mode="$(stat -c '%a' "$file" 2>/dev/null || printf 777)"
   perm=$((8#$mode))
   (( (perm & 0022) == 0 )) || fail "configuration must not be group/world-writable: $file"
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]] && continue
-    IFS='=' read -r key value <<< "$line"
-    [[ "$key" =~ ^PQTUNNEL_[A-Z0-9_]+$ ]] || fail "configuration has a non-PQTUNNEL key: $file"
-    [[ "$value" =~ ^([A-Za-z0-9_.,:/=-]|\[|\])*$ ]] || fail "configuration contains unsupported characters/whitespace: $file"
+    [[ "$line" == *=* ]] || fail "configuration entry must be KEY=VALUE: $file"
+    key="${line%%=*}"
+    value="${line#*=}"
+    [[ "$key" =~ ^PQTUNNEL_[A-Z0-9_]+$ ]] || fail "only PQTUNNEL_* keys are allowed: $file"
+    [[ "$value" =~ ^[a-zA-Z0-9_.,:/=\[\]-]*$ ]] || fail "unsupported characters or whitespace in configuration value: $file"
   done < "$file"
   if ! awk -F= '/^[[:space:]]*PQTUNNEL_[A-Z0-9_]+=/ { key=$1; gsub(/[[:space:]]/, "", key); if (seen[key]++) exit 1 }' "$file"; then
     fail "configuration contains duplicate keys: $file"
@@ -78,103 +76,101 @@ require_nonempty() {
 require_role_and_wan() {
   local file="$1" role="$2"
   require_exact "$file" "PQTUNNEL_ROLE=$role"
-  grep -Eq '^PQTUNNEL_WAN_IF=[A-Za-z0-9_.:-]+$' "$file" || fail "PQTUNNEL_WAN_IF must be set in $file"
+  grep -Eq '^PQTUNNEL_WAN_IF=[a-zA-Z0-9_.:-]+$' "$file" || fail "PQTUNNEL_WAN_IF must be set in $file"
+}
+check_os_prerequisites() {
+  local cmd
+  for cmd in "$@"; do have "$cmd" || fail "required command '$cmd' is missing; no packages are installed automatically."; done
+}
+validate_gateway_config() {
+  local app="$1" network="$2"
+  validate_env_file "$app"; validate_env_file "$network"
+  require_exact "$app" 'PQTUNNEL_TLS_CERT=/etc/pqtunnel/pki/server.crt'
+  require_exact "$app" 'PQTUNNEL_TLS_KEY=/etc/pqtunnel/pki/server.key'
+  require_exact "$app" 'PQTUNNEL_CLIENT_CA=/etc/pqtunnel/pki/ca.crt'
+  require_exact "$app" 'PQTUNNEL_MAX_CLIENTS=1'
+  require_nonempty "$app" PQTUNNEL_PEER_PREFIXES
+  require_nonempty "$app" PQTUNNEL_LOCAL_PREFIXES
+  require_nonempty "$app" PQTUNNEL_PEER_NAME
+  require_nonempty "$app" PQTUNNEL_ALLOWED_DST_PORTS
+  require_role_and_wan "$network" gateway
+}
+validate_dialer_config() {
+  local app="$1" network="$2"
+  validate_env_file "$app"; validate_env_file "$network"
+  require_nonempty "$app" PQTUNNEL_SERVER
+  require_nonempty "$app" PQTUNNEL_SERVER_NAME
+  require_nonempty "$app" PQTUNNEL_LOCAL_PREFIXES
+  require_nonempty "$app" PQTUNNEL_REMOTE_PREFIXES
+  require_nonempty "$app" PQTUNNEL_ALLOWED_DST_PORTS
+  require_role_and_wan "$network" dialer
+  if ! grep -Eq '^PQTUNNEL_(TCP_EGRESS_PORTS|UDP_EGRESS_PORTS|TCP_FORWARD_RULES|UDP_FORWARD_RULES)=.+' "$network"; then
+    fail 'configure at least one egress port list or port-forward rule in the network config.'
+  fi
+}
+check_no_existing() {
+  local path
+  for path in "$@"; do [[ ! -e "$path" ]] || fail "existing artifact detected at $path; refusing to overwrite."; done
 }
 
 case "$MODE" in
   -h|--help|help) usage; exit 0 ;;
+  preflight)
+    ROLE=both; ENDPOINT=
+    while (($#)); do
+      case "$1" in
+        --role) [[ $# -ge 2 ]] || fail 'missing --role value'; ROLE="$2"; shift 2 ;;
+        --endpoint) [[ $# -ge 2 ]] || fail 'missing --endpoint value'; ENDPOINT="$2"; shift 2 ;;
+        *) echo "unknown preflight option: $1" >&2; usage >&2; exit 2 ;;
+      esac
+    done
+    [[ "$ROLE" == both || "$ROLE" == gateway || "$ROLE" == dialer ]] || fail 'role must be both, gateway or dialer.'
+    if [[ -f ./scripts/site-to-site-preflight.sh ]]; then PREFLIGHT=./scripts/site-to-site-preflight.sh
+    else
+      check_os_prerequisites curl
+      PREFLIGHT="$(mktemp)"
+      trap 'rm -f "$PREFLIGHT"; cleanup' EXIT
+      curl --fail --silent --show-error --location "$RAW_BASE/scripts/site-to-site-preflight.sh" -o "$PREFLIGHT"
+    fi
+    if [[ -n "$ENDPOINT" ]]; then bash "$PREFLIGHT" --role "$ROLE" --endpoint "$ENDPOINT"
+    else bash "$PREFLIGHT" --role "$ROLE"; fi
+    ;;
   check-config)
     KIND=; APP_ENV=; NETWORK_ENV=
     while (($#)); do
       case "$1" in
-        --kind) [[ $# -ge 2 ]] || fail 'missing value for --kind'; KIND=$2; shift 2 ;;
-        --app-env) [[ $# -ge 2 ]] || fail 'missing value for --app-env'; APP_ENV=$2; shift 2 ;;
-        --network-env) [[ $# -ge 2 ]] || fail 'missing value for --network-env'; NETWORK_ENV=$2; shift 2 ;;
-        *) echo "unknown config-check option: $1" >&2; usage >&2; exit 2 ;;
+        --kind) [[ $# -ge 2 ]] || fail 'missing --kind value'; KIND="$2"; shift 2 ;;
+        --app-env) [[ $# -ge 2 ]] || fail 'missing --app-env value'; APP_ENV="$2"; shift 2 ;;
+        --network-env) [[ $# -ge 2 ]] || fail 'missing --network-env value'; NETWORK_ENV="$2"; shift 2 ;;
+        *) echo "unknown check-config option: $1" >&2; usage >&2; exit 2 ;;
       esac
     done
-    [[ "$KIND" == gateway || "$KIND" == dialer ]] || fail 'check-config --kind must be gateway or dialer.'
-    validate_env_file "$APP_ENV"
-    validate_env_file "$NETWORK_ENV"
-    if [[ "$KIND" == gateway ]]; then
-      require_exact "$APP_ENV" 'PQTUNNEL_TLS_CERT=/etc/pqtunnel/pki/server.crt'
-      require_exact "$APP_ENV" 'PQTUNNEL_TLS_KEY=/etc/pqtunnel/pki/server.key'
-      require_exact "$APP_ENV" 'PQTUNNEL_CLIENT_CA=/etc/pqtunnel/pki/ca.crt'
-      require_exact "$APP_ENV" 'PQTUNNEL_MAX_CLIENTS=1'
-      require_nonempty "$APP_ENV" PQTUNNEL_PEER_PREFIXES
-      require_nonempty "$APP_ENV" PQTUNNEL_LOCAL_PREFIXES
-      require_nonempty "$APP_ENV" PQTUNNEL_PEER_NAME
-      require_nonempty "$APP_ENV" PQTUNNEL_ALLOWED_DST_PORTS
-      require_role_and_wan "$NETWORK_ENV" gateway
-    else
-      require_nonempty "$APP_ENV" PQTUNNEL_SERVER
-      require_nonempty "$APP_ENV" PQTUNNEL_SERVER_NAME
-      require_nonempty "$APP_ENV" PQTUNNEL_LOCAL_PREFIXES
-      require_nonempty "$APP_ENV" PQTUNNEL_REMOTE_PREFIXES
-      require_nonempty "$APP_ENV" PQTUNNEL_ALLOWED_DST_PORTS
-      require_role_and_wan "$NETWORK_ENV" dialer
-      if ! grep -Eq '^PQTUNNEL_(TCP_EGRESS_PORTS|UDP_EGRESS_PORTS|TCP_FORWARD_RULES|UDP_FORWARD_RULES)=.+  preflight)
-    ROLE=both
-    ENDPOINT=
-    while (($#)); do
-      case "$1" in
-        --role) [[ $# -ge 2 ]] || fail 'missing value for --role'; ROLE=$2; shift 2 ;;
-        --endpoint) [[ $# -ge 2 ]] || fail 'missing value for --endpoint'; ENDPOINT=$2; shift 2 ;;
-        *) echo "unknown preflight option: $1" >&2; usage >&2; exit 2 ;;
-      esac
-    done
-    if [[ -f ./scripts/site-to-site-preflight.sh ]]; then
-      if [[ -n "$ENDPOINT" ]]; then
-        if bash ./scripts/site-to-site-preflight.sh --role "$ROLE" --endpoint "$ENDPOINT"; then exit 0; else exit $?; fi
-      else
-        if bash ./scripts/site-to-site-preflight.sh --role "$ROLE"; then exit 0; else exit $?; fi
-      fi
-    fi
-    have curl || fail 'curl is required to fetch the read-only checker.'
-    TMP_CHECK="$(mktemp)"
-    trap 'rm -f "$TMP_CHECK"' EXIT
-    curl --fail --silent --show-error --location "$RAW_BASE/scripts/site-to-site-preflight.sh" -o "$TMP_CHECK"
-    if [[ -n "$ENDPOINT" ]]; then
-      if bash "$TMP_CHECK" --role "$ROLE" --endpoint "$ENDPOINT"; then exit 0; else exit $?; fi
-    else
-      if bash "$TMP_CHECK" --role "$ROLE"; then exit 0; else exit $?; fi
-    fi
+    case "$KIND" in gateway) validate_gateway_config "$APP_ENV" "$NETWORK_ENV";; dialer) validate_dialer_config "$APP_ENV" "$NETWORK_ENV";; *) fail 'check-config --kind must be gateway or dialer.';; esac
+    echo "PASS: $KIND environment files validated; no system files or network state changed."
     ;;
   install-server)
     PKI_DIR=; SERVER_ENV=; NETWORK_ENV=; START=0; APPLY_NETWORK=0
     while (($#)); do
       case "$1" in
-        --pki-dir) [[ $# -ge 2 ]] || fail 'missing value for --pki-dir'; PKI_DIR=$2; shift 2 ;;
-        --server-env-file) [[ $# -ge 2 ]] || fail 'missing value for --server-env-file'; SERVER_ENV=$2; shift 2 ;;
-        --network-env-file) [[ $# -ge 2 ]] || fail 'missing value for --network-env-file'; NETWORK_ENV=$2; shift 2 ;;
+        --pki-dir) [[ $# -ge 2 ]] || fail 'missing --pki-dir value'; PKI_DIR="$2"; shift 2 ;;
+        --server-env-file) [[ $# -ge 2 ]] || fail 'missing --server-env-file value'; SERVER_ENV="$2"; shift 2 ;;
+        --network-env-file) [[ $# -ge 2 ]] || fail 'missing --network-env-file value'; NETWORK_ENV="$2"; shift 2 ;;
         --start) START=1; shift ;;
         --apply-network) APPLY_NETWORK=1; shift ;;
-        -h|--help) usage; exit 0 ;;
-        *) echo "unknown install option: $1" >&2; usage >&2; exit 2 ;;
+        *) echo "unknown install-server option: $1" >&2; usage >&2; exit 2 ;;
       esac
     done
-    [[ "$(id -u)" == 0 ]] || fail 'install-server requires root (sudo). No changes made.'
+    [[ "$(id -u)" == 0 ]] || fail 'install-server requires root (sudo); no changes made.'
     [[ -n "$PKI_DIR" && -d "$PKI_DIR" ]] || fail '--pki-dir must contain server.crt, server.key and ca.crt.'
-    for cmd in curl tar openssl systemctl ip stat grep awk install; do have "$cmd" || fail "required command missing: $cmd; no changes made."; done
-    validate_env_file "$SERVER_ENV"
-    validate_env_file "$NETWORK_ENV"
-    [[ ! -e "$PKI_DIR/ca.key" ]] || fail 'ca.key must remain offline and must not be installed on the server.'
-    for file in server.crt server.key ca.crt; do [[ -s "$PKI_DIR/$file" ]] || fail "missing $PKI_DIR/$file"; done
-    require_exact "$SERVER_ENV" 'PQTUNNEL_TLS_CERT=/etc/pqtunnel/pki/server.crt'
-    require_exact "$SERVER_ENV" 'PQTUNNEL_TLS_KEY=/etc/pqtunnel/pki/server.key'
-    require_exact "$SERVER_ENV" 'PQTUNNEL_CLIENT_CA=/etc/pqtunnel/pki/ca.crt'
-    require_exact "$SERVER_ENV" 'PQTUNNEL_MAX_CLIENTS=1'
-    require_nonempty "$SERVER_ENV" PQTUNNEL_PEER_PREFIXES
-    require_nonempty "$SERVER_ENV" PQTUNNEL_LOCAL_PREFIXES
-    require_nonempty "$SERVER_ENV" PQTUNNEL_PEER_NAME
-    require_nonempty "$SERVER_ENV" PQTUNNEL_ALLOWED_DST_PORTS
-    require_role_and_wan "$NETWORK_ENV" gateway
-    (( APPLY_NETWORK == 0 || START == 1 )) || fail '--apply-network requires --start so the listener TUN is ready first.'
-    for artifact in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/pqtunnel/pki/server.crt /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/ca.crt /etc/default/pqtunneld /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do
-      [[ ! -e "$artifact" ]] || fail "existing server artifact/config detected at $artifact; refusing to overwrite."
-    done
+    check_os_prerequisites curl tar openssl systemctl ip stat grep awk install
+    validate_gateway_config "$SERVER_ENV" "$NETWORK_ENV"
+    [[ ! -e "$PKI_DIR/ca.key" ]] || fail 'ca.key must remain offline; it must not be copied to a server.'
+    local_file=
+    for local_file in server.crt server.key ca.crt; do [[ -s "$PKI_DIR/$local_file" ]] || fail "missing $PKI_DIR/$local_file."; done
+    for local_file in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/pqtunnel/pki/server.crt /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/ca.crt /etc/default/pqtunneld /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do [[ ! -e "$local_file" ]] || fail "existing artifact at $local_file; refusing to overwrite."; done
+    (( APPLY_NETWORK == 0 || START == 1 )) || fail '--apply-network requires --start.'
     get_source
-    echo 'Read-only host preflight before installation:'
+    echo 'Read-only preflight on this host (no network changes):'
     bash "$SOURCE_DIR/scripts/site-to-site-preflight.sh" --role gateway
     bash "$SOURCE_DIR/scripts/install-server.sh" --source "$SOURCE_DIR" --pki "$PKI_DIR"
     install -d -o root -g root -m 0750 /usr/local/lib/pqtunnel
@@ -184,65 +180,49 @@ case "$MODE" in
     systemctl daemon-reload
     if (( START )); then
       systemctl enable --now pqtunneld
-      if (( APPLY_NETWORK )); then
-        if ! /usr/local/lib/pqtunnel/site-to-site-selective.sh gateway-up; then
-          fail 'gateway network apply failed; helper should have rolled back its own partial changes. pqtunneld remains active for inspection.'
-        fi
-      fi
-      echo 'Gateway daemon started. Network helper was applied only because --apply-network was explicitly supplied.'
-    else
-      echo 'Gateway daemon and configs installed; service remains stopped/disabled.'
+      if (( APPLY_NETWORK )); then /usr/local/lib/pqtunnel/site-to-site-selective.sh gateway-up; fi
     fi
-    echo 'The provider firewall is never changed by this script.'
+    echo 'Gateway install completed. Provider firewall was not modified.'
     ;;
   install-client)
     PKI_DIR=; CLIENT_ENV=; NETWORK_ENV=; START=0
     while (($#)); do
       case "$1" in
-        --pki-dir) [[ $# -ge 2 ]] || fail 'missing value for --pki-dir'; PKI_DIR=$2; shift 2 ;;
-        --client-env-file) [[ $# -ge 2 ]] || fail 'missing value for --client-env-file'; CLIENT_ENV=$2; shift 2 ;;
-        --network-env-file) [[ $# -ge 2 ]] || fail 'missing value for --network-env-file'; NETWORK_ENV=$2; shift 2 ;;
+        --pki-dir) [[ $# -ge 2 ]] || fail 'missing --pki-dir value'; PKI_DIR="$2"; shift 2 ;;
+        --client-env-file) [[ $# -ge 2 ]] || fail 'missing --client-env-file value'; CLIENT_ENV="$2"; shift 2 ;;
+        --network-env-file) [[ $# -ge 2 ]] || fail 'missing --network-env-file value'; NETWORK_ENV="$2"; shift 2 ;;
         --start) START=1; shift ;;
-        -h|--help) usage; exit 0 ;;
-        *) echo "unknown install option: $1" >&2; usage >&2; exit 2 ;;
+        *) echo "unknown install-client option: $1" >&2; usage >&2; exit 2 ;;
       esac
     done
-    [[ "$(id -u)" == 0 ]] || fail 'install-client requires root (sudo). No changes made.'
+    [[ "$(id -u)" == 0 ]] || fail 'install-client requires root (sudo); no changes made.'
     [[ -n "$PKI_DIR" && -d "$PKI_DIR" ]] || fail '--pki-dir must contain client.crt, client.key and ca.crt.'
-    for cmd in go openssl install systemctl ip nft sysctl stat grep awk sha256sum sed; do have "$cmd" || fail "required command missing: $cmd; no packages are installed automatically."; done
-    validate_env_file "$CLIENT_ENV"
-    validate_env_file "$NETWORK_ENV"
-    [[ ! -e "$PKI_DIR/ca.key" ]] || fail 'ca.key must remain offline and must not be installed on the client.'
-    for file in client.crt client.key ca.crt; do [[ -s "$PKI_DIR/$file" ]] || fail "missing $PKI_DIR/$file"; done
-    require_nonempty "$CLIENT_ENV" PQTUNNEL_SERVER
-    require_nonempty "$CLIENT_ENV" PQTUNNEL_SERVER_NAME
-    require_nonempty "$CLIENT_ENV" PQTUNNEL_LOCAL_PREFIXES
-    require_nonempty "$CLIENT_ENV" PQTUNNEL_REMOTE_PREFIXES
-    require_nonempty "$CLIENT_ENV" PQTUNNEL_ALLOWED_DST_PORTS
-    require_role_and_wan "$NETWORK_ENV" dialer
-    if ! grep -Eq '^PQTUNNEL_(TCP_EGRESS_PORTS|UDP_EGRESS_PORTS|TCP_FORWARD_RULES|UDP_FORWARD_RULES)=.+    for artifact in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do
-      [[ ! -e "$artifact" ]] || fail "existing dialer artifact/config detected at $artifact; refusing to overwrite."
-    done
+    check_os_prerequisites curl tar go openssl systemctl ip nft sysctl stat grep awk install sha256sum sed
+    validate_dialer_config "$CLIENT_ENV" "$NETWORK_ENV"
+    [[ ! -e "$PKI_DIR/ca.key" ]] || fail 'ca.key must remain offline; it must not be copied to a client.'
+    for local_file in client.crt client.key ca.crt; do [[ -s "$PKI_DIR/$local_file" ]] || fail "missing $PKI_DIR/$local_file."; done
     GV="$(go env GOVERSION | sed 's/^go//')"
-    if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=24)) }'; then fail "Go 1.24+ required; found $GV."; fi
+    if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=24)) }'; then fail "Go 1.24+ is required; found $GV."; fi
     openssl x509 -in "$PKI_DIR/client.crt" -noout >/dev/null || fail 'client.crt is not a valid PEM certificate.'
     openssl pkey -in "$PKI_DIR/client.key" -noout >/dev/null || fail 'client.key is not a valid PEM private key.'
     openssl verify -purpose sslclient -CAfile "$PKI_DIR/ca.crt" "$PKI_DIR/client.crt" >/dev/null || fail 'client certificate does not validate against ca.crt.'
     CERT_PUB="$(openssl x509 -in "$PKI_DIR/client.crt" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')"
     KEY_PUB="$(openssl pkey -in "$PKI_DIR/client.key" -pubout -outform DER | sha256sum | awk '{print $1}')"
     [[ "$CERT_PUB" == "$KEY_PUB" ]] || fail 'client.key does not match client.crt.'
+    for local_file in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh /usr/local/lib/pqtunnel/run-client.sh; do [[ ! -e "$local_file" ]] || fail "existing artifact at $local_file; refusing to overwrite."; done
     get_source
-    echo 'Read-only host preflight before installation:'
+    echo 'Read-only preflight on this host (no network changes):'
     bash "$SOURCE_DIR/scripts/site-to-site-preflight.sh" --role dialer
-    WORK_DIR_BUILD="$(mktemp -d)"
-    trap 'rm -rf "$WORK_DIR_BUILD"; cleanup' EXIT
+    BUILD_DIR="$(mktemp -d)"
+    WORK_DIR_OLD="$WORK_DIR"; WORK_DIR="$BUILD_DIR"
     (
       cd "$SOURCE_DIR"
-      GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$WORK_DIR_BUILD/pqtunnel-client" ./cmd/pqtunnel-client
+      GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$BUILD_DIR/pqtunnel-client" ./cmd/pqtunnel-client
     )
     install -d -o root -g root -m 0750 /etc/pqtunnel /etc/pqtunnel/pki /usr/local/lib/pqtunnel /var/lib/pqtunnel
-    install -o root -g root -m 0755 "$WORK_DIR_BUILD/pqtunnel-client" /usr/local/bin/pqtunnel-client
+    install -o root -g root -m 0755 "$BUILD_DIR/pqtunnel-client" /usr/local/bin/pqtunnel-client
     install -o root -g root -m 0755 "$SOURCE_DIR/scripts/site-to-site-selective.sh" /usr/local/lib/pqtunnel/site-to-site-selective.sh
+    install -o root -g root -m 0755 "$SOURCE_DIR/scripts/run-pqtunnel-client.sh" /usr/local/lib/pqtunnel/run-client.sh
     install -o root -g root -m 0644 "$PKI_DIR/ca.crt" /etc/pqtunnel/pki/ca.crt
     install -o root -g root -m 0644 "$PKI_DIR/client.crt" /etc/pqtunnel/pki/client.crt
     install -o root -g root -m 0600 "$PKI_DIR/client.key" /etc/pqtunnel/pki/client.key
@@ -250,262 +230,7 @@ case "$MODE" in
     install -o root -g root -m 0640 "$NETWORK_ENV" /etc/pqtunnel/site-to-site.env
     install -o root -g root -m 0644 "$SOURCE_DIR/deploy/systemd/pqtunnel-client.service" /etc/systemd/system/pqtunnel-client.service
     systemctl daemon-reload
-    if (( START )); then
-      systemctl enable --now pqtunnel-client
-      echo 'Dialer service started. The unit applies the selective network helper and rolls it back after stop.'
-    else
-      echo 'Dialer binary, certificates and configs installed; service remains stopped/disabled and networking is unchanged.'
-    fi
-    ;;
-  *)
-    echo "unknown mode: $MODE" >&2
-    usage >&2
-    exit 2
-    ;;
-esac
- "$NETWORK_ENV"; then
-      fail 'configure at least one egress port list or port-forward rule in the network env file.'
-    fi
-    for artifact in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do
-      [[ ! -e "$artifact" ]] || fail "existing dialer artifact/config detected at $artifact; refusing to overwrite."
-    done
-    for cmd in go openssl install systemctl ip; do have "$cmd" || fail "required command missing: $cmd; no packages are installed automatically."; done
-    GV="$(go env GOVERSION | sed 's/^go//')"
-    if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=24)) }'; then fail "Go 1.24+ required; found $GV."; fi
-    openssl x509 -in "$PKI_DIR/client.crt" -noout >/dev/null || fail 'client.crt is not a valid PEM certificate.'
-    openssl pkey -in "$PKI_DIR/client.key" -noout >/dev/null || fail 'client.key is not a valid PEM private key.'
-    openssl verify -purpose sslclient -CAfile "$PKI_DIR/ca.crt" "$PKI_DIR/client.crt" >/dev/null || fail 'client certificate does not validate against ca.crt.'
-    CERT_PUB="$(openssl x509 -in "$PKI_DIR/client.crt" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')"
-    KEY_PUB="$(openssl pkey -in "$PKI_DIR/client.key" -pubout -outform DER | sha256sum | awk '{print $1}')"
-    [[ "$CERT_PUB" == "$KEY_PUB" ]] || fail 'client.key does not match client.crt.'
-    get_source
-    echo 'Read-only host preflight before installation:'
-    bash "$SOURCE_DIR/scripts/site-to-site-preflight.sh" --role dialer
-    WORK_DIR_BUILD="$(mktemp -d)"
-    trap 'rm -rf "$WORK_DIR_BUILD"; cleanup' EXIT
-    (
-      cd "$SOURCE_DIR"
-      GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$WORK_DIR_BUILD/pqtunnel-client" ./cmd/pqtunnel-client
-    )
-    install -d -o root -g root -m 0750 /etc/pqtunnel /etc/pqtunnel/pki /usr/local/lib/pqtunnel /var/lib/pqtunnel
-    install -o root -g root -m 0755 "$WORK_DIR_BUILD/pqtunnel-client" /usr/local/bin/pqtunnel-client
-    install -o root -g root -m 0755 "$SOURCE_DIR/scripts/site-to-site-selective.sh" /usr/local/lib/pqtunnel/site-to-site-selective.sh
-    install -o root -g root -m 0644 "$PKI_DIR/ca.crt" /etc/pqtunnel/pki/ca.crt
-    install -o root -g root -m 0644 "$PKI_DIR/client.crt" /etc/pqtunnel/pki/client.crt
-    install -o root -g root -m 0600 "$PKI_DIR/client.key" /etc/pqtunnel/pki/client.key
-    install -o root -g root -m 0640 "$CLIENT_ENV" /etc/default/pqtunnel-client
-    install -o root -g root -m 0640 "$NETWORK_ENV" /etc/pqtunnel/site-to-site.env
-    install -o root -g root -m 0644 "$SOURCE_DIR/deploy/systemd/pqtunnel-client.service" /etc/systemd/system/pqtunnel-client.service
-    systemctl daemon-reload
-    if (( START )); then
-      systemctl enable --now pqtunnel-client
-      echo 'Dialer service started. The unit applies the selective network helper and rolls it back after stop.'
-    else
-      echo 'Dialer binary, certificates and configs installed; service remains stopped/disabled and networking is unchanged.'
-    fi
-    ;;
-  *)
-    echo "unknown mode: $MODE" >&2
-    usage >&2
-    exit 2
-    ;;
-esac
- "$NETWORK_ENV"; then
-        fail 'configure at least one egress port list or port-forward rule in the network env file.'
-      fi
-    fi
-    echo "PASS: $KIND app and network config syntax/required keys validated; no system files or network state changed."
-    ;;
-  preflight)
-    ROLE=both
-    ENDPOINT=
-    while (($#)); do
-      case "$1" in
-        --role) [[ $# -ge 2 ]] || fail 'missing value for --role'; ROLE=$2; shift 2 ;;
-        --endpoint) [[ $# -ge 2 ]] || fail 'missing value for --endpoint'; ENDPOINT=$2; shift 2 ;;
-        *) echo "unknown preflight option: $1" >&2; usage >&2; exit 2 ;;
-      esac
-    done
-    if [[ -f ./scripts/site-to-site-preflight.sh ]]; then
-      if [[ -n "$ENDPOINT" ]]; then
-        if bash ./scripts/site-to-site-preflight.sh --role "$ROLE" --endpoint "$ENDPOINT"; then exit 0; else exit $?; fi
-      else
-        if bash ./scripts/site-to-site-preflight.sh --role "$ROLE"; then exit 0; else exit $?; fi
-      fi
-    fi
-    have curl || fail 'curl is required to fetch the read-only checker.'
-    TMP_CHECK="$(mktemp)"
-    trap 'rm -f "$TMP_CHECK"' EXIT
-    curl --fail --silent --show-error --location "$RAW_BASE/scripts/site-to-site-preflight.sh" -o "$TMP_CHECK"
-    if [[ -n "$ENDPOINT" ]]; then
-      if bash "$TMP_CHECK" --role "$ROLE" --endpoint "$ENDPOINT"; then exit 0; else exit $?; fi
-    else
-      if bash "$TMP_CHECK" --role "$ROLE"; then exit 0; else exit $?; fi
-    fi
-    ;;
-  install-server)
-    PKI_DIR=; SERVER_ENV=; NETWORK_ENV=; START=0; APPLY_NETWORK=0
-    while (($#)); do
-      case "$1" in
-        --pki-dir) [[ $# -ge 2 ]] || fail 'missing value for --pki-dir'; PKI_DIR=$2; shift 2 ;;
-        --server-env-file) [[ $# -ge 2 ]] || fail 'missing value for --server-env-file'; SERVER_ENV=$2; shift 2 ;;
-        --network-env-file) [[ $# -ge 2 ]] || fail 'missing value for --network-env-file'; NETWORK_ENV=$2; shift 2 ;;
-        --start) START=1; shift ;;
-        --apply-network) APPLY_NETWORK=1; shift ;;
-        -h|--help) usage; exit 0 ;;
-        *) echo "unknown install option: $1" >&2; usage >&2; exit 2 ;;
-      esac
-    done
-    [[ "$(id -u)" == 0 ]] || fail 'install-server requires root (sudo). No changes made.'
-    [[ -n "$PKI_DIR" && -d "$PKI_DIR" ]] || fail '--pki-dir must contain server.crt, server.key and ca.crt.'
-    for cmd in curl tar openssl systemctl ip stat grep awk install; do have "$cmd" || fail "required command missing: $cmd; no changes made."; done
-    validate_env_file "$SERVER_ENV"
-    validate_env_file "$NETWORK_ENV"
-    [[ ! -e "$PKI_DIR/ca.key" ]] || fail 'ca.key must remain offline and must not be installed on the server.'
-    for file in server.crt server.key ca.crt; do [[ -s "$PKI_DIR/$file" ]] || fail "missing $PKI_DIR/$file"; done
-    require_exact "$SERVER_ENV" 'PQTUNNEL_TLS_CERT=/etc/pqtunnel/pki/server.crt'
-    require_exact "$SERVER_ENV" 'PQTUNNEL_TLS_KEY=/etc/pqtunnel/pki/server.key'
-    require_exact "$SERVER_ENV" 'PQTUNNEL_CLIENT_CA=/etc/pqtunnel/pki/ca.crt'
-    require_exact "$SERVER_ENV" 'PQTUNNEL_MAX_CLIENTS=1'
-    require_nonempty "$SERVER_ENV" PQTUNNEL_PEER_PREFIXES
-    require_nonempty "$SERVER_ENV" PQTUNNEL_LOCAL_PREFIXES
-    require_nonempty "$SERVER_ENV" PQTUNNEL_PEER_NAME
-    require_nonempty "$SERVER_ENV" PQTUNNEL_ALLOWED_DST_PORTS
-    require_role_and_wan "$NETWORK_ENV" gateway
-    (( APPLY_NETWORK == 0 || START == 1 )) || fail '--apply-network requires --start so the listener TUN is ready first.'
-    for artifact in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/pqtunnel/pki/server.crt /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/ca.crt /etc/default/pqtunneld /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do
-      [[ ! -e "$artifact" ]] || fail "existing server artifact/config detected at $artifact; refusing to overwrite."
-    done
-    get_source
-    echo 'Read-only host preflight before installation:'
-    bash "$SOURCE_DIR/scripts/site-to-site-preflight.sh" --role gateway
-    bash "$SOURCE_DIR/scripts/install-server.sh" --source "$SOURCE_DIR" --pki "$PKI_DIR"
-    install -d -o root -g root -m 0750 /usr/local/lib/pqtunnel
-    install -o root -g root -m 0755 "$SOURCE_DIR/scripts/site-to-site-selective.sh" /usr/local/lib/pqtunnel/site-to-site-selective.sh
-    install -o root -g root -m 0640 "$SERVER_ENV" /etc/default/pqtunneld
-    install -o root -g root -m 0640 "$NETWORK_ENV" /etc/pqtunnel/site-to-site.env
-    systemctl daemon-reload
-    if (( START )); then
-      systemctl enable --now pqtunneld
-      if (( APPLY_NETWORK )); then
-        if ! /usr/local/lib/pqtunnel/site-to-site-selective.sh gateway-up; then
-          fail 'gateway network apply failed; helper should have rolled back its own partial changes. pqtunneld remains active for inspection.'
-        fi
-      fi
-      echo 'Gateway daemon started. Network helper was applied only because --apply-network was explicitly supplied.'
-    else
-      echo 'Gateway daemon and configs installed; service remains stopped/disabled.'
-    fi
-    echo 'The provider firewall is never changed by this script.'
-    ;;
-  install-client)
-    PKI_DIR=; CLIENT_ENV=; NETWORK_ENV=; START=0
-    while (($#)); do
-      case "$1" in
-        --pki-dir) [[ $# -ge 2 ]] || fail 'missing value for --pki-dir'; PKI_DIR=$2; shift 2 ;;
-        --client-env-file) [[ $# -ge 2 ]] || fail 'missing value for --client-env-file'; CLIENT_ENV=$2; shift 2 ;;
-        --network-env-file) [[ $# -ge 2 ]] || fail 'missing value for --network-env-file'; NETWORK_ENV=$2; shift 2 ;;
-        --start) START=1; shift ;;
-        -h|--help) usage; exit 0 ;;
-        *) echo "unknown install option: $1" >&2; usage >&2; exit 2 ;;
-      esac
-    done
-    [[ "$(id -u)" == 0 ]] || fail 'install-client requires root (sudo). No changes made.'
-    [[ -n "$PKI_DIR" && -d "$PKI_DIR" ]] || fail '--pki-dir must contain client.crt, client.key and ca.crt.'
-    for cmd in go openssl install systemctl ip nft sysctl stat grep awk sha256sum sed; do have "$cmd" || fail "required command missing: $cmd; no packages are installed automatically."; done
-    validate_env_file "$CLIENT_ENV"
-    validate_env_file "$NETWORK_ENV"
-    [[ ! -e "$PKI_DIR/ca.key" ]] || fail 'ca.key must remain offline and must not be installed on the client.'
-    for file in client.crt client.key ca.crt; do [[ -s "$PKI_DIR/$file" ]] || fail "missing $PKI_DIR/$file"; done
-    require_nonempty "$CLIENT_ENV" PQTUNNEL_SERVER
-    require_nonempty "$CLIENT_ENV" PQTUNNEL_SERVER_NAME
-    require_nonempty "$CLIENT_ENV" PQTUNNEL_LOCAL_PREFIXES
-    require_nonempty "$CLIENT_ENV" PQTUNNEL_REMOTE_PREFIXES
-    require_nonempty "$CLIENT_ENV" PQTUNNEL_ALLOWED_DST_PORTS
-    require_role_and_wan "$NETWORK_ENV" dialer
-    if ! grep -Eq '^PQTUNNEL_(TCP_EGRESS_PORTS|UDP_EGRESS_PORTS|TCP_FORWARD_RULES|UDP_FORWARD_RULES)=.+    for artifact in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do
-      [[ ! -e "$artifact" ]] || fail "existing dialer artifact/config detected at $artifact; refusing to overwrite."
-    done
-    GV="$(go env GOVERSION | sed 's/^go//')"
-    if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=24)) }'; then fail "Go 1.24+ required; found $GV."; fi
-    openssl x509 -in "$PKI_DIR/client.crt" -noout >/dev/null || fail 'client.crt is not a valid PEM certificate.'
-    openssl pkey -in "$PKI_DIR/client.key" -noout >/dev/null || fail 'client.key is not a valid PEM private key.'
-    openssl verify -purpose sslclient -CAfile "$PKI_DIR/ca.crt" "$PKI_DIR/client.crt" >/dev/null || fail 'client certificate does not validate against ca.crt.'
-    CERT_PUB="$(openssl x509 -in "$PKI_DIR/client.crt" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')"
-    KEY_PUB="$(openssl pkey -in "$PKI_DIR/client.key" -pubout -outform DER | sha256sum | awk '{print $1}')"
-    [[ "$CERT_PUB" == "$KEY_PUB" ]] || fail 'client.key does not match client.crt.'
-    get_source
-    echo 'Read-only host preflight before installation:'
-    bash "$SOURCE_DIR/scripts/site-to-site-preflight.sh" --role dialer
-    WORK_DIR_BUILD="$(mktemp -d)"
-    trap 'rm -rf "$WORK_DIR_BUILD"; cleanup' EXIT
-    (
-      cd "$SOURCE_DIR"
-      GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$WORK_DIR_BUILD/pqtunnel-client" ./cmd/pqtunnel-client
-    )
-    install -d -o root -g root -m 0750 /etc/pqtunnel /etc/pqtunnel/pki /usr/local/lib/pqtunnel /var/lib/pqtunnel
-    install -o root -g root -m 0755 "$WORK_DIR_BUILD/pqtunnel-client" /usr/local/bin/pqtunnel-client
-    install -o root -g root -m 0755 "$SOURCE_DIR/scripts/site-to-site-selective.sh" /usr/local/lib/pqtunnel/site-to-site-selective.sh
-    install -o root -g root -m 0644 "$PKI_DIR/ca.crt" /etc/pqtunnel/pki/ca.crt
-    install -o root -g root -m 0644 "$PKI_DIR/client.crt" /etc/pqtunnel/pki/client.crt
-    install -o root -g root -m 0600 "$PKI_DIR/client.key" /etc/pqtunnel/pki/client.key
-    install -o root -g root -m 0640 "$CLIENT_ENV" /etc/default/pqtunnel-client
-    install -o root -g root -m 0640 "$NETWORK_ENV" /etc/pqtunnel/site-to-site.env
-    install -o root -g root -m 0644 "$SOURCE_DIR/deploy/systemd/pqtunnel-client.service" /etc/systemd/system/pqtunnel-client.service
-    systemctl daemon-reload
-    if (( START )); then
-      systemctl enable --now pqtunnel-client
-      echo 'Dialer service started. The unit applies the selective network helper and rolls it back after stop.'
-    else
-      echo 'Dialer binary, certificates and configs installed; service remains stopped/disabled and networking is unchanged.'
-    fi
-    ;;
-  *)
-    echo "unknown mode: $MODE" >&2
-    usage >&2
-    exit 2
-    ;;
-esac
- "$NETWORK_ENV"; then
-      fail 'configure at least one egress port list or port-forward rule in the network env file.'
-    fi
-    for artifact in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do
-      [[ ! -e "$artifact" ]] || fail "existing dialer artifact/config detected at $artifact; refusing to overwrite."
-    done
-    for cmd in go openssl install systemctl ip; do have "$cmd" || fail "required command missing: $cmd; no packages are installed automatically."; done
-    GV="$(go env GOVERSION | sed 's/^go//')"
-    if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=24)) }'; then fail "Go 1.24+ required; found $GV."; fi
-    openssl x509 -in "$PKI_DIR/client.crt" -noout >/dev/null || fail 'client.crt is not a valid PEM certificate.'
-    openssl pkey -in "$PKI_DIR/client.key" -noout >/dev/null || fail 'client.key is not a valid PEM private key.'
-    openssl verify -purpose sslclient -CAfile "$PKI_DIR/ca.crt" "$PKI_DIR/client.crt" >/dev/null || fail 'client certificate does not validate against ca.crt.'
-    CERT_PUB="$(openssl x509 -in "$PKI_DIR/client.crt" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')"
-    KEY_PUB="$(openssl pkey -in "$PKI_DIR/client.key" -pubout -outform DER | sha256sum | awk '{print $1}')"
-    [[ "$CERT_PUB" == "$KEY_PUB" ]] || fail 'client.key does not match client.crt.'
-    get_source
-    echo 'Read-only host preflight before installation:'
-    bash "$SOURCE_DIR/scripts/site-to-site-preflight.sh" --role dialer
-    WORK_DIR_BUILD="$(mktemp -d)"
-    trap 'rm -rf "$WORK_DIR_BUILD"; cleanup' EXIT
-    (
-      cd "$SOURCE_DIR"
-      GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$WORK_DIR_BUILD/pqtunnel-client" ./cmd/pqtunnel-client
-    )
-    install -d -o root -g root -m 0750 /etc/pqtunnel /etc/pqtunnel/pki /usr/local/lib/pqtunnel /var/lib/pqtunnel
-    install -o root -g root -m 0755 "$WORK_DIR_BUILD/pqtunnel-client" /usr/local/bin/pqtunnel-client
-    install -o root -g root -m 0755 "$SOURCE_DIR/scripts/site-to-site-selective.sh" /usr/local/lib/pqtunnel/site-to-site-selective.sh
-    install -o root -g root -m 0644 "$PKI_DIR/ca.crt" /etc/pqtunnel/pki/ca.crt
-    install -o root -g root -m 0644 "$PKI_DIR/client.crt" /etc/pqtunnel/pki/client.crt
-    install -o root -g root -m 0600 "$PKI_DIR/client.key" /etc/pqtunnel/pki/client.key
-    install -o root -g root -m 0640 "$CLIENT_ENV" /etc/default/pqtunnel-client
-    install -o root -g root -m 0640 "$NETWORK_ENV" /etc/pqtunnel/site-to-site.env
-    install -o root -g root -m 0644 "$SOURCE_DIR/deploy/systemd/pqtunnel-client.service" /etc/systemd/system/pqtunnel-client.service
-    systemctl daemon-reload
-    if (( START )); then
-      systemctl enable --now pqtunnel-client
-      echo 'Dialer service started. The unit applies the selective network helper and rolls it back after stop.'
-    else
-      echo 'Dialer binary, certificates and configs installed; service remains stopped/disabled and networking is unchanged.'
-    fi
+    if (( START )); then systemctl enable --now pqtunnel-client; else echo 'Client installed but remains stopped/disabled; networking unchanged.'; fi
     ;;
   *)
     echo "unknown mode: $MODE" >&2
