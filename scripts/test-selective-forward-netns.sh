@@ -63,7 +63,28 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   if [[ -n "$CLIENT_PID" ]]; then kill -TERM "$CLIENT_PID" >/dev/null 2>&1; wait "$CLIENT_PID" >/dev/null 2>&1; fi
-  if [[ -n "$IR_NS" ]] && ip netns list | awk '{print $1}' | grep -Fxq "$IR_NS"; then
+  if (( rc != 0 )); then
+    for ns in "$IR_NS" "$DE_NS" "$VIS_NS" "$SW_NS"; do
+      if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
+        echo "--- namespace $ns interfaces/routes ---" >&2
+        ip -n "$ns" -brief address show >&2
+        ip -n "$ns" route show table all >&2
+        ip -n "$ns" -6 route show table all >&2
+      fi
+    done
+    if ip netns list | awk '{print $1}' | grep -Fxq "$IR_NS"; then
+      echo '--- dialer nftables rules (before rollback) ---' >&2
+      ip netns exec "$IR_NS" nft list ruleset >&2
+      echo '--- dialer policy routing (before rollback) ---' >&2
+      ip netns exec "$IR_NS" ip -4 rule show >&2
+      ip netns exec "$IR_NS" ip -6 rule show >&2
+      ip netns exec "$IR_NS" ip -4 route show table 518 >&2
+      ip netns exec "$IR_NS" ip -4 route show table 519 >&2
+      ip netns exec "$IR_NS" ip -6 route show table 518 >&2
+      ip netns exec "$IR_NS" ip -6 route show table 519 >&2
+    fi
+  fi
+  if [[ -n "$IR_NS" ]} && ip netns list | awk '{print $1}' | grep -Fxq "$IR_NS"; then
     if [[ -f "$STATE_FILE" && -f "$DIALER_CONFIG" ]]; then
       ip netns exec "$IR_NS" env PQTUNNEL_SITE_CONFIG="$DIALER_CONFIG" PQTUNNEL_STATE_DIR="$STATE_DIR" \
         bash "$ROOT/scripts/site-to-site-selective.sh" dialer-down >/dev/null 2>&1
@@ -283,7 +304,7 @@ for name, family, kind, endpoint, payload, expected in tests:
     s.close()
     if received != expected:
         raise SystemExit(f"FAIL: {name} returned {received!r}; expected {expected!r}")
-    print(f"PASS: selective {name} port-forward round-trip")
+    print(f"PASS: selective {name} port-forward round-trip", flush=True)
 PY
 
 echo 'PASS: selective TCP/UDP port forwarding across IPv4 and IPv6 passed inside disposable network namespaces.'
