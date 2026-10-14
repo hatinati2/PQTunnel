@@ -46,10 +46,23 @@ func TestValidateDisjointPrefixesRejectsNonCanonicalInput(t *testing.T) {
 }
 
 func TestValidateDisjointPrefixesAllowsDefaultRouteForClient(t *testing.T) {
-	local := []netip.Prefix{netip.MustParsePrefix("10.66.0.0/24")}
-	for _, route := range []string{"0.0.0.0/0", "::/0"} {
-		p := netip.MustParsePrefix(route)
-		if err := validateDisjointPrefixes(local, []netip.Prefix{p}, true); err != nil { t.Fatalf("default route %s should be allowed: %v", route, err) }
-		if err := validateDisjointPrefixes(local, []netip.Prefix{p}, false); err == nil { t.Fatalf("default route %s should be rejected in strict mode", route) }
+	tests := []struct {
+		route string
+		local string
+	}{
+		{route: "0.0.0.0/0", local: "10.66.0.0/24"},
+		{route: "::/0", local: "fd42:7061:7475::/64"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.route, func(t *testing.T) {
+			local := []netip.Prefix{netip.MustParsePrefix(tt.local)}
+			p := netip.MustParsePrefix(tt.route)
+			if err := validateDisjointPrefixes(local, []netip.Prefix{p}, true); err != nil {
+				t.Fatalf("default route %s should be allowed: %v", tt.route, err)
+			}
+			if err := validateDisjointPrefixes(local, []netip.Prefix{p}, false); err == nil {
+				t.Fatalf("default route %s should be rejected in strict mode", tt.route)
+			}
+		})
 	}
 }
