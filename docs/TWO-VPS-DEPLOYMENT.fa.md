@@ -28,13 +28,13 @@
 آلمان:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/413bfbab0a7c2f7896ec86bdb3902728107024c9/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/49f884d00e09fd2686f0947d31b3599028c0fc91/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
 ```
 
 ایران:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/413bfbab0a7c2f7896ec86bdb3902728107024c9/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/49f884d00e09fd2686f0947d31b3599028c0fc91/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
 ```
 
 یا از checkout بازبینی‌شدهٔ مخزن:
