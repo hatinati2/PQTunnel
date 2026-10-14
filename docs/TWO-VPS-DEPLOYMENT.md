@@ -28,13 +28,13 @@ Run the correct role-specific command separately on each VPS. These commands fet
 Germany:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/01cfe2073ffa2bda88b25ce8ea05c2e6b209aa6c/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/413bfbab0a7c2f7896ec86bdb3902728107024c9/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
 ```
 
 Iran:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/01cfe2073ffa2bda88b25ce8ea05c2e6b209aa6c/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/413bfbab0a7c2f7896ec86bdb3902728107024c9/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
 ```
 
 Or run from a reviewed checkout:
@@ -53,6 +53,8 @@ The optional `--endpoint HOST_OR_IP` checks the current route to the endpoint; h
 - **PASS:** that individual read-only check passed; it does not prove two-host connectivity.
 
 Preflight checks OS/tool availability, routes and policy-rule collisions, routing tables 518/519, forwarding and reverse-path-filter sysctls, firewall query success/failure, service/binary/config presence, private-key permissions, and—when files exist—certificate expiry, CA verification and certificate/private-key match. Firewall query failures are reported as **unknown/WARN**, not incorrectly assumed to mean an empty firewall. Certificate and private-key contents are never printed.
+
+The current preflight also inspects nftables/iptables/ip6tables output for `NOTRACK` and packet-marking rules. `NOTRACK` means matching flows may bypass conntrack and conflict with SNAT/DNAT; existing packet marks may interact with PQTunnel policy routing. These warnings do not identify rule ownership or establish coexistence safety. See the [existing-firewall coexistence design note](EXISTING-FIREWALL-COEXISTENCE.md) for requirements and lab validation gates.
 
 When sharing results, send only the role, Ubuntu version, PASS/WARN/FAIL counts, warning text, and whether required files exist with safe permissions. Redact hostnames, addresses and provider identifiers where appropriate. Never share private keys, unredacted config, or raw systemd environment output.
 
