@@ -146,3 +146,19 @@ func TestValidateCAKeyRejectsNonCA(t *testing.T) {
 		t.Fatal("expected non-CA certificate to be rejected")
 	}
 }
+
+
+func TestValidateCAKeyRejectsExpiredCA(t *testing.T) {
+	caCert, key := testCA(t)
+	caCert.NotAfter = time.Now().Add(-time.Minute)
+	if err := validateCAKey(caCert, key); err == nil {
+		t.Fatal("expected expired CA certificate to be rejected")
+	}
+}
+
+func TestValidateCAKeyRejectsInvalidPrivateKeyLength(t *testing.T) {
+	caCert, _ := testCA(t)
+	if err := validateCAKey(caCert, ed25519.PrivateKey{1, 2, 3}); err == nil {
+		t.Fatal("expected invalid private-key length to be rejected")
+	}
+}
