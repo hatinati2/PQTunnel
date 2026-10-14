@@ -27,7 +27,7 @@ func TestValidateDisjointPrefixes(t *testing.T) {
 			if err != nil { t.Fatal(err) }
 			b, err := prefixset.ParseCSV(tt.b)
 			if err != nil { t.Fatal(err) }
-			err = validateDisjointPrefixes(a, b)
+			err = validateDisjointPrefixes(a, b, false)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("validateDisjointPrefixes() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -38,9 +38,18 @@ func TestValidateDisjointPrefixes(t *testing.T) {
 func TestValidateDisjointPrefixesRejectsNonCanonicalInput(t *testing.T) {
 	_, err := validateDisjointPrefixes(
 		[]netip.Prefix{netip.MustParsePrefix("10.1.2.3/24")},
-		[]netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
+		[]netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, false,
 	)
 	if err == nil {
 		t.Fatal("expected non-canonical prefix to be rejected")
+	}
+}
+
+func TestValidateDisjointPrefixesAllowsDefaultRouteForClient(t *testing.T) {
+	local := []netip.Prefix{netip.MustParsePrefix("10.66.0.0/24")}
+	for _, route := range []string{"0.0.0.0/0", "::/0"} {
+		p := netip.MustParsePrefix(route)
+		if err := validateDisjointPrefixes(local, []netip.Prefix{p}, true); err != nil { t.Fatalf("default route %s should be allowed: %v", route, err) }
+		if err := validateDisjointPrefixes(local, []netip.Prefix{p}, false); err == nil { t.Fatalf("default route %s should be rejected in strict mode", route) }
 	}
 }
