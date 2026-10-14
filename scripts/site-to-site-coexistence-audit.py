@@ -137,7 +137,7 @@ SELECTOR_PATTERNS: dict[str, re.Pattern[str]] = {
     "interface": re.compile(r"(?:^|\s)(?:-i|--in-interface|-o|--out-interface)(?:\s|=)", re.I),
     "protocol": re.compile(r"(?:^|\s)(?:-p|--protocol)(?:\s|=)", re.I),
     "address": re.compile(r"(?:^|\s)(?:-s|--source|-d|--destination|--src|--dst)(?:\s|=)", re.I),
-    "port": re.compile(r"(?:^|\s)(?:--(?:sport|source-port|sports|dport|destination-port|dports))(?:\s|=)", re.I),
+    "port": re.compile(r"(?:^|\s)(?:--(?:sport|source-port|sports|dport|destination-port|dports|ports))(?:\s|=)", re.I),
     "connection": re.compile(r"(?:^|\s)(?:--(?:ctstate|state|ctstatus|ctdir|ctexpire))(?:\s|=)", re.I),
     "mark": re.compile(r"(?:^|\s)(?:--(?:mark|ctmark|nfmark|nfmask|ctmask))(?:\s|=)", re.I),
 }
