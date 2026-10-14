@@ -19,17 +19,20 @@ SUFFIX="$$"
 IR_NS="pqt-sir-$SUFFIX"
 DE_NS="pqt-sde-$SUFFIX"
 VIS_NS="pqt-svi-$SUFFIX"
-IR_DE_IF="pqi$SUFFIX"
+SW_NS="pqt-ssw-$SUFFIX"
+IR_IF="pqi$SUFFIX"
 DE_IF="pqd$SUFFIX"
-IR_VIS_IF="pvv$SUFFIX"
 VIS_IF="pvi$SUFFIX"
-for ns in "$IR_NS" "$DE_NS" "$VIS_NS"; do
+SW_IR_IF="swi$SUFFIX"
+SW_DE_IF="swd$SUFFIX"
+SW_VIS_IF="swv$SUFFIX"
+for ns in "$IR_NS" "$DE_NS" "$VIS_NS" "$SW_NS"; do
   if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
     echo "FAIL: refusing to reuse existing network namespace $ns" >&2
     exit 2
   fi
 done
-for iface in "$IR_DE_IF" "$DE_IF" "$IR_VIS_IF" "$VIS_IF"; do
+for iface in "$IR_IF" "$DE_IF" "$VIS_IF" "$SW_IR_IF" "$SW_DE_IF" "$SW_VIS_IF"; do
   if ip link show dev "$iface" >/dev/null 2>&1; then
     echo "FAIL: refusing to reuse existing host interface $iface" >&2
     exit 2
@@ -72,8 +75,8 @@ cleanup() {
   ip netns del "$VIS_NS" >/dev/null 2>&1
   ip netns del "$IR_NS" >/dev/null 2>&1
   ip netns del "$DE_NS" >/dev/null 2>&1
-  ip link del "$IR_DE_IF" >/dev/null 2>&1
-  ip link del "$IR_VIS_IF" >/dev/null 2>&1
+  ip netns del "$SW_NS" >/dev/null 2>&1
+  for iface in "$IR_IF" "$DE_IF" "$VIS_IF" "$SW_IR_IF" "$SW_DE_IF" "$SW_VIS_IF"; do ip link del "$iface" >/dev/null 2>&1; done
   if (( rc != 0 )); then
     for log in "$SERVER_LOG" "$CLIENT_LOG" "$TCP4_LOG" "$UDP4_LOG" "$TCP6_LOG" "$UDP6_LOG"; do
       if [[ -s "$log" ]]; then echo "--- $log ---" >&2; cat "$log" >&2; fi
@@ -97,9 +100,9 @@ cp "$LAB_DIR/authority/peer-iran.crt" "$LAB_DIR/client-pki/peer.crt"
 cp "$LAB_DIR/authority/peer-iran.key" "$LAB_DIR/client-pki/peer.key"
 chmod 0600 "$LAB_DIR/server-pki/server.key" "$LAB_DIR/client-pki/peer.key"
 
-cat > "$DIALER_CONFIG" <<'CONFIG'
+cat > "$DIALER_CONFIG" <<CONFIG
 PQTUNNEL_ROLE=dialer
-PQTUNNEL_WAN_IF=brwan
+PQTUNNEL_WAN_IF=$IR_IF
 PQTUNNEL_TUN=pqtun0
 PQTUNNEL_TCP_EGRESS_PORTS=
 PQTUNNEL_UDP_EGRESS_PORTS=
@@ -111,27 +114,35 @@ chmod 0600 "$DIALER_CONFIG"
 ip netns add "$IR_NS"
 ip netns add "$DE_NS"
 ip netns add "$VIS_NS"
+ip netns add "$SW_NS"
 # Some hosted kernels enable forwarding by default. Reset only the disposable
 # Iran namespace so the helper can verify and record a known starting state.
 ip netns exec "$IR_NS" sysctl -w net.ipv4.ip_forward=0 >/dev/null
 ip netns exec "$IR_NS" sysctl -w net.ipv6.conf.all.forwarding=0 >/dev/null
-ip link add "$IR_DE_IF" type veth peer name "$DE_IF"
-ip link set "$IR_DE_IF" netns "$IR_NS"
+# Connect the three isolated namespaces to a switch namespace. The dialer sees
+# a single WAN interface for both the underlay to Germany and visitor traffic,
+# just as a physical NIC would on the real host.
+ip link add "$IR_IF" type veth peer name "$SW_IR_IF"
+ip link set "$IR_IF" netns "$IR_NS"
+ip link set "$SW_IR_IF" netns "$SW_NS"
+ip link add "$DE_IF" type veth peer name "$SW_DE_IF"
 ip link set "$DE_IF" netns "$DE_NS"
-ip link add "$IR_VIS_IF" type veth peer name "$VIS_IF"
-ip link set "$IR_VIS_IF" netns "$IR_NS"
+ip link set "$SW_DE_IF" netns "$SW_NS"
+ip link add "$VIS_IF" type veth peer name "$SW_VIS_IF"
 ip link set "$VIS_IF" netns "$VIS_NS"
+ip link set "$SW_VIS_IF" netns "$SW_NS"
 
-for ns in "$IR_NS" "$DE_NS" "$VIS_NS"; do ip -n "$ns" link set lo up; done
-ip -n "$IR_NS" link add brwan type bridge
-ip -n "$IR_NS" link set "$IR_DE_IF" master brwan
-ip -n "$IR_NS" link set "$IR_VIS_IF" master brwan
-ip -n "$IR_NS" addr add 198.18.0.2/24 dev brwan
-ip -n "$IR_NS" -6 addr add 2001:db8:feed::2/64 dev brwan
-ip -n "$IR_NS" link set "$IR_DE_IF" up
-ip -n "$IR_NS" link set "$IR_VIS_IF" up
-ip -n "$IR_NS" link set brwan up
+for ns in "$IR_NS" "$DE_NS" "$VIS_NS" "$SW_NS"; do ip -n "$ns" link set lo up; done
+ip -n "$SW_NS" link add brlab type bridge
+ip -n "$SW_NS" link set "$SW_IR_IF" master brlab
+ip -n "$SW_NS" link set "$SW_DE_IF" master brlab
+ip -n "$SW_NS" link set "$SW_VIS_IF" master brlab
+for iface in "$SW_IR_IF" "$SW_DE_IF" "$SW_VIS_IF"; do ip -n "$SW_NS" link set "$iface" up; done
+ip -n "$SW_NS" link set brlab up
 
+ip -n "$IR_NS" addr add 198.18.0.2/24 dev "$IR_IF"
+ip -n "$IR_NS" -6 addr add 2001:db8:feed::2/64 dev "$IR_IF"
+ip -n "$IR_NS" link set "$IR_IF" up
 ip -n "$DE_NS" addr add 198.18.0.1/24 dev "$DE_IF"
 ip -n "$DE_NS" -6 addr add 2001:db8:feed::1/64 dev "$DE_IF"
 ip -n "$DE_NS" link set "$DE_IF" up
