@@ -59,6 +59,23 @@ go run ./cmd/pqtunnel-pki issue-client --out ./pki --ip 10.66.0.2
 
 امضای گواهی‌ها فعلاً Ed25519 کلاسیک است؛ پس `X25519MLKEM768` به معنی پساکوانتومی‌بودن کامل احراز هویت نیست. در حالت server-to-server تک‌peer، هر دو مقدار `PQTUNNEL_PEER_PREFIXES` (CIDRهای مجاز مبدأ peer و مسیر برگشت) و `PQTUNNEL_LOCAL_PREFIXES` (CIDRهای مقصد مجاز سمت Listener) را در `/etc/default/pqtunneld` تنظیم کن، `PQTUNNEL_PEER_NAME` را مشخص کن و `PQTUNNEL_MAX_CLIENTS=1` قرار بده؛ نام peer باید دقیقاً با Common Name گواهی صادرشده برابر باشد. Listener certificate paths can be selected with `PQTUNNEL_TLS_CERT` and `PQTUNNEL_TLS_KEY` when reversing roles.
 
+## پیش‌بررسی VPS و راه‌انداز تک‌خطی
+
+قبل از آماده‌سازی هر دو VPS، اسکریپت **فقط‌خواندنی** را از checkout مخزن اجرا کن:
+
+```sh
+bash scripts/site-to-site-preflight.sh --role gateway
+bash scripts/site-to-site-preflight.sh --role dialer
+```
+
+نسخهٔ تک‌خطی راه‌دور نیز در حالت پیش‌فرض فقط بررسی انجام می‌دهد و به دسترسی root نیاز ندارد:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | bash
+```
+
+راه‌انداز همچنین حالت نصب daemon سمت Gateway را دارد؛ این حالت فقط با انتخاب صریح `install-server` و ارائهٔ پوشهٔ PKI آماده به‌همراه فایل تنظیمات site-to-site که از قبل بازبینی شده باشد اجرا می‌شود. گزینهٔ `--start` فقط سرویس `pqtunneld` را اجرا می‌کند و **هیچ route، فایروال/NAT، forwarding یا قانون فایروال ارائه‌دهنده را تغییر نمی‌دهد**. نصب موجود را بازنویسی نمی‌کند، بسته‌های سیستم‌عامل را خودکار نصب نمی‌کند و جای نصب کامل دو VPS را نمی‌گیرد. پیش از استفاده، اسکریپت را بازبینی کن و دسترسی کنسول بازیابی را نگه دار. CI هیچ نصب یا اعمال تنظیمات شبکه‌ای را روی VPS واقعی اجرا نمی‌کند.
+
 ## بسته‌بندی سرور Ubuntu
 
 فایل‌های نصب از تغییرات شبکه جدا شده‌اند تا نصب سرویس، بی‌سروصدا قواعد NAT یا فایروال را عوض نکند.
