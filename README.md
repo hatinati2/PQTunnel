@@ -64,6 +64,23 @@ Issue a separate client certificate for each device with a unique IP address. Ne
 
 The current certificate signatures use Ed25519. The `X25519MLKEM768` KEM does not make these signatures post-quantum. For site-to-site mode, configure both `PQTUNNEL_PEER_PREFIXES` (allowed peer source/return-route CIDRs) and `PQTUNNEL_LOCAL_PREFIXES` (allowed listener-side destination CIDRs) in `/etc/default/pqtunneld`, set `PQTUNNEL_PEER_NAME`, and set `PQTUNNEL_MAX_CLIENTS=1`. The peer name must exactly match the issued client/peer certificate Common Name. Listener certificate paths can be selected using `PQTUNNEL_TLS_CERT` and `PQTUNNEL_TLS_KEY` when reversing the roles.
 
+## VPS preflight and one-line bootstrap
+
+Before preparing either VPS, run the **read-only** preflight from a source checkout:
+
+```sh
+bash scripts/site-to-site-preflight.sh --role gateway
+bash scripts/site-to-site-preflight.sh --role dialer
+```
+
+A one-line remote preflight is also available; it defaults to checks only and does not need root:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | bash
+```
+
+The same bootstrap also has guarded `install-server` and `install-client` modes. Both require certificates and reviewed role-specific environment files to be staged first; the client build requires Go 1.24+ already installed. `install-server` stages the listener and network-helper configuration; `--start` starts the daemon, and the additional `--apply-network` flag is required to explicitly apply gateway routes/NAT. `install-client` stages the dialer service; its `--start` option activates the systemd unit, which applies the dialer network helper and invokes rollback after the service stops. Both modes refuse existing artifacts and do not install operating-system packages. Example settings use documentation-only IP prefixes and must be replaced. These helpers are not a substitute for a reviewed recovery plan and have not been run on your VPS. CI exercises them only in the disposable GitHub runner.
+
 ## Ubuntu server packaging
 
 The deployment assets are intentionally split into installation and network setup so that installing the service does not silently modify firewall/NAT policy.

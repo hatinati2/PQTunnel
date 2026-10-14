@@ -59,6 +59,23 @@ go run ./cmd/pqtunnel-pki issue-client --out ./pki --ip 10.66.0.2
 
 امضای گواهی‌ها فعلاً Ed25519 کلاسیک است؛ پس `X25519MLKEM768` به معنی پساکوانتومی‌بودن کامل احراز هویت نیست. در حالت server-to-server تک‌peer، هر دو مقدار `PQTUNNEL_PEER_PREFIXES` (CIDRهای مجاز مبدأ peer و مسیر برگشت) و `PQTUNNEL_LOCAL_PREFIXES` (CIDRهای مقصد مجاز سمت Listener) را در `/etc/default/pqtunneld` تنظیم کن، `PQTUNNEL_PEER_NAME` را مشخص کن و `PQTUNNEL_MAX_CLIENTS=1` قرار بده؛ نام peer باید دقیقاً با Common Name گواهی صادرشده برابر باشد. Listener certificate paths can be selected with `PQTUNNEL_TLS_CERT` and `PQTUNNEL_TLS_KEY` when reversing roles.
 
+## پیش‌بررسی VPS و راه‌انداز تک‌خطی
+
+قبل از آماده‌سازی هر دو VPS، اسکریپت **فقط‌خواندنی** را از checkout مخزن اجرا کن:
+
+```sh
+bash scripts/site-to-site-preflight.sh --role gateway
+bash scripts/site-to-site-preflight.sh --role dialer
+```
+
+نسخهٔ تک‌خطی راه‌دور نیز در حالت پیش‌فرض فقط بررسی انجام می‌دهد و به دسترسی root نیاز ندارد:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | bash
+```
+
+این راه‌انداز حالت‌های کنترل‌شدهٔ `install-server` و `install-client` را هم دارد. برای هر دو، گواهی‌ها و فایل‌های تنظیمات مختص نقش باید از قبل آماده و بازبینی شده باشند؛ ساخت کلاینت نیز به Go 1.24+ نصب‌شده نیاز دارد. `install-server` سرویس Listener و تنظیمات helper شبکه را آماده می‌کند؛ `--start` سرویس را اجرا می‌کند و فقط گزینهٔ جداگانهٔ `--apply-network` تنظیم route/NAT سمت Gateway را اعمال می‌کند. `install-client` سرویس Dialer را آماده می‌کند؛ `--start` واحد systemd را فعال می‌کند که helper شبکهٔ Dialer را اجرا کرده و پس از توقف سرویس rollback را فراخوانی می‌کند. هر دو حالت اگر فایل نصب موجود باشد از بازنویسی خودداری می‌کنند و بستهٔ سیستم‌عامل را خودکار نصب نمی‌کنند. IPهای مثال صرفاً برای مستندسازی هستند و باید با CIDRهای واقعی جایگزین شوند. این ابزار جای برنامهٔ بازیابی بازبینی‌شده را نمی‌گیرد و روی VPS تو اجرا نشده است؛ CI آن را فقط در runner دورریختنی آزمایش می‌کند.
+
 ## بسته‌بندی سرور Ubuntu
 
 فایل‌های نصب از تغییرات شبکه جدا شده‌اند تا نصب سرویس، بی‌سروصدا قواعد NAT یا فایروال را عوض نکند.
