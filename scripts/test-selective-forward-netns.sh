@@ -6,7 +6,7 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT"
 [[ $EUID -eq 0 ]] || { echo 'FAIL: run this test with sudo/root on an isolated Linux host' >&2; exit 2; }
-for cmd in ip ss nft python3 go; do
+for cmd in ip ss nft tcpdump python3 go; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "FAIL: required command missing: $cmd" >&2; exit 2; }
 done
 [[ -c /dev/net/tun ]] || { echo 'FAIL: /dev/net/tun is unavailable' >&2; exit 2; }
@@ -47,7 +47,11 @@ UDP4_PID=""
 TCP6_PID=""
 UDP6_PID=""
 TRACE_PID=""
+IR_TUN_PID=""
+DE_TUN_PID=""
 TRACE_LOG="$LAB_DIR/nft-trace.log"
+IR_TUN_LOG="$LAB_DIR/iran-tun-capture.log"
+DE_TUN_LOG="$LAB_DIR/germany-tun-capture.log"
 SERVER_LOG="$LAB_DIR/server.log"
 CLIENT_LOG="$LAB_DIR/client.log"
 TCP4_LOG="$LAB_DIR/tcp4.log"
@@ -92,6 +96,9 @@ cleanup() {
   fi
   if [[ -n "$CLIENT_PID" ]]; then kill -TERM "$CLIENT_PID" >/dev/null 2>&1; wait "$CLIENT_PID" >/dev/null 2>&1; fi
   if [[ -n "$TRACE_PID" ]]; then kill -TERM "$TRACE_PID" >/dev/null 2>&1; wait "$TRACE_PID" >/dev/null 2>&1; fi
+  for pid in "$IR_TUN_PID" "$DE_TUN_PID"; do
+    if [[ -n "$pid" ]]; then kill -TERM "$pid" >/dev/null 2>&1; wait "$pid" >/dev/null 2>&1; fi
+  done
   if [[ -n "$IR_NS" ]] && ip netns list | awk '{print $1}' | grep -Fxq "$IR_NS"; then
     if [[ -f "$STATE_FILE" && -f "$DIALER_CONFIG" ]]; then
       ip netns exec "$IR_NS" env PQTUNNEL_SITE_CONFIG="$DIALER_CONFIG" PQTUNNEL_STATE_DIR="$STATE_DIR" \
@@ -107,7 +114,7 @@ cleanup() {
   ip netns del "$SW_NS" >/dev/null 2>&1
   for iface in "$IR_IF" "$DE_IF" "$VIS_IF" "$SW_IR_IF" "$SW_DE_IF" "$SW_VIS_IF"; do ip link del "$iface" >/dev/null 2>&1; done
   if (( rc != 0 )); then
-    for log in "$SERVER_LOG" "$CLIENT_LOG" "$TCP4_LOG" "$UDP4_LOG" "$TCP6_LOG" "$UDP6_LOG"; do
+    for log in "$SERVER_LOG" "$CLIENT_LOG" "$TCP4_LOG" "$UDP4_LOG" "$TCP6_LOG" "$UDP6_LOG" "$IR_TUN_LOG" "$DE_TUN_LOG"; do
       if [[ -s "$log" ]]; then echo "--- $log ---" >&2; cat "$log" >&2; fi
     done
   fi
@@ -317,6 +324,12 @@ wait_for_client() {
   return 1
 }
 wait_for_client || { echo 'FAIL: Iran dialer did not establish the tunnel to Germany' >&2; exit 1; }
+
+# Capture both sides of the TUN link to diagnose whether the forward packet is
+# emitted by the dialer and injected by the gateway. Captures remain namespace-local.
+ip netns exec "$IR_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)' >"$IR_TUN_LOG" 2>&1 & IR_TUN_PID=$!
+ip netns exec "$DE_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)' >"$DE_TUN_LOG" 2>&1 & DE_TUN_PID=$!
+sleep 0.1
 
 ip netns exec "$VIS_NS" python3 - <<'PY'
 import socket
