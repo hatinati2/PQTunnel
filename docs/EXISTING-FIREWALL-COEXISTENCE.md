@@ -79,3 +79,8 @@ The audit prints per-rule NOTRACK selector *types* (interface, protocol, address
 ### Opaque xtables-compat fallback in nft JSON
 
 Some libnftables versions serialize an xtables-compatibility statement as `{"xt": null}`. In that case, nft JSON confirms an opaque compatibility extension exists but does not expose its target name. The audit reports `xt_fallback` for any such extension and `xt_opaque` when the extension name is not available. A rule counted as `xt_opaque` must not be guessed to be NOTRACK, NAT, MARK, or a verdict. Use the sanitized `iptables-save` category output to identify known target types and keep the native nft JSON view marked as opaque. If `xt_opaque` is nonzero, the native summary alone is insufficient to assert that its target categories agree with the compatibility view.
+
+
+### Distinguishing XT matches from XT targets
+
+The privacy-preserving audit counts xtables-compat entries by their declared type (`match`, `target`, or `watcher`). It only classifies names such as NOTRACK, MARK, NAT targets, DROP/REJECT, and ACCEPT as actions when the XT entry type is `target`. A match extension with a similar name must not be mistaken for an action. `xt_fallback` by itself only means that a rule includes an xtables-compat entry; it does not identify which action the rule performs. The audit reports only aggregate categories, never the extension's raw name or the rule's selector values.
