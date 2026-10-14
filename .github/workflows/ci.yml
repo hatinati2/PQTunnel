@@ -75,6 +75,9 @@ jobs:
         run: |
           set -euo pipefail
           for script in scripts/*.sh; do bash -n "$script"; done
+      - name: Test read-only VPS preflight on disposable runner
+        shell: bash
+        run: bash scripts/test-site-to-site-preflight.sh
       - name: Install nftables parser for check-only regression test
         run: |
           sudo apt-get update
