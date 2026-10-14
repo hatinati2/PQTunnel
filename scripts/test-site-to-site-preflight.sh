@@ -41,6 +41,9 @@ fi
 
 HELP="$(bash "$PREFLIGHT" --help)"
 grep -q 'READ-ONLY' <<< "$HELP"
+grep -q 'check_certificate_bundle' "$PREFLIGHT"
+grep -q 'nftables query failed' "$PREFLIGHT"
+grep -q 'iptables-save query failed' "$PREFLIGHT"
 if bash "$PREFLIGHT" --role invalid >/dev/null 2>&1; then
   echo "invalid role was unexpectedly accepted" >&2
   exit 1
