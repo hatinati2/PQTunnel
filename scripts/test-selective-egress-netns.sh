@@ -140,8 +140,8 @@ cat >"$DIALER_CONFIG" <<CONFIG
 PQTUNNEL_ROLE=dialer
 PQTUNNEL_WAN_IF=$IR_IF
 PQTUNNEL_TUN=pqtun0
-PQTUNNEL_TCP_EGRESS_PORTS=443
-PQTUNNEL_UDP_EGRESS_PORTS=53
+PQTUNNEL_TCP_EGRESS_PORTS=443,8443
+PQTUNNEL_UDP_EGRESS_PORTS=53,5354
 PQTUNNEL_TCP_FORWARD_RULES=
 PQTUNNEL_UDP_FORWARD_RULES=
 CONFIG
@@ -206,9 +206,15 @@ for family, host in [
 ]:
     for kind, port in [
         (socket.SOCK_STREAM, 443),
+        (socket.SOCK_STREAM, 8443),
         (socket.SOCK_STREAM, 8080),
+        (socket.SOCK_STREAM, 9443),
+        (socket.SOCK_STREAM, 53),  # same number as UDP DNS, but TCP is not selected
         (socket.SOCK_DGRAM, 53),
+        (socket.SOCK_DGRAM, 5354),
         (socket.SOCK_DGRAM, 5353),
+        (socket.SOCK_DGRAM, 5355),
+        (socket.SOCK_DGRAM, 443),  # same number as selected HTTPS, but UDP is not selected
     ]:
         s = socket.socket(family, kind)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -272,8 +278,7 @@ ip netns exec "$DE_NS" env PQTUNNEL_SITE_CONFIG="$GATEWAY_CONFIG" PQTUNNEL_STATE
   bash "$ROOT/scripts/site-to-site-selective.sh" gateway-up
 wait_for_listener "$DE_NS" "198.18.0.1" 443 "$SERVER_PID" || { echo 'FAIL: Germany TLS listener did not start' >&2; exit 1; }
 
-# The dialer helper creates the TUN and installs only TCP/443 and UDP/53 egress
-# marks. The TLS transport itself uses port 443, so SO_MARK is required to keep
+# The dialer helper installs multi-port allowlists: TCP/443,8443 and UDP/53,5354. The TLS transport itself uses port 443, so SO_MARK is required to keep
 # the tunnel's own socket on the underlay instead of routing it into its TUN.
 ip netns exec "$IR_NS" env PQTUNNEL_SITE_CONFIG="$DIALER_CONFIG" PQTUNNEL_STATE_DIR="$DIALER_STATE" \
   bash "$ROOT/scripts/site-to-site-selective.sh" dialer-up
@@ -300,14 +305,29 @@ ip netns exec "$IR_NS" python3 - <<'PY'
 import socket
 
 tests = [
-    ("tcp4-selected", socket.AF_INET, socket.SOCK_STREAM, ("198.18.0.3", 443), "198.18.0.1"),
-    ("udp4-selected", socket.AF_INET, socket.SOCK_DGRAM, ("198.18.0.3", 53), "198.18.0.1"),
-    ("tcp4-direct", socket.AF_INET, socket.SOCK_STREAM, ("198.18.0.3", 8080), "198.18.0.2"),
-    ("udp4-direct", socket.AF_INET, socket.SOCK_DGRAM, ("198.18.0.3", 5353), "198.18.0.2"),
-    ("tcp6-selected", socket.AF_INET6, socket.SOCK_STREAM, ("2001:db8:feed::3", 443, 0, 0), "2001:db8:feed::1"),
-    ("udp6-selected", socket.AF_INET6, socket.SOCK_DGRAM, ("2001:db8:feed::3", 53, 0, 0), "2001:db8:feed::1"),
-    ("tcp6-direct", socket.AF_INET6, socket.SOCK_STREAM, ("2001:db8:feed::3", 8080, 0, 0), "2001:db8:feed::2"),
-    ("udp6-direct", socket.AF_INET6, socket.SOCK_DGRAM, ("2001:db8:feed::3", 5353, 0, 0), "2001:db8:feed::2"),
+    # Every configured port should use the Germany egress for both families.
+    ("tcp4-selected-443", socket.AF_INET, socket.SOCK_STREAM, ("198.18.0.3", 443), "198.18.0.1"),
+    ("tcp4-selected-8443", socket.AF_INET, socket.SOCK_STREAM, ("198.18.0.3", 8443), "198.18.0.1"),
+    ("udp4-selected-53", socket.AF_INET, socket.SOCK_DGRAM, ("198.18.0.3", 53), "198.18.0.1"),
+    ("udp4-selected-5354", socket.AF_INET, socket.SOCK_DGRAM, ("198.18.0.3", 5354), "198.18.0.1"),
+    # Non-allowlisted ports should remain direct.
+    ("tcp4-direct-8080", socket.AF_INET, socket.SOCK_STREAM, ("198.18.0.3", 8080), "198.18.0.2"),
+    ("tcp4-direct-9443", socket.AF_INET, socket.SOCK_STREAM, ("198.18.0.3", 9443), "198.18.0.2"),
+    ("udp4-direct-5353", socket.AF_INET, socket.SOCK_DGRAM, ("198.18.0.3", 5353), "198.18.0.2"),
+    ("udp4-direct-5355", socket.AF_INET, socket.SOCK_DGRAM, ("198.18.0.3", 5355), "198.18.0.2"),
+    # A selected port number with the other transport protocol must NOT tunnel.
+    ("tcp4-wrong-protocol-53", socket.AF_INET, socket.SOCK_STREAM, ("198.18.0.3", 53), "198.18.0.2"),
+    ("udp4-wrong-protocol-443", socket.AF_INET, socket.SOCK_DGRAM, ("198.18.0.3", 443), "198.18.0.2"),
+    ("tcp6-selected-443", socket.AF_INET6, socket.SOCK_STREAM, ("2001:db8:feed::3", 443, 0, 0), "2001:db8:feed::1"),
+    ("tcp6-selected-8443", socket.AF_INET6, socket.SOCK_STREAM, ("2001:db8:feed::3", 8443, 0, 0), "2001:db8:feed::1"),
+    ("udp6-selected-53", socket.AF_INET6, socket.SOCK_DGRAM, ("2001:db8:feed::3", 53, 0, 0), "2001:db8:feed::1"),
+    ("udp6-selected-5354", socket.AF_INET6, socket.SOCK_DGRAM, ("2001:db8:feed::3", 5354, 0, 0), "2001:db8:feed::1"),
+    ("tcp6-direct-8080", socket.AF_INET6, socket.SOCK_STREAM, ("2001:db8:feed::3", 8080, 0, 0), "2001:db8:feed::2"),
+    ("tcp6-direct-9443", socket.AF_INET6, socket.SOCK_STREAM, ("2001:db8:feed::3", 9443, 0, 0), "2001:db8:feed::2"),
+    ("udp6-direct-5353", socket.AF_INET6, socket.SOCK_DGRAM, ("2001:db8:feed::3", 5353, 0, 0), "2001:db8:feed::2"),
+    ("udp6-direct-5355", socket.AF_INET6, socket.SOCK_DGRAM, ("2001:db8:feed::3", 5355, 0, 0), "2001:db8:feed::2"),
+    ("tcp6-wrong-protocol-53", socket.AF_INET6, socket.SOCK_STREAM, ("2001:db8:feed::3", 53, 0, 0), "2001:db8:feed::2"),
+    ("udp6-wrong-protocol-443", socket.AF_INET6, socket.SOCK_DGRAM, ("2001:db8:feed::3", 443, 0, 0), "2001:db8:feed::2"),
 ]
 for name, family, kind, endpoint, expected_source in tests:
     s = socket.socket(family, kind)
@@ -326,4 +346,4 @@ for name, family, kind, endpoint, expected_source in tests:
     print(f"PASS: selective egress {name} observed {received}", flush=True)
 PY
 
-echo 'PASS: selective TCP/UDP egress is tunneled only for configured ports over IPv4 and IPv6.'
+echo 'PASS: multi-port selective TCP/UDP egress and protocol isolation passed for IPv4 and IPv6.'

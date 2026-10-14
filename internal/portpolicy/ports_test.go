@@ -48,9 +48,16 @@ func TestParseAndAllowPorts(t *testing.T) {
 		{"tcp range", ipv4Packet(6, "192.0.2.1", "198.51.100.1", 12000, 8005, 0), true},
 		{"tcp denied", ipv4Packet(6, "192.0.2.1", "198.51.100.1", 12000, 22, 0), false},
 		{"udp denied tcp rule", ipv4Packet(17, "192.0.2.1", "198.51.100.1", 12000, 443, 0), false},
+		{"tcp port not in tcp allowlist despite udp rule", ipv4Packet(6, "192.0.2.1", "198.51.100.1", 12000, 53, 0), false},
+		{"tcp range lower boundary", ipv4Packet(6, "192.0.2.1", "198.51.100.1", 12000, 8000, 0), true},
+		{"tcp range upper boundary", ipv4Packet(6, "192.0.2.1", "198.51.100.1", 12000, 8010, 0), true},
+		{"tcp just below range", ipv4Packet(6, "192.0.2.1", "198.51.100.1", 12000, 7999, 0), false},
+		{"tcp just above range", ipv4Packet(6, "192.0.2.1", "198.51.100.1", 12000, 8011, 0), false},
 		{"icmp denied", ipv4Packet(1, "192.0.2.1", "198.51.100.1", 0, 0, 0), false},
 		{"ipv6 tcp", ipv6Packet(6, "2001:db8::1", "2001:db8::2", 12000, 443), true},
 		{"ipv6 udp denied", ipv6Packet(17, "2001:db8::1", "2001:db8::2", 12000, 443), false},
+		{"ipv6 udp allowed", ipv6Packet(17, "2001:db8::1", "2001:db8::2", 12000, 53), true},
+		{"ipv6 tcp uses tcp policy only", ipv6Packet(6, "2001:db8::1", "2001:db8::2", 12000, 53), false},
 		{"ipv4 fragment denied", ipv4Packet(6, "192.0.2.1", "198.51.100.1", 12000, 443, 0x2000), false},
 	}
 	for _, tt := range tests {

@@ -45,7 +45,7 @@ go vet ./...
 go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
 ```
 
-CI runs unit tests, vet and Linux builds on both Ubuntu 24.04 and 26.04, cross-compiles Linux amd64/arm64 and Windows amd64, and exercises real Linux TUN devices plus IPv4/IPv6 routes between disposable network namespaces. These namespace tests cover the tunnel packet path, inbound TCP/UDP port-forward round trips, and selected egress (TCP/443 and UDP/53) versus direct traffic (TCP/8080 and UDP/5353) over IPv4 and IPv6. They do not validate public VPS routing, provider firewalls or production NAT/firewall integration, arbitrary egress policies beyond these test cases, DNS leaks, the four cross-version pairings, Windows route management, or Android physical devices.
+CI runs unit tests, vet and Linux builds on both Ubuntu 24.04 and 26.04, cross-compiles Linux amd64/arm64 and Windows amd64, and exercises real Linux TUN devices plus IPv4/IPv6 routes between disposable network namespaces. These namespace tests cover the tunnel packet path, inbound TCP/UDP port-forward round trips, and multi-port selective egress: TCP/443 and TCP/8443 plus UDP/53 and UDP/5354 use the tunnel, while TCP/8080, TCP/9443, UDP/5353, UDP/5355 and protocol-mismatched TCP/53 or UDP/443 remain direct, over IPv4 and IPv6. They do not validate public VPS routing, provider firewalls or production NAT/firewall integration, arbitrary egress policies beyond these test cases, DNS leaks, the four cross-version pairings, Windows route management, or Android physical devices.
 
 ## PKI workflow
 
