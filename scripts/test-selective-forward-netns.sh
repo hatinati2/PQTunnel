@@ -46,6 +46,8 @@ TCP4_PID=""
 UDP4_PID=""
 TCP6_PID=""
 UDP6_PID=""
+TRACE_PID=""
+TRACE_LOG="$LAB_DIR/nft-trace.log"
 SERVER_LOG="$LAB_DIR/server.log"
 CLIENT_LOG="$LAB_DIR/client.log"
 TCP4_LOG="$LAB_DIR/tcp4.log"
@@ -62,7 +64,6 @@ cleanup() {
   local rc=$?
   trap - EXIT INT TERM
   set +e
-  if [[ -n "$CLIENT_PID" ]]; then kill -TERM "$CLIENT_PID" >/dev/null 2>&1; wait "$CLIENT_PID" >/dev/null 2>&1; fi
   if (( rc != 0 )); then
     for ns in "$IR_NS" "$DE_NS" "$VIS_NS" "$SW_NS"; do
       if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
@@ -83,7 +84,14 @@ cleanup() {
       ip netns exec "$IR_NS" ip -6 route show table 518 >&2
       ip netns exec "$IR_NS" ip -6 route show table 519 >&2
     fi
+    if [[ -n "$TRACE_PID" ]]; then
+      sleep 0.1
+      echo '--- nft trace ---' >&2
+      [[ -f "$TRACE_LOG" ]] && cat "$TRACE_LOG" >&2
+    fi
   fi
+  if [[ -n "$CLIENT_PID" ]]; then kill -TERM "$CLIENT_PID" >/dev/null 2>&1; wait "$CLIENT_PID" >/dev/null 2>&1; fi
+  if [[ -n "$TRACE_PID" ]]; then kill -TERM "$TRACE_PID" >/dev/null 2>&1; wait "$TRACE_PID" >/dev/null 2>&1; fi
   if [[ -n "$IR_NS" ]] && ip netns list | awk '{print $1}' | grep -Fxq "$IR_NS"; then
     if [[ -f "$STATE_FILE" && -f "$DIALER_CONFIG" ]]; then
       ip netns exec "$IR_NS" env PQTUNNEL_SITE_CONFIG="$DIALER_CONFIG" PQTUNNEL_STATE_DIR="$STATE_DIR" \
@@ -261,6 +269,19 @@ for port in 5353; do wait_for_service udp "$port" || { echo "FAIL: UDP test targ
 # forwarding sysctls and TUN changes are confined to the disposable Iran namespace.
 ip netns exec "$IR_NS" env PQTUNNEL_SITE_CONFIG="$DIALER_CONFIG" PQTUNNEL_STATE_DIR="$STATE_DIR" \
   bash "$ROOT/scripts/site-to-site-selective.sh" dialer-up
+
+# Trace only these test ports inside the disposable dialer namespace.
+ip netns exec "$IR_NS" nft -f - <<'NFT'
+table inet pqtunnel_trace {
+  chain preroute { type filter hook prerouting priority raw; policy accept;
+    tcp dport { 8443, 9443 } meta nftrace set 1
+    udp dport { 5354, 5355 } meta nftrace set 1
+  }
+}
+NFT
+ip netns exec "$IR_NS" nft monitor trace >"$TRACE_LOG" 2>&1 &
+TRACE_PID=$!
+sleep 0.1
 
 ip netns exec "$IR_NS" "$PQTUNNEL_BIN_DIR/pqtunnel-client" \
   --server 198.18.0.1:8443 --server-name gateway.lab --network tcp4 \
