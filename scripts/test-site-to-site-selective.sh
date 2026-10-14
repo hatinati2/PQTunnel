@@ -46,7 +46,7 @@ if ! command -v nft >/dev/null 2>&1; then
 fi
 rules_file="$(mktemp)"
 trap 'rm -f "$tmp_config" "$rules_file"' EXIT
-printf '%s\\n' "$preview" >"$rules_file"
+printf '%s\n' "$preview" >"$rules_file"
 sudo nft -c -f "$rules_file"
 
 echo 'PASS: preview has explicit IPv4/IPv6 NAT syntax and passes nft -c.'
