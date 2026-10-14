@@ -56,13 +56,23 @@ case "$MODE" in
       esac
     done
     if [[ -f ./scripts/site-to-site-preflight.sh ]]; then
-      exec bash ./scripts/site-to-site-preflight.sh --role "$ROLE" ${ENDPOINT:+--endpoint "$ENDPOINT"}
+      if [[ -n "$ENDPOINT" ]]; then
+        bash ./scripts/site-to-site-preflight.sh --role "$ROLE" --endpoint "$ENDPOINT"
+      else
+        bash ./scripts/site-to-site-preflight.sh --role "$ROLE"
+      fi
+      exit $?
     fi
     command -v curl >/dev/null || { echo 'curl is required to fetch the read-only checker.' >&2; exit 1; }
     TMP_CHECK="$(mktemp)"
     trap 'rm -f "$TMP_CHECK"' EXIT
     curl --fail --silent --show-error --location "$RAW_BASE/scripts/site-to-site-preflight.sh" -o "$TMP_CHECK"
-    if [[ -n "$ENDPOINT" ]]; then exec bash "$TMP_CHECK" --role "$ROLE" --endpoint "$ENDPOINT"; else exec bash "$TMP_CHECK" --role "$ROLE"; fi
+    if [[ -n "$ENDPOINT" ]]; then
+      bash "$TMP_CHECK" --role "$ROLE" --endpoint "$ENDPOINT"
+    else
+      bash "$TMP_CHECK" --role "$ROLE"
+    fi
+    exit $?
     ;;
   install-server)
     PKI_DIR=
@@ -87,9 +97,9 @@ case "$MODE" in
       echo 'Existing PQTunnel server artifact/config detected. Refusing to overwrite; no changes made.' >&2
       exit 1
     fi
-    echo 'Running read-only checks before installation...'
-    bash "$RAW_BASE/scripts/site-to-site-preflight.sh" 2>/dev/null && true
     get_source
+    echo 'Running read-only checks before installation...'
+    bash "$SOURCE_DIR/scripts/site-to-site-preflight.sh" --role gateway
     INSTALL_ARGS=(--source "$SOURCE_DIR" --pki "$PKI_DIR")
     if (( START )); then INSTALL_ARGS+=(--enable); fi
     bash "$SOURCE_DIR/scripts/install-server.sh" "${INSTALL_ARGS[@]}"
