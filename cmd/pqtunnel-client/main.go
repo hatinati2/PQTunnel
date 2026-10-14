@@ -45,8 +45,8 @@ func main() {
 	fatalIf(err)
 	allowedDstPorts, err := portpolicy.ParseCSV(*allowedDstPortsText)
 	fatalIf(err)
-	if (*localPrefixesText == "") != (*remotePrefixesText == "") {
-		fatalIf(fmt.Errorf("site-to-site mode requires both --local-prefixes and --remote-prefixes; otherwise use legacy --local-ip mode"))
+	if err := validatePrefixMode(localPrefixes, remotePrefixes); err != nil {
+		fatalIf(err)
 	}
 	var ip netip.Addr
 	if len(localPrefixes) == 0 {
@@ -101,4 +101,12 @@ func fatalIf(err error) {
 		fmt.Fprintln(os.Stderr, "pqtunnel-client:", err)
 		os.Exit(1)
 	}
+}
+
+
+func validatePrefixMode(localPrefixes, remotePrefixes []netip.Prefix) error {
+	if (len(localPrefixes) == 0) != (len(remotePrefixes) == 0) {
+		return fmt.Errorf("site-to-site mode requires both --local-prefixes and --remote-prefixes; otherwise use legacy --local-ip mode")
+	}
+	return nil
 }
