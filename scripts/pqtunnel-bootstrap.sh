@@ -95,10 +95,10 @@ case "$MODE" in
     ENV_PERM=$((8#$ENV_MODE))
     (( (ENV_PERM & 0022) == 0 )) || { echo 'Server env file must not be group/world-writable.' >&2; exit 1; }
     # Treat the file as systemd EnvironmentFile data, never source/evaluate it as shell.
-    if grep -Ev '^[[:space:]]*(#|$|[A-Z_][A-Z0-9_]*=.*)
+    if grep -Ev '^[[:space:]]*(#.*|[A-Z_][A-Z0-9_]*=[A-Za-z0-9_.,:/\\[\\]-]*)?$' "$SERVER_ENV" >/dev/null; then
       [[ -s "$PKI_DIR/$file" ]] || { echo "Missing $PKI_DIR/$file. No changes made." >&2; exit 1; }
     done
-    for cmd in curl tar openssl systemctl ip; do
+    for cmd in curl tar openssl systemctl ip stat grep; do
       command -v "$cmd" >/dev/null || { echo "Required command missing: $cmd. No changes made; no packages are installed automatically." >&2; exit 1; }
     done
     if [[ -e /usr/local/sbin/pqtunneld || -e /etc/systemd/system/pqtunneld.service || -e /etc/pqtunnel/pki/server.key || -e /etc/default/pqtunneld ]]; then
@@ -128,6 +128,7 @@ esac
       echo 'Server env file contains unsupported lines; use plain KEY=VALUE entries only. No changes made.' >&2
       exit 1
     fi
+    if awk -F= '/^[[:space:]]*[A-Z_][A-Z0-9_]*=/ { key=$1; gsub(/[[:space:]]/, "", key); if (seen[key]++) exit 1 }' "$SERVER_ENV"; then :; else echo 'Server env file contains duplicate keys; no changes made.' >&2; exit 1; fi
     for required in \
       'PQTUNNEL_TLS_CERT=/etc/pqtunnel/pki/server.crt' \
       'PQTUNNEL_TLS_KEY=/etc/pqtunnel/pki/server.key' \
@@ -138,7 +139,7 @@ esac
     grep -Eq '^PQTUNNEL_PEER_PREFIXES=.+
       [[ -s "$PKI_DIR/$file" ]] || { echo "Missing $PKI_DIR/$file. No changes made." >&2; exit 1; }
     done
-    for cmd in curl tar openssl systemctl ip; do
+    for cmd in curl tar openssl systemctl ip stat grep; do
       command -v "$cmd" >/dev/null || { echo "Required command missing: $cmd. No changes made; no packages are installed automatically." >&2; exit 1; }
     done
     if [[ -e /usr/local/sbin/pqtunneld || -e /etc/systemd/system/pqtunneld.service || -e /etc/pqtunnel/pki/server.key || -e /etc/default/pqtunneld ]]; then
@@ -169,7 +170,7 @@ esac
     grep -Eq '^PQTUNNEL_LOCAL_PREFIXES=.+
       [[ -s "$PKI_DIR/$file" ]] || { echo "Missing $PKI_DIR/$file. No changes made." >&2; exit 1; }
     done
-    for cmd in curl tar openssl systemctl ip; do
+    for cmd in curl tar openssl systemctl ip stat grep; do
       command -v "$cmd" >/dev/null || { echo "Required command missing: $cmd. No changes made; no packages are installed automatically." >&2; exit 1; }
     done
     if [[ -e /usr/local/sbin/pqtunneld || -e /etc/systemd/system/pqtunneld.service || -e /etc/pqtunnel/pki/server.key || -e /etc/default/pqtunneld ]]; then
@@ -200,7 +201,7 @@ esac
     grep -Eq '^PQTUNNEL_PEER_NAME=.+
       [[ -s "$PKI_DIR/$file" ]] || { echo "Missing $PKI_DIR/$file. No changes made." >&2; exit 1; }
     done
-    for cmd in curl tar openssl systemctl ip; do
+    for cmd in curl tar openssl systemctl ip stat grep; do
       command -v "$cmd" >/dev/null || { echo "Required command missing: $cmd. No changes made; no packages are installed automatically." >&2; exit 1; }
     done
     if [[ -e /usr/local/sbin/pqtunneld || -e /etc/systemd/system/pqtunneld.service || -e /etc/pqtunnel/pki/server.key || -e /etc/default/pqtunneld ]]; then
@@ -232,7 +233,7 @@ esac
     for file in server.crt server.key ca.crt; do
       [[ -s "$PKI_DIR/$file" ]] || { echo "Missing $PKI_DIR/$file. No changes made." >&2; exit 1; }
     done
-    for cmd in curl tar openssl systemctl ip; do
+    for cmd in curl tar openssl systemctl ip stat grep; do
       command -v "$cmd" >/dev/null || { echo "Required command missing: $cmd. No changes made; no packages are installed automatically." >&2; exit 1; }
     done
     if [[ -e /usr/local/sbin/pqtunneld || -e /etc/systemd/system/pqtunneld.service || -e /etc/pqtunnel/pki/server.key || -e /etc/default/pqtunneld ]]; then
