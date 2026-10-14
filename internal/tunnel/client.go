@@ -84,19 +84,28 @@ func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) er
 				continue
 			}
 			src, dst, p, err := packet.IP(buf[:n])
-			if err != nil || !prefixset.Contains(localPrefixes, src) {
+			if err != nil {
+				tracePacketFlow("client tun->tls drop=malformed bytes=%d err=%v", n, err)
+				continue
+			}
+			if !prefixset.Contains(localPrefixes, src) {
+				tracePacketFlow("client tun->tls drop=source-outside-local-prefixes src=%s dst=%s bytes=%d", src, dst, len(p))
 				continue
 			}
 			if len(cfg.RemotePrefixes) > 0 && !prefixset.Contains(cfg.RemotePrefixes, dst) {
+				tracePacketFlow("client tun->tls drop=destination-outside-remote-prefixes src=%s dst=%s bytes=%d", src, dst, len(p))
 				continue
 			}
 			if !cfg.AllowedDstPorts.AllowsPacket(p) {
+				tracePacketFlow("client tun->tls drop=destination-port-policy src=%s dst=%s bytes=%d", src, dst, len(p))
 				continue
 			}
 			copyPacket := append([]byte(nil), p...)
 			select {
 			case out <- copyPacket:
+				tracePacketFlow("client tun->tls queued src=%s dst=%s bytes=%d", src, dst, len(copyPacket))
 			default: // bounded queue: drop under congestion
+				tracePacketFlow("client tun->tls drop=queue-full src=%s dst=%s bytes=%d", src, dst, len(copyPacket))
 			}
 		}
 	}()
@@ -213,13 +222,21 @@ func readPackets(ctx context.Context, conn net.Conn, dev io.Writer, localPrefixe
 			return err
 		}
 		src, dst, normalized, err := packet.IP(p)
-		if err != nil || !prefixset.Contains(localPrefixes, dst) {
+		if err != nil {
+			tracePacketFlow("client tls->tun drop=malformed bytes=%d err=%v", len(p), err)
+			continue
+		}
+		tracePacketFlow("client tls->tun received src=%s dst=%s bytes=%d", src, dst, len(normalized))
+		if !prefixset.Contains(localPrefixes, dst) {
+			tracePacketFlow("client tls->tun drop=destination-outside-local-prefixes src=%s dst=%s bytes=%d", src, dst, len(normalized))
 			continue
 		}
 		if len(remotePrefixes) > 0 && !prefixset.Contains(remotePrefixes, src) {
+			tracePacketFlow("client tls->tun drop=source-outside-remote-prefixes src=%s dst=%s bytes=%d", src, dst, len(normalized))
 			continue
 		}
 		n, err := dev.Write(normalized)
+		tracePacketFlow("client tls->tun injected src=%s dst=%s bytes=%d written=%d err=%v", src, dst, len(normalized), n, err)
 		if err != nil {
 			return err
 		}
