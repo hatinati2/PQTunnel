@@ -1,0 +1,32 @@
+[Unit]
+Description=PQTunnel experimental site-to-site dialer
+Wants=network-online.target
+After=network-online.target
+Documentation=https://github.com/hatinati2/PQTunnel
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/pqtunnel-client
+Environment=PQTUNNEL_SITE_CONFIG=/etc/pqtunnel/site-to-site.env
+ExecStartPre=/usr/local/lib/pqtunnel/site-to-site-selective.sh dialer-up
+ExecStart=/usr/local/lib/pqtunnel/run-client.sh
+ExecStopPost=/usr/local/lib/pqtunnel/stop-client-network.sh
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+UMask=0077
+StateDirectory=pqtunnel
+StateDirectoryMode=0750
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target
