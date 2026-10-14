@@ -307,7 +307,16 @@ ip netns exec "$DE_NS" python3 -u "$LAB_DIR/udp6.py" >"$UDP6_LOG" 2>&1 & UDP6_PI
 ip netns exec "$DE_NS" python3 -u "$LAB_DIR/tcp-health4.py" >"$TCP_HEALTH4_LOG" 2>&1 & TCP_HEALTH4_PID=$!
 ip netns exec "$DE_NS" python3 -u "$LAB_DIR/tcp-health6.py" >"$TCP_HEALTH6_LOG" 2>&1 & TCP_HEALTH6_PID=$!
 
-ip netns exec "$DE_NS" "$PQTUNNEL_BIN_DIR/pqtunneld" \
+# Start with a fully provisioned TUN in this disposable gateway namespace. The
+# server opens the persistent device after it already has addresses and is UP,
+# avoiding a startup race between its packet reader and test interface setup.
+ip -n "$DE_NS" tuntap add dev pqtun0 mode tun
+ip -n "$DE_NS" addr add 10.66.0.1/24 dev pqtun0
+ip -n "$DE_NS" -6 addr add fd42:7061:7475::1/64 dev pqtun0
+ip -n "$DE_NS" link set pqtun0 up
+wait_for_ipv6_addr_ready "$DE_NS" pqtun0 "fd42:7061:7475::1"
+
+ip netns exec "$DE_NS" env PQTUNNEL_TRACE_PACKET_FLOW=1 "$PQTUNNEL_BIN_DIR/pqtunneld" \
   --listen 198.18.0.1:8443 \
   --tls-cert "$LAB_DIR/server-pki/server.crt" \
   --tls-key "$LAB_DIR/server-pki/server.key" \
@@ -328,10 +337,6 @@ wait_for_tun() {
   return 1
 }
 wait_for_tun || { echo 'FAIL: Germany gateway TUN did not appear' >&2; exit 1; }
-ip -n "$DE_NS" addr add 10.66.0.1/24 dev pqtun0
-ip -n "$DE_NS" -6 addr add fd42:7061:7475::1/64 dev pqtun0
-ip -n "$DE_NS" link set pqtun0 up
-wait_for_ipv6_addr_ready "$DE_NS" pqtun0 "fd42:7061:7475::1"
 
 wait_for_listener() {
   local i
@@ -404,7 +409,7 @@ ip netns exec "$IR_NS" nft monitor trace >"$TRACE_LOG" 2>&1 &
 TRACE_PID=$!
 sleep 0.1
 
-ip netns exec "$IR_NS" "$PQTUNNEL_BIN_DIR/pqtunnel-client" \
+ip netns exec "$IR_NS" env PQTUNNEL_TRACE_PACKET_FLOW=1 "$PQTUNNEL_BIN_DIR/pqtunnel-client" \
   --server 198.18.0.1:8443 --server-name gateway.lab --network tcp4 \
   --ca "$LAB_DIR/client-pki/ca.crt" \
   --cert "$LAB_DIR/client-pki/peer.crt" \
@@ -432,6 +437,8 @@ wait_for_ipv6_addr_ready "$IR_NS" pqtun0 "fd42:7061:7475::2"
 ip -n "$IR_NS" route add 10.10.0.0/24 dev pqtun0
 ip -n "$IR_NS" -6 route add fd10:10::/64 dev pqtun0
 
+# Packet-flow tracing is enabled only for these disposable test processes; on
+# failure the captured logs show where a packet stopped moving through the tunnel.
 # Capture both sides of the TUN link to diagnose whether the forward packet is
 # emitted by the dialer and injected by the gateway. Captures remain namespace-local.
 ip netns exec "$IR_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or tcp port 8180 or udp port 5353)' >"$IR_TUN_LOG" 2>&1 & IR_TUN_PID=$!
