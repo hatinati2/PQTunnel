@@ -23,18 +23,18 @@ Do not begin operational rollout until all of these are true:
 
 ## Stage 1 — read-only preflight on each host
 
-Run the correct role-specific command separately on each VPS. These pinned commands use a fixed bootstrap commit, perform read-only inspection, do not install packages or write reports, do not change routes/sysctls/firewall rules, and do not start or stop services.
+Run the correct role-specific command separately on each VPS. These commands fetch the preflight script directly from an immutable commit, perform read-only inspection, do not install packages or write reports, do not change routes/sysctls/firewall rules, and do not start or stop services.
 
 Germany:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/e18383fd735d72800e3d4bede2c611e02c79f6b9/scripts/pqtunnel-bootstrap.sh | bash -s -- preflight --role gateway
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/01cfe2073ffa2bda88b25ce8ea05c2e6b209aa6c/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
 ```
 
 Iran:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/e18383fd735d72800e3d4bede2c611e02c79f6b9/scripts/pqtunnel-bootstrap.sh | bash -s -- preflight --role dialer
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/01cfe2073ffa2bda88b25ce8ea05c2e6b209aa6c/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
 ```
 
 Or run from a reviewed checkout:

@@ -23,18 +23,18 @@
 
 ## مرحلهٔ یک — preflight فقط‌خواندنی روی هر میزبان
 
-فرمان مربوط به نقش هر VPS را جداگانه اجرا کن. این فرمان‌های pin‌شده از commit ثابت bootstrap را می‌گیرند، فقط بررسی می‌کنند، بسته نصب نمی‌کنند، گزارش روی دیسک نمی‌نویسند، route/sysctl/firewall را تغییر نمی‌دهند و سرویسی را اجرا یا متوقف نمی‌کنند.
+فرمان مربوط به نقش هر VPS را جداگانه اجرا کن. این فرمان‌ها خود اسکریپت preflight را مستقیماً از commit ثابت دریافت می‌کنند، فقط بررسی می‌کنند، بسته نصب نمی‌کنند، گزارش روی دیسک نمی‌نویسند، route/sysctl/firewall را تغییر نمی‌دهند و سرویسی را اجرا یا متوقف نمی‌کنند.
 
 آلمان:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/e18383fd735d72800e3d4bede2c611e02c79f6b9/scripts/pqtunnel-bootstrap.sh | bash -s -- preflight --role gateway
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/01cfe2073ffa2bda88b25ce8ea05c2e6b209aa6c/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
 ```
 
 ایران:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/e18383fd735d72800e3d4bede2c611e02c79f6b9/scripts/pqtunnel-bootstrap.sh | bash -s -- preflight --role dialer
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/01cfe2073ffa2bda88b25ce8ea05c2e6b209aa6c/scripts/site-to-site-preflight.sh | bash -s -- --role dialer
 ```
 
 یا از checkout بازبینی‌شدهٔ مخزن:
