@@ -30,7 +30,7 @@ grep -q 'READ-ONLY GUARANTEE:' <<< "$OUTPUT"
 BOOT_OUTPUT="$(bash "$ROOT/scripts/pqtunnel-bootstrap.sh" preflight --role both)"
 grep -q 'READ-ONLY GUARANTEE:' <<< "$BOOT_OUTPUT"
 grep -q '^SUMMARY pass=' <<< "$OUTPUT"
-if grep -Eq 'sysctl -w|nft -f|ip link (set|add|del)|systemctl (start|stop|restart|enable|disable)|iptables(-restore)?[[:space:]]' "$PREFLIGHT"; then
+if grep -Eq '^[[:space:]]*(sysctl[[:space:]]+-w|nft[[:space:]]+-f|ip[[:space:]]+link[[:space:]]+(set|add|del)|systemctl[[:space:]]+(start|stop|restart|enable|disable)|iptables-restore[[:space:]]|iptables[[:space:]]+-)' "$PREFLIGHT"; then
   echo "Potential network-changing command detected in read-only preflight script" >&2
   exit 1
 fi
