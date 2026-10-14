@@ -49,9 +49,11 @@ UDP6_PID=""
 TRACE_PID=""
 IR_TUN_PID=""
 DE_TUN_PID=""
+IR_WAN_PID=""
 TRACE_LOG="$LAB_DIR/nft-trace.log"
 IR_TUN_LOG="$LAB_DIR/iran-tun-capture.log"
 DE_TUN_LOG="$LAB_DIR/germany-tun-capture.log"
+IR_WAN_LOG="$LAB_DIR/iran-wan-capture.log"
 SERVER_LOG="$LAB_DIR/server.log"
 CLIENT_LOG="$LAB_DIR/client.log"
 TCP4_LOG="$LAB_DIR/tcp4.log"
@@ -87,6 +89,7 @@ cleanup() {
       ip netns exec "$IR_NS" ip -4 route show table 519 >&2
       ip netns exec "$IR_NS" ip -6 route show table 518 >&2
       ip netns exec "$IR_NS" ip -6 route show table 519 >&2
+      ip netns exec "$IR_NS" sysctl net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter net.ipv4.conf.pqtun0.rp_filter "net.ipv4.conf.$IR_IF.rp_filter" net.ipv4.conf.all.src_valid_mark >&2
     fi
     if [[ -n "$TRACE_PID" ]]; then
       sleep 0.1
@@ -96,7 +99,7 @@ cleanup() {
   fi
   if [[ -n "$CLIENT_PID" ]]; then kill -TERM "$CLIENT_PID" >/dev/null 2>&1; wait "$CLIENT_PID" >/dev/null 2>&1; fi
   if [[ -n "$TRACE_PID" ]]; then kill -TERM "$TRACE_PID" >/dev/null 2>&1; wait "$TRACE_PID" >/dev/null 2>&1; fi
-  for pid in "$IR_TUN_PID" "$DE_TUN_PID"; do
+  for pid in "$IR_TUN_PID" "$DE_TUN_PID" "$IR_WAN_PID"; do
     if [[ -n "$pid" ]]; then kill -TERM "$pid" >/dev/null 2>&1; wait "$pid" >/dev/null 2>&1; fi
   done
   if [[ -n "$IR_NS" ]] && ip netns list | awk '{print $1}' | grep -Fxq "$IR_NS"; then
@@ -114,7 +117,7 @@ cleanup() {
   ip netns del "$SW_NS" >/dev/null 2>&1
   for iface in "$IR_IF" "$DE_IF" "$VIS_IF" "$SW_IR_IF" "$SW_DE_IF" "$SW_VIS_IF"; do ip link del "$iface" >/dev/null 2>&1; done
   if (( rc != 0 )); then
-    for log in "$SERVER_LOG" "$CLIENT_LOG" "$TCP4_LOG" "$UDP4_LOG" "$TCP6_LOG" "$UDP6_LOG" "$IR_TUN_LOG" "$DE_TUN_LOG"; do
+    for log in "$SERVER_LOG" "$CLIENT_LOG" "$TCP4_LOG" "$UDP4_LOG" "$TCP6_LOG" "$UDP6_LOG" "$IR_TUN_LOG" "$DE_TUN_LOG" "$IR_WAN_LOG"; do
       if [[ -s "$log" ]]; then echo "--- $log ---" >&2; cat "$log" >&2; fi
     done
   fi
@@ -329,6 +332,7 @@ wait_for_client || { echo 'FAIL: Iran dialer did not establish the tunnel to Ger
 # emitted by the dialer and injected by the gateway. Captures remain namespace-local.
 ip netns exec "$IR_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)' >"$IR_TUN_LOG" 2>&1 & IR_TUN_PID=$!
 ip netns exec "$DE_NS" tcpdump -n -l -i pqtun0 '(tcp port 8080 or udp port 5353)' >"$DE_TUN_LOG" 2>&1 & DE_TUN_PID=$!
+ip netns exec "$IR_NS" tcpdump -n -l -i "$IR_IF" 'host 198.18.0.3 and (tcp or udp)' >"$IR_WAN_LOG" 2>&1 & IR_WAN_PID=$!
 sleep 0.1
 
 ip netns exec "$VIS_NS" python3 - <<'PY'
