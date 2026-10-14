@@ -55,6 +55,25 @@ class AuditParserTests(unittest.TestCase):
         self.assertEqual(counts["accept"], 1)
         self.assertEqual(counts["xt_fallback"], 5)
         self.assertEqual(counts["xt_opaque"], 0)
+        self.assertEqual(counts["xt_target"], 5)
+        self.assertEqual(counts["xt_match"], 0)
+        self.assertEqual(counts["xt_target_other"], 0)
+
+    def test_xt_match_names_do_not_masquerade_as_targets(self):
+        fixture = {"nftables": [
+            {"rule": {"family": "ip", "table": "raw", "chain": "PREROUTING",
+                      "expr": [{"xt": {"type": "match", "name": "mark"}}]}},
+            {"rule": {"family": "ip", "table": "raw", "chain": "PREROUTING",
+                      "expr": [{"xt": {"type": "target", "name": "LOG"}}]}},
+        ]}
+        parsed = audit.parse_nft_json(fixture)
+        counts = parsed["rules"][("ip", "raw", "PREROUTING")]
+        self.assertEqual(counts["xt_match"], 1)
+        self.assertEqual(counts["xt_target"], 1)
+        self.assertEqual(counts["xt_target_other"], 1)
+        self.assertEqual(counts["packet_mark"], 0)
+        self.assertEqual(counts["drop_reject"], 0)
+        self.assertEqual(counts["nat"], 0)
 
     def test_nft_json_opaque_xt_fallback_is_visible_but_not_misclassified(self):
         fixture = {"nftables": [
@@ -72,6 +91,8 @@ class AuditParserTests(unittest.TestCase):
         self.assertEqual(counts["rules"], 2)
         self.assertEqual(counts["xt_fallback"], 2)
         self.assertEqual(counts["xt_opaque"], 2)
+        self.assertEqual(counts["xt_match"], 0)
+        self.assertEqual(counts["xt_target"], 0)
         self.assertEqual(counts["notrack"], 0)
 
     def test_iptables_categories_and_chain_policy(self):
