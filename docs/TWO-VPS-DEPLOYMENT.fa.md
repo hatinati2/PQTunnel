@@ -28,7 +28,7 @@
 آلمان:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/413bfbab0a7c2f7896ec86bdb3902728107024c9/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/558ba23bb947051f349e5ad76631d2d118881a62/scripts/site-to-site-preflight.sh | bash -s -- --role gateway
 ```
 
 ایران:
@@ -53,6 +53,8 @@ bash scripts/site-to-site-preflight.sh --role dialer
 - **PASS:** فقط همان بررسی خواندنی موفق بوده؛ اتصال واقعی دو میزبان اثبات نمی‌شود.
 
 preflight نسخهٔ سیستم‌عامل و ابزارها، مسیرها و تعارض policy ruleها، جدول‌های 518/519، forwarding و reverse-path-filter، موفقیت/شکست پرس‌وجوی فایروال، وجود فایل‌ها و سرویس‌ها، مجوزهای کلید خصوصی و ـ در صورت وجود فایل‌ها ـ انقضای گواهی، اعتبار زنجیره با CA و تطابق گواهی با کلید خصوصی را بررسی می‌کند. خطای پرس‌وجوی فایروال **WARN/نامشخص** است، نه نشانهٔ خالی‌بودن فایروال. محتوای گواهی و کلید خصوصی چاپ نمی‌شود.
+
+preflight همچنین رابط‌های TUN/TAP غیر از `pqtun0` را، در صورت امکان خواندن، گزارش می‌کند. این هشدار مالکیت رابط را مشخص نمی‌کند؛ پیش از هر تغییر شبکه باید کاربرد و مالک آن بررسی شود.
 
 مقادیر `rp_filter` عبارت‌اند از `0=disabled`، `1=strict` و `2=loose`. مقدار مؤثر هر رابط برابر بیشینهٔ `net.ipv4.conf.all.rp_filter` و مقدار همان رابط است؛ `conf.default` فقط مقدار پیش‌فرض رابط‌های تازه‌ساخته‌شده است. حالت strict ممکن است ترافیک نامتقارن یا policy-routed را حذف کند. این مقادیر را صرفاً برای عبور از preflight تغییر نده؛ تغییر آن‌ها می‌تواند روی تونل‌ها و مسیرهای دیگر میزبان هم اثر بگذارد.
 
