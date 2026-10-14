@@ -9,9 +9,11 @@ PQTunnel یک تونل آزمایشی لایهٔ ۳ با encapsulation بسته�
 ## چه چیزهایی اضافه یا بهبود یافته‌اند؟
 
 - حمل بسته‌های IPv4 و IPv6 و فیلتر route بر پایهٔ CIDR برای لینک آزمایشی server-to-server؛ تنظیم واقعی مسیرهای IPv6 هنوز دستی و آزمایش‌نشده است.
+- فیلتر پورت مقصد TCP/UDP با `--allowed-dst-ports`، مثل `tcp:443,udp:53,tcp:8000-8010`؛ با فعال‌بودن فیلتر، بسته‌های fragment‌شده عمداً رد می‌شوند.
+- helper آزمایشی `scripts/site-to-site-selective.sh` برای policy routing انتخابی روی پورت‌های خروجی و DNAT/SNAT پورت‌های ورودی؛ نیازمند میزبان آزمایشی اختصاصی و بررسی دستی است.
 - پارامترهای transport برای hostname/IPv4/IPv6 (`--server`, `--server-name`, `--network tcp|tcp4|tcp6`) و حالت peer-prefix تک‌اتصالی.
 - مسیر نصب سرویس Ubuntu با systemd در `scripts/install-server.sh` و `deploy/systemd/pqtunneld.service`.
-- اسکریپت مستقل برای فعال‌سازی شبکهٔ پایه و اسکریپت آزمایشی `scripts/selective-ports-network.sh` برای انتقال پورت ورودی ایران→آلمان و خروجی انتخابی براساس TCP/UDP destination port. برای جزئیات و محدودیت‌ها [راهنمای پورت‌های انتخابی](docs/SELECTIVE-PORTS.fa.md) را بخوان؛ اسکریپت gateway با سیاست DROP فقط برای میزبان آزمایشی اختصاصی است.
+- اسکریپت مستقل و قابل بازگردانی برای فعال‌سازی IPv4 forwarding و NAT در `scripts/server-network.sh`؛ فقط جدول اختصاصی nftables خودش را مدیریت می‌کند و UFW را تغییر نمی‌دهد.
 - اسکریپت شبکهٔ کلاینت لینوکس در `scripts/linux-client-network.sh`: route اختصاصی IP سرور، مسیر پیش‌فرض IPv4 از TUN، DNS با systemd-resolved و blackhole برای مسیر پیش‌فرض IPv6.
 - محدودسازی تعداد نشست‌ها و handshakeهای هم‌زمان در سرور.
 - گردش‌کار CI برای تست و cross-build لینوکس و ویندوز و ساخت فایل‌های Release از روی تگ نسخه.
@@ -95,7 +97,7 @@ go run ./cmd/pqtunnel-pki issue-client --out ./pki --ip 10.66.0.2
 - [جزئیات پروتکل](docs/PROTOCOL.md)
 - [چک‌لیست پیش از انتشار](docs/RELEASE-CHECKLIST.md)
 - [راهنمای آزمایشی تونل سرور‌به‌سرور](docs/SITE-TO-SITE.fa.md)
-- [راهنمای انتقال پورت و خروجی انتخابی](docs/SELECTIVE-PORTS.fa.md)
+- [راهنمای تونل انتخابی بر اساس پورت](docs/SELECTIVE-TUNNEL.fa.md)
 
 ## مجوز
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hatinati2/PQTunnel/internal/packet"
+	"github.com/hatinati2/PQTunnel/internal/portpolicy"
 	"github.com/hatinati2/PQTunnel/internal/prefixset"
 	"github.com/hatinati2/PQTunnel/internal/protocol"
 )
@@ -21,14 +22,16 @@ const maxQueuedPackets = 512
 type SocketProtector func(fd uintptr) error
 
 type ClientConfig struct {
-	ServerAddress  string
-	ServerName     string
-	Network        string         // tcp (auto), tcp4, or tcp6
-	LocalIP        netip.Addr     // legacy single-host mode; ignored when LocalPrefixes is set
-	LocalPrefixes  []netip.Prefix // allowed local source/destination ranges for site-to-site links
-	RemotePrefixes []netip.Prefix // permitted remote source/destination ranges; empty means unrestricted
-	TLSConfig      *tls.Config
-	ProtectSocket  SocketProtector
+	ServerAddress   string
+	ServerName      string
+	Network         string             // tcp (auto), tcp4, or tcp6
+	LocalIP         netip.Addr         // legacy single-host mode; ignored when LocalPrefixes is set
+	LocalPrefixes   []netip.Prefix     // allowed local source/destination ranges for site-to-site links
+	RemotePrefixes  []netip.Prefix     // permitted remote source/destination ranges; empty means unrestricted
+	AllowedDstPorts portpolicy.RuleSet // optional filter for outbound packets read from TUN
+	SocketMark      uint32             // optional Linux SO_MARK to exempt the tunnel transport from policy routing
+	TLSConfig       *tls.Config
+	ProtectSocket   SocketProtector
 }
 
 // RunClient carries IPv4 and IPv6 layer-3 packets over a TLS connection.
@@ -76,6 +79,9 @@ func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) er
 				continue
 			}
 			if len(cfg.RemotePrefixes) > 0 && !prefixset.Contains(cfg.RemotePrefixes, dst) {
+				continue
+			}
+			if !cfg.AllowedDstPorts.AllowsPacket(p) {
 				continue
 			}
 			copyPacket := append([]byte(nil), p...)
@@ -142,13 +148,23 @@ func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) er
 
 func dialTLS(ctx context.Context, cfg ClientConfig) (*tls.Conn, error) {
 	d := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	if cfg.ProtectSocket != nil {
+	if cfg.ProtectSocket != nil || cfg.SocketMark != 0 {
 		d.Control = func(_, _ string, raw syscall.RawConn) error {
-			var protectErr error
-			if err := raw.Control(func(fd uintptr) { protectErr = cfg.ProtectSocket(fd) }); err != nil {
+			var controlErr error
+			if err := raw.Control(func(fd uintptr) {
+				if cfg.SocketMark != 0 {
+					controlErr = setSocketMark(fd, cfg.SocketMark)
+					if controlErr != nil {
+						return
+					}
+				}
+				if cfg.ProtectSocket != nil {
+					controlErr = cfg.ProtectSocket(fd)
+				}
+			}); err != nil {
 				return err
 			}
-			return protectErr
+			return controlErr
 		}
 	}
 	raw, err := d.DialContext(ctx, cfg.Network, cfg.ServerAddress)

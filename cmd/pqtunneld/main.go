@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/hatinati2/PQTunnel/internal/portpolicy"
 	"github.com/hatinati2/PQTunnel/internal/prefixset"
 	"github.com/hatinati2/PQTunnel/internal/tun"
 	"github.com/hatinati2/PQTunnel/internal/tunnel"
@@ -27,11 +28,14 @@ func main() {
 	peerPrefixesText := flag.String("peer-prefixes", os.Getenv("PQTUNNEL_PEER_PREFIXES"), "comma-separated allowed peer source/return-route CIDRs for a single site-to-site peer; supports IPv4 and IPv6")
 	localPrefixesText := flag.String("local-prefixes", os.Getenv("PQTUNNEL_LOCAL_PREFIXES"), "comma-separated destination CIDRs allowed from the peer on this listener; required with --peer-prefixes")
 	peerName := flag.String("peer-name", os.Getenv("PQTUNNEL_PEER_NAME"), "exact client certificate Common Name required in site-to-site mode")
+	allowedDstPortsText := flag.String("allowed-dst-ports", os.Getenv("PQTUNNEL_ALLOWED_DST_PORTS"), "optional destination-port allowlist, e.g. tcp:443,udp:53,tcp:8000-8010; empty disables this filter")
 	flag.Parse()
 
 	peerPrefixes, err := prefixset.ParseCSV(*peerPrefixesText)
 	fatalIf(err)
 	localPrefixes, err := prefixset.ParseCSV(*localPrefixesText)
+	fatalIf(err)
+	allowedDstPorts, err := portpolicy.ParseCSV(*allowedDstPortsText)
 	fatalIf(err)
 	siteToSite := len(peerPrefixes) > 0 || len(localPrefixes) > 0
 	if siteToSite && (len(peerPrefixes) == 0 || len(localPrefixes) == 0) {
@@ -55,7 +59,7 @@ func main() {
 	fatalIf(err)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	s := &tunnel.Server{ListenAddress: *listen, TLSConfig: tunnel.ServerTLSConfig(cert, pool), Device: dev, MaxClients: *maxClients, PeerPrefixes: peerPrefixes, LocalPrefixes: localPrefixes, PeerIdentity: *peerName}
+	s := &tunnel.Server{ListenAddress: *listen, TLSConfig: tunnel.ServerTLSConfig(cert, pool), Device: dev, MaxClients: *maxClients, PeerPrefixes: peerPrefixes, LocalPrefixes: localPrefixes, PeerIdentity: *peerName, AllowedDstPorts: allowedDstPorts}
 	fmt.Printf("PQTunnel listening on %s; TLS 1.3 strict X25519MLKEM768; IPv4/IPv6 packets; route policy configured separately\n", *listen)
 	if err := s.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		fatalIf(err)

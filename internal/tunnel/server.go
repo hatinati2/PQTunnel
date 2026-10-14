@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hatinati2/PQTunnel/internal/packet"
+	"github.com/hatinati2/PQTunnel/internal/portpolicy"
 	"github.com/hatinati2/PQTunnel/internal/prefixset"
 	"github.com/hatinati2/PQTunnel/internal/protocol"
 )
@@ -28,9 +29,10 @@ type Server struct {
 	// PeerPrefixes is the remote peer's source allowlist and return-route set.
 	// LocalPrefixes is the listener side's destination allowlist for packets
 	// received from that peer. Configure both in site-to-site mode.
-	PeerPrefixes  []netip.Prefix
-	LocalPrefixes []netip.Prefix
-	PeerIdentity  string // exact certificate Common Name required in single-peer site-to-site mode
+	PeerPrefixes    []netip.Prefix
+	LocalPrefixes   []netip.Prefix
+	PeerIdentity    string             // exact certificate Common Name required in single-peer site-to-site mode
+	AllowedDstPorts portpolicy.RuleSet // optional defense-in-depth TCP/UDP destination-port allowlist
 
 	mu      sync.RWMutex
 	clients map[string]*peer
@@ -236,6 +238,9 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 				return // spoofed source: terminate session
 			}
 			continue // destination is outside this listener's configured prefixes
+		}
+		if !s.AllowedDstPorts.AllowsPacket(pkt) {
+			continue // destination protocol/port is not in the configured allowlist
 		}
 		n, writeErr := s.Device.Write(pkt)
 		if writeErr != nil || n != len(pkt) {
