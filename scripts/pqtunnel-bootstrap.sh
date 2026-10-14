@@ -162,7 +162,9 @@ case "$MODE" in
     done
     [[ "$(id -u)" == 0 ]] || fail 'install-server requires root (sudo); no changes made.'
     [[ -n "$PKI_DIR" && -d "$PKI_DIR" ]] || fail '--pki-dir must contain server.crt, server.key and ca.crt.'
-    check_os_prerequisites curl tar openssl systemctl ip stat grep awk install
+    check_os_prerequisites curl tar go openssl systemctl ip stat grep awk install
+    GV="$(go env GOVERSION | sed 's/^go//')"
+    if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=24)) }'; then fail "Go 1.24+ is required; found $GV."; fi
     validate_gateway_config "$SERVER_ENV" "$NETWORK_ENV"
     [[ ! -e "$PKI_DIR/ca.key" ]] || fail 'ca.key must remain offline; it must not be copied to a server.'
     local_file=
@@ -214,6 +216,7 @@ case "$MODE" in
     echo 'Read-only preflight on this host (no network changes):'
     bash "$SOURCE_DIR/scripts/site-to-site-preflight.sh" --role dialer
     BUILD_DIR="$(mktemp -d)"
+    trap 'rm -rf "$BUILD_DIR"; cleanup' EXIT
     
     (
       cd "$SOURCE_DIR"
