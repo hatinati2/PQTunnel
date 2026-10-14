@@ -98,7 +98,7 @@ case "$MODE" in
     ENV_PERM=$((8#$ENV_MODE))
     (( (ENV_PERM & 0022) == 0 )) || fail 'server env file must not be group/world-writable.'
     # Accept only plain systemd EnvironmentFile KEY=VALUE lines. Never source/evaluate it.
-    if grep -Ev '^[[:space:]]*(#.*|[A-Z_][A-Z0-9_]*=[A-Za-z0-9_.,:/\[\]-]*)?$' "$SERVER_ENV" >/dev/null; then
+    if grep -Ev '^[[:space:]]*(#.*|[A-Z_][A-Z0-9_]*=[^[:space:]]*)?$' "$SERVER_ENV" >/dev/null; then
       fail 'server env file must contain only comments/blank lines or plain KEY=VALUE entries.'
     fi
     if ! awk -F= '/^[[:space:]]*[A-Z_][A-Z0-9_]*=/ { key=$1; gsub(/[[:space:]]/, "", key); if (seen[key]++) exit 1 }' "$SERVER_ENV"; then
