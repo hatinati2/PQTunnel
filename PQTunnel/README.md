@@ -1,5 +1,7 @@
 # PQTunnel
 
+> **ARCHIVED LEGACY COPY — DO NOT USE FOR DEVELOPMENT OR DEPLOYMENT.** The maintained project, release source, and CI are at the [repository root](../README.md). This nested `PQTunnel/` tree is stale and is not tested by the root CI workflow. Do not build, package, or run deployment scripts from this directory. It is retained temporarily pending a separate cleanup decision.
+
 **Version:** 0.2.0-dev · **Status:** experimental prototype, not production-ready.
 
 PQTunnel is an experimental IPv4 layer-3 tunnel using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
