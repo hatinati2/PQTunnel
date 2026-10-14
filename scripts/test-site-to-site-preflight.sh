@@ -118,10 +118,36 @@ cat >"$FAKE_BIN_DIR/ip6tables-save" <<'IP6TABLES_WRAPPER'
 #!/usr/bin/env bash
 printf '%s\n' '*filter' ':INPUT ACCEPT [0:0]' ':FORWARD ACCEPT [0:0]' ':OUTPUT ACCEPT [0:0]' 'COMMIT'
 IP6TABLES_WRAPPER
-chmod 0700 "$FAKE_BIN_DIR/nft" "$FAKE_BIN_DIR/iptables-save" "$FAKE_BIN_DIR/ip6tables-save"
+cat >"$FAKE_BIN_DIR/sysctl" <<'SYSCTL_WRAPPER'
+#!/usr/bin/env bash
+set -eu
+case "$*" in
+  "-n net.ipv4.ip_forward") printf '%s\n' "${FAKE_FORWARD4:-0}" ;;
+  "-n net.ipv6.conf.all.forwarding") printf '%s\n' "${FAKE_FORWARD6:-0}" ;;
+  "-n net.ipv4.conf.all.rp_filter") printf '%s\n' "${FAKE_RPFILTER_ALL:-2}" ;;
+  "-n net.ipv4.conf.default.rp_filter") printf '%s\n' "${FAKE_RPFILTER_DEFAULT:-2}" ;;
+  -n\ net.ipv4.conf.*.rp_filter) printf '%s\n' "${FAKE_RPFILTER_INTERFACE:-0}" ;;
+  *) exit 1 ;;
+esac
+SYSCTL_WRAPPER
+chmod 0700 "$FAKE_BIN_DIR/nft" "$FAKE_BIN_DIR/iptables-save" "$FAKE_BIN_DIR/ip6tables-save" "$FAKE_BIN_DIR/sysctl"
 DIAGNOSTIC_OUTPUT="$(PATH="$FAKE_BIN_DIR:$PATH" bash "$PREFLIGHT" --role both)"
 grep -q 'Existing raw-table NOTRACK rules detected' <<< "$DIAGNOSTIC_OUTPUT"
 grep -q 'Existing packet-marking rules detected' <<< "$DIAGNOSTIC_OUTPUT"
 grep -q '^SUMMARY pass=' <<< "$DIAGNOSTIC_OUTPUT"
 echo 'PASS: preflight reports simulated NOTRACK and packet-marking hazards.'
+
+# Verify Linux rp_filter semantics: 2 means loose, while 1 means strict.
+# The effective mode is max(conf/all, conf/<interface>), not conf/default.
+LOOSE_OUTPUT="$(PATH="$FAKE_BIN_DIR:$PATH" FAKE_RPFILTER_ALL=2 FAKE_RPFILTER_DEFAULT=2 FAKE_RPFILTER_INTERFACE=0 bash "$PREFLIGHT" --role both)"
+grep -q 'ipv4_rp_filter_all=2 (loose reverse-path filtering' <<< "$LOOSE_OUTPUT"
+grep -q 'rp_filter_interface=lo configured=0 effective=2 mode=loose' <<< "$LOOSE_OUTPUT"
+if grep -q 'enabled/strict' <<< "$LOOSE_OUTPUT"; then
+  echo 'rp_filter=2 was incorrectly described as strict' >&2
+  exit 1
+fi
+STRICT_OUTPUT="$(PATH="$FAKE_BIN_DIR:$PATH" FAKE_RPFILTER_ALL=1 FAKE_RPFILTER_DEFAULT=0 FAKE_RPFILTER_INTERFACE=0 bash "$PREFLIGHT" --role both)"
+grep -q 'ipv4_rp_filter_all=1 (strict reverse-path filtering' <<< "$STRICT_OUTPUT"
+grep -q 'rp_filter_interface=lo configured=0 effective=1 mode=strict' <<< "$STRICT_OUTPUT"
+echo 'PASS: preflight distinguishes strict and loose rp_filter modes and reports effective interface values.'
 echo 'PASS: read-only preflight entry points and non-mutating guard verified.'
