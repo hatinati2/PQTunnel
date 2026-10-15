@@ -394,6 +394,30 @@ COMMIT
         self.assertNotIn("https", rendered)
         self.assertNotIn("203.0.113.", rendered)
 
+    def test_outer_tcp_rst_audit_reports_filter_output_drop_policy(self):
+        fixture = """*filter
+:OUTPUT DROP [0:0]
+COMMIT
+*raw
+:OUTPUT ACCEPT [0:0]
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="dialer", inspect_outer_tcp_rst=(8443, (32768, 60999))
+        )
+        self.assertEqual(parsed["outer_tcp_rst_policy"], "DROP")
+        self.assertEqual(parsed["outer_tcp_rst_rules"], [])
+
+    def test_outer_tcp_rst_audit_does_not_flag_accept_policy_as_drop(self):
+        fixture = """*filter
+:OUTPUT ACCEPT [0:0]
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="dialer", inspect_outer_tcp_rst=(8443, (32768, 60999))
+        )
+        self.assertIsNone(parsed["outer_tcp_rst_policy"])
+
     def test_outer_tcp_rst_syn_shortcut_does_not_overlap_rst_packets(self):
         status, reason = audit.candidate_tcp_rst_flow_overlap_detail(
             "-A OUTPUT -p tcp --syn -j DROP", 8443, (32768, 60999), "dialer"
