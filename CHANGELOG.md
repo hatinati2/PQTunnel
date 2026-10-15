@@ -29,6 +29,7 @@ This is still a development build, not a production VPN release. Windows routing
 
 ## Unreleased — selective site-to-site prototype
 
+- Hardened listener TUN-to-peer forwarding: packets must have a source inside configured local prefixes as well as a unique matching peer destination route; added IPv4/IPv6 regression coverage.
 - Added optional TCP/UDP destination-port allowlists in the client and listener.
 - Added Linux socket-mark support so the PQTunnel transport can be exempted from mark-based egress policy routing.
 - Added an experimental selective site-to-site network helper and config example. It is guarded against existing firewall/forwarding state and must only be validated on an isolated lab host.
