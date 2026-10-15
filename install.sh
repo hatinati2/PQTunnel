@@ -87,7 +87,7 @@ case "$MODE" in
     curl --fail --silent --show-error --location "$RELEASE_BASE/$ASSET" -o "$TMP_DIR/$ASSET"
     curl --fail --silent --show-error --location "$RELEASE_BASE/SHA256SUMS" -o "$TMP_DIR/SHA256SUMS"
     grep -Fq "  ./$ASSET" "$TMP_DIR/SHA256SUMS" || fail "release checksum file does not list $ASSET; refusing to install."
-    (cd "$TMP_DIR" && sha256sum --check "SHA256SUMS")
+    (cd "$TMP_DIR" && grep -F "  ./$ASSET" SHA256SUMS | sha256sum --check -)
     tar -xzf "$TMP_DIR/$ASSET" -C "$TMP_DIR"
     SOURCE_DIR="$TMP_DIR/PQTunnel-${VERSION}-linux-${ARCH}"
     [[ -x "$SOURCE_DIR/pqtunnel-manager" && -f "$SOURCE_DIR/deploy/systemd/pqtunnel-manager.service" ]] || fail 'release bundle is missing manager binary or systemd unit.'
