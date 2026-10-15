@@ -98,7 +98,7 @@ func main() {
 			defer cancel()
 			_ = adminHTTP.Shutdown(shutdownCtx)
 		}()
-		fmt.Printf("PQTunnel admin panel available at http://%s/ (loopback-only; token protected)\\n", *adminListen)
+		fmt.Printf("PQTunnel admin panel available at http://%s/ (loopback-only; token protected)\n", *adminListen)
 	}
 	fmt.Printf("PQTunnel listening on %s; TLS 1.3 strict X25519MLKEM768; IPv4/IPv6 packets; route policy configured separately\n", *listen)
 	if err := s.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
