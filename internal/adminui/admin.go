@@ -56,6 +56,8 @@ header{display:flex;gap:20px;align-items:center;justify-content:space-between;fl
 h1{font-size:1.7rem;margin:0}.sub{color:var(--muted);margin:5px 0 0}
 button{font:inherit;font-weight:700;cursor:pointer;border-radius:10px;padding:9px 14px;border:1px solid var(--line);background:#1b2940;color:var(--text)}
 button:hover{filter:brightness(1.15)}button.danger{border-color:#783b48;background:#351c2a;color:#fecaca}.logout{margin:0}
+.header-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.refresh{display:inline-block;font:inherit;font-weight:700;text-decoration:none;border-radius:10px;padding:9px 14px;border:1px solid var(--line);background:#1b2940;color:var(--text)}
+.disconnect summary{display:inline-block;cursor:pointer;font-weight:700;border-radius:10px;padding:8px 11px;border:1px solid #783b48;background:#351c2a;color:#fecaca;list-style:none}.disconnect summary::-webkit-details-marker{display:none}.disconnect[open] .peerform{margin-top:9px}.disconnect .danger{white-space:nowrap}
 .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:16px}
 .card,.section{border:1px solid var(--line);background:linear-gradient(145deg,#162138,#11192b);border-radius:17px;padding:19px;min-width:0}
 .kicker{font-size:.82rem;color:var(--muted)}.metric{font-size:1.35rem;font-weight:800;overflow-wrap:anywhere;margin-top:5px}
@@ -71,7 +73,8 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 </style></head>
 <body><main class="wrap">
 <header><div><h1>پنل مدیریت PQTunnel</h1><p class="sub">وضعیت سرویس و همتایان متصل · کنترل محدود و امن</p></div>
-<form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">خروج از پنل</button></form></header>
+<div class="header-actions"><a class="refresh" href="/">به‌روزرسانی وضعیت</a>
+<form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">خروج از پنل</button></form></div></header>
 {{if .Notice}}<div class="notice" role="status">{{.Notice}}</div>{{end}}
 <section class="grid" aria-label="خلاصه وضعیت">
 <div class="card"><div class="kicker">وضعیت تونل</div><div class="metric status"><span class="dot {{if .Snapshot.Running}}up{{end}}"></span>{{if .Snapshot.Running}}فعال{{else}}متوقف / در حال راه‌اندازی{{end}}</div></div>
@@ -86,7 +89,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 </div></section>
 <section class="section"><h2>همتایان متصل</h2>
 {{if .Snapshot.Peers}}<table><thead><tr><th>هویت گواهی</th><th>مدت اتصال</th><th>عملیات</th></tr></thead><tbody>
-{{range .Snapshot.Peers}}<tr><td class="identity" data-label="هویت">{{.Identity}}</td><td data-label="مدت اتصال">{{.ConnectedFor}}</td><td><form method="post" action="/peers/disconnect" class="peerform"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="identity" value="{{.Identity}}"><button class="danger" type="submit">قطع اتصال</button></form></td></tr>{{end}}
+{{range .Snapshot.Peers}}<tr><td class="identity" data-label="هویت">{{.Identity}}</td><td data-label="مدت اتصال">{{.ConnectedFor}}</td><td><details class="disconnect"><summary>قطع اتصال</summary><form method="post" action="/peers/disconnect" class="peerform"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="identity" value="{{.Identity}}"><button class="danger" type="submit">تأیید قطع اتصال</button></form></details></td></tr>{{end}}
 </tbody></table>{{else}}<div class="empty">در حال حاضر هیچ همتای احراز هویت‌شده‌ای متصل نیست.</div>{{end}}
 </section>
 <footer>این پنل فقط وضعیت را نمایش می‌دهد و اتصال همتا را قطع می‌کند؛ مسیرها، فایروال، NAT، گواهی‌ها و کلیدها را تغییر نمی‌دهد. پنل باید فقط روی loopback در دسترس باشد.</footer>
