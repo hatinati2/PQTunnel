@@ -208,15 +208,14 @@ def expected_endpoint_port_side(role: str, chain: str) -> str | None:
         return {"OUTPUT": "source", "PREROUTING": "destination"}.get(chain)
     return None
 
-def candidate_tcp_overlap(line: str, port: int, role: str, chain: str) -> str:
-    """Return match/no_match/unknown without retaining or printing rule values."""
-    side = expected_endpoint_port_side(role, chain)
-    if side is None:
-        return "unknown"
+def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, str]:
+    """Classify one candidate port on one packet side; reasons are fixed, non-sensitive labels."""
+    if side not in ("source", "destination"):
+        return "unknown", "unsupported_port_side"
     try:
         tokens = shlex.split(line, comments=True, posix=True)
     except ValueError:
-        return "unknown"
+        return "unknown", "unparseable_rule_tokens"
 
     protocol = None
     protocol_negated = False
@@ -247,63 +246,70 @@ def candidate_tcp_overlap(line: str, port: int, role: str, chain: str) -> str:
             continue
         # A negation not consumed by a selector is outside this check's model.
         if pending_negation:
-            return "unknown"
+            return "unknown", "unsupported_negation"
         i += 1
 
-    # Establish whether the rule's protocol predicate can match an outer TCP packet.
+    # Establish whether the rule's protocol predicate can match a TCP packet.
     if protocol is not None:
         proto = protocol
         if proto in ("tcp", "6", "all", "0"):
             protocol_matches_tcp = not protocol_negated
         else:
             # A positive exact protocol other than TCP cannot match a TCP
-            # transport packet; its negated form can.
+            # packet; its negated form can.
             protocol_matches_tcp = protocol_negated
         if not protocol_matches_tcp:
-            return "no_match"
+            return "no_match", "protocol_excludes_tcp"
     elif "udp" in modules:
-        return "no_match"
-    elif "tcp" in modules:
-        pass
+        return "no_match", "protocol_excludes_tcp"
     # No protocol means any protocol and therefore includes TCP.
 
     # Extra match criteria beyond protocol/port can narrow the rule. If the
-    # candidate is excluded by its known protocol/endpoint-port tests, no
-    # additional predicate can make it match; otherwise report unknown.
+    # candidate is excluded by known protocol/port tests, report no_match;
+    # otherwise any unsupported or opposite-side condition remains unknown.
     selectors = set(iptables_selector_categories(line))
     has_unmodeled_selector = bool(selectors - {"protocol", "port"})
-
-    endpoint_conditions = [c for c in conditions if c[0] == side]
+    side_conditions = [c for c in conditions if c[0] == side]
     opposite_conditions = [c for c in conditions if c[0] not in (side, "either")]
     either_conditions = [c for c in conditions if c[0] == "either"]
 
-    for _, value, negated in endpoint_conditions:
+    for _, value, negated in side_conditions:
         match = port_spec_matches(value, port)
         if match is None:
-            return "unknown"
+            return "unknown", "unsupported_port_spec"
         if negated:
             match = not match
         if not match:
-            return "no_match"
+            return "no_match", "port_excludes_candidate"
 
     if either_conditions:
-        # --ports matches either source or destination. A negative/unknown
-        # value is not safely reducible using the endpoint port alone.
         for _, value, negated in either_conditions:
             match = port_spec_matches(value, port)
             if match is None:
-                return "unknown"
+                return "unknown", "unsupported_port_spec"
             if negated:
-                return "unknown"
+                return "unknown", "negated_either_port_selector"
             if not match:
-                return "unknown"
-    if opposite_conditions:
-        return "unknown"
-    if has_unmodeled_selector:
-        return "unknown"
-    return "match"
+                # The option can match either packet side, so evaluating only
+                # one side cannot prove the entire rule does not overlap.
+                return "unknown", "either_port_selector_needs_packet_pair"
 
-def parse_iptables_save(text: str, candidate_port: int | None = None, role: str = "both") -> dict[str, Any]:
+    if opposite_conditions:
+        return "unknown", "opposite_port_selector_present"
+    if has_unmodeled_selector:
+        return "unknown", "additional_selector_present"
+    return "match", "known_conditions_allow_port"
+
+
+def candidate_tcp_overlap(line: str, port: int, role: str, chain: str) -> str:
+    """Return match/no_match/unknown for the outer endpoint port, with values redacted."""
+    side = expected_endpoint_port_side(role, chain)
+    if side is None:
+        return "unknown"
+    return candidate_tcp_overlap_detail(line, port, side)[0]
+
+
+def parse_iptables_save(text: str, candidate_port: int | None = None, role: str = "both", inspect_tcp_port: int | None = None) -> dict[str, Any]:
     table = None
     policies: dict[tuple[str, str], str] = {}
     rules: dict[tuple[str, str], dict[str, int]] = defaultdict(
@@ -339,9 +345,20 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
                 "selectors": iptables_selector_categories(line),
                 "mechanism": notrack_mechanism(line),
             }
-            if candidate_port is not None and table == "raw" and fields[1] in ("OUTPUT", "PREROUTING"):
-                record["candidate_overlap"] = candidate_tcp_overlap(line, candidate_port, role, fields[1])
-                record["endpoint_port_side"] = expected_endpoint_port_side(role, fields[1]) or "unknown"
+            if table == "raw" and fields[1] in ("OUTPUT", "PREROUTING"):
+                if candidate_port is not None:
+                    side = expected_endpoint_port_side(role, fields[1])
+                    record["candidate_overlap"] = candidate_tcp_overlap(line, candidate_port, role, fields[1])
+                    record["candidate_overlap_reason"] = (
+                        candidate_tcp_overlap_detail(line, candidate_port, side)[1]
+                        if side is not None else "unknown_role_or_chain"
+                    )
+                    record["endpoint_port_side"] = side or "unknown"
+                if inspect_tcp_port is not None:
+                    for port_side in ("source", "destination"):
+                        status, reason = candidate_tcp_overlap_detail(line, inspect_tcp_port, port_side)
+                        record[f"{port_side}_port_overlap"] = status
+                        record[f"{port_side}_port_overlap_reason"] = reason
             notrack_rules.append(record)
         if MARK_RE.search(line): counts["packet_mark"] += 1
         if NAT_RE.search(line): counts["nat"] += 1
@@ -382,12 +399,12 @@ def audit_nft() -> None:
         if hook != "-" or any(counts[cat] for cat in CATEGORIES):
             print(f"nft_chain family={family} table={table} name={chain} hook={hook} priority={priority if priority is not None else '-'} policy={policy} {fmt_categories(counts)}")
 
-def audit_iptables(command: str, family: str, role: str, candidate_port: int | None) -> None:
+def audit_iptables(command: str, family: str, role: str, candidate_port: int | None, inspect_tcp_port: int | None) -> None:
     rc, output = run_readonly([command])
     if rc != 0:
         print(f"WARN {family}_iptables_save=query_failed_or_unavailable; state is unknown")
         return
-    parsed = parse_iptables_save(output, candidate_port=candidate_port, role=role)
+    parsed = parse_iptables_save(output, candidate_port=candidate_port, role=role, inspect_tcp_port=inspect_tcp_port)
     table_names = {t for t, _ in parsed["policies"]} | {t for t, _ in parsed["rules"]}
     total = sum(v["rules"] for v in parsed["rules"].values())
     print(f"{family}_iptables_save=ok tables={len(table_names)} rules={total}")
@@ -411,15 +428,31 @@ def audit_iptables(command: str, family: str, role: str, candidate_port: int | N
         selectors = ",".join(rule["selectors"]) or "none-detected"
         suffix = ""
         if "candidate_overlap" in rule:
-            suffix = f" endpoint_port_side={rule['endpoint_port_side']} candidate_tcp_overlap={rule['candidate_overlap']}"
+            suffix += (
+                f" endpoint_port_side={rule['endpoint_port_side']}"
+                f" candidate_tcp_overlap={rule['candidate_overlap']}"
+                f" candidate_tcp_overlap_reason={rule['candidate_overlap_reason']}"
+            )
+        if "source_port_overlap" in rule:
+            suffix += (
+                f" tcp_port_probe_source_overlap={rule['source_port_overlap']}"
+                f" tcp_port_probe_source_reason={rule['source_port_overlap_reason']}"
+                f" tcp_port_probe_destination_overlap={rule['destination_port_overlap']}"
+                f" tcp_port_probe_destination_reason={rule['destination_port_overlap_reason']}"
+            )
         print(f"{family}_iptables_notrack_scope table={key[0]} chain={key[1]} rule={chain_indices[key]} selectors={selectors} mechanism={rule['mechanism']}{suffix}")
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only firewall inventory; raw rules are never printed.")
     parser.add_argument("--role", choices=("dialer", "gateway", "both"), default="both")
-    parser.add_argument(
+    port_checks = parser.add_mutually_exclusive_group()
+    port_checks.add_argument(
         "--candidate-tcp-port", type=int, choices=range(1, 65536), default=None,
-        help="optionally check a proposed PQTunnel TCP listener port against NOTRACK rules; port values remain redacted in output",
+        help="check a proposed PQTunnel outer TCP listener port against NOTRACK rules; rule values remain redacted",
+    )
+    port_checks.add_argument(
+        "--inspect-tcp-port", type=int, choices=range(1, 65536), default=None,
+        help="probe this TCP port independently on source and destination sides of raw NOTRACK rules; rule values remain redacted",
     )
     args = parser.parse_args()
     os_release = {}
@@ -435,9 +468,11 @@ def main() -> int:
     print("Privacy: raw rules, IP addresses, ports, counters and packet contents are not printed.")
     if args.candidate_tcp_port is not None:
         print("candidate_tcp_port_check=enabled port_value=redacted")
+    if args.inspect_tcp_port is not None:
+        print("tcp_port_probe=enabled port_value=redacted sides=source,destination mode=NOTRACK-rule-predicate")
     audit_nft()
-    audit_iptables("iptables-save", "ipv4", args.role, args.candidate_tcp_port)
-    audit_iptables("ip6tables-save", "ipv6", args.role, args.candidate_tcp_port)
+    audit_iptables("iptables-save", "ipv4", args.role, args.candidate_tcp_port, args.inspect_tcp_port)
+    audit_iptables("ip6tables-save", "ipv6", args.role, args.candidate_tcp_port, args.inspect_tcp_port)
     print("READ-ONLY GUARANTEE: no files, routes, sysctls, firewall state or services were changed.")
     print("This inventory supports lab design; it is not approval to apply network changes.")
     return 0
