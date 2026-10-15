@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"net"
-	"net/netip"
 	"testing"
 	"time"
 
