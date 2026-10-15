@@ -51,7 +51,7 @@ PQTUNNEL_ADMIN_TOKEN=REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_BYTES
 
 ## پیش‌نیازها
 
-- Go نسخهٔ 1.24 یا بالاتر؛ CI از Go 1.27.x استفاده می‌کند. پشتیبانی TLS از `X25519MLKEM768` از Go 1.24 اضافه شد. [یادداشت انتشار رسمی Go 1.24](https://go.dev/doc/go1.24)
+- برای ساخت این نسخه از سورس، Go نسخهٔ 1.26 یا بالاتر لازم است (`go.mod` نسخهٔ 1.26.0 را مشخص می‌کند)؛ CI از Go 1.27.x استفاده می‌کند. پشتیبانی TLS از `X25519MLKEM768` از Go 1.24 اضافه شد. [یادداشت انتشار رسمی Go 1.24](https://go.dev/doc/go1.24)
 - سرور Ubuntu/Linux دارای systemd، `iproute2`، `nftables` و `/dev/net/tun`.
 - کلاینت لینوکس دارای `iproute2` و `systemd-resolved` (برنامهٔ `resolvectl`).
 - ویندوز: درایور/DLL رسمی Wintun و آداپتور از قبل آماده‌شده با نام `pqtun0`؛ این پروژه درایور را توزیع نمی‌کند.
@@ -62,7 +62,7 @@ PQTUNNEL_ADMIN_TOKEN=REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_BYTES
 ```sh
 go test ./...
 go vet ./...
-go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
+go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki ./cmd/pqtunnel-manager
 ```
 
 CI تست‌ها، تحلیل ایستا، یک آزمون یکپارچه‌سازی TLS روی loopback و cross-build برای Linux amd64/arm64 و Windows amd64 انجام می‌دهد؛ همچنین روی Ubuntu 24.04 و 26.04 تونل TUN واقعی و پورت‌فوروارد ورودی TCP/UDP را آزمایش می‌کند. تست خروج انتخابی بررسی می‌کند که TCP/443 و TCP/8443 و نیز UDP/53 و UDP/5354 از تونل عبور کنند، درحالی‌که TCP/8080، TCP/9443، UDP/5353، UDP/5355 و پروتکل اشتباه روی پورت‌های TCP/53 یا UDP/443 مستقیم بمانند؛ این بررسی برای IPv4 و IPv6 در network namespaceهای ایزوله انجام می‌شود. این تست‌ها فایروال ارائه‌دهنده یا کارکرد روی دو VPS واقعی را تأیید نمی‌کنند. ساخت Android هنوز در CI تأیید نمی‌شود.
