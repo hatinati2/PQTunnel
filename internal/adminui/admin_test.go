@@ -6,7 +6,9 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/hatinati2/PQTunnel/internal/adminapi"
 )
@@ -215,6 +217,51 @@ func TestSuccessfulLoginResetsFailedAttempts(t *testing.T) {
 		if resp := postLogin(t, h, "wrong-again", client); resp.Code != http.StatusOK {
 			t.Fatalf("failed attempts were not reset after login; attempt %d status=%d", i+1, resp.Code)
 		}
+	}
+}
+
+func TestExpiredSessionIsRemovedAndRedirectsToLogin(t *testing.T) {
+	h, err := New(strings.Repeat("e", 32), &fakeController{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	h.sessions["expired-session"] = session{CSRF: "expired-csrf", ExpiresAt: time.Now().Add(-time.Second)}
+	h.mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "expired-session"})
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusSeeOther || resp.Header().Get("Location") != "/login" {
+		t.Fatalf("expired session status=%d location=%q", resp.Code, resp.Header().Get("Location"))
+	}
+	h.mu.Lock()
+	_, remains := h.sessions["expired-session"]
+	h.mu.Unlock()
+	if remains {
+		t.Fatal("expired session was not removed")
+	}
+}
+
+func TestLoginAttemptTableOverflowFailsClosed(t *testing.T) {
+	const token = "test-token-with-at-least-32-characters"
+	h, err := New(token, &fakeController{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= maxLoginEntries; i++ {
+		remote := "127.0.0." + strconv.Itoa(i) + ":12000"
+		if resp := postLogin(t, h, "wrong-token", remote); resp.Code != http.StatusOK {
+			t.Fatalf("seed attempt %d status=%d, want 200", i, resp.Code)
+		}
+	}
+	overflow := postLogin(t, h, "wrong-token", "127.0.0.129:12000")
+	if overflow.Code != http.StatusTooManyRequests || overflow.Header().Get("Retry-After") != "60" {
+		t.Fatalf("overflow status=%d retry-after=%q", overflow.Code, overflow.Header().Get("Retry-After"))
+	}
+	if resp := postLogin(t, h, token, "127.0.0.130:12000"); resp.Code != http.StatusTooManyRequests {
+		t.Fatalf("overflow mode must fail closed for other clients, got %d", resp.Code)
 	}
 }
 
