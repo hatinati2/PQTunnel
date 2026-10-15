@@ -19,6 +19,7 @@ PQTunnel یک تونل آزمایشی لایهٔ ۳ با encapsulation بسته�
 - مسیر نصب سرویس Ubuntu با systemd در `scripts/install-server.sh` و `deploy/systemd/pqtunneld.service`.
 - اسکریپت مستقل و قابل بازگردانی برای فعال‌سازی IPv4 forwarding و NAT در `scripts/server-network.sh`؛ فقط جدول اختصاصی nftables خودش را مدیریت می‌کند و UFW را تغییر نمی‌دهد.
 - اسکریپت شبکهٔ کلاینت لینوکس در `scripts/linux-client-network.sh`: route اختصاصی IP سرور، مسیر پیش‌فرض IPv4 از TUN، DNS با systemd-resolved و blackhole برای مسیر پیش‌فرض IPv6.
+- پنل وب مدیریت فارسی و اختیاری برای وضعیت daemon و همتاهای متصل؛ قابلیت قطع اتصال یک همتا با توکن محافظت‌شده، نشست کوتاه‌عمر و CSRF. پنل پیش‌فرض خاموش است و فقط روی loopback گوش می‌دهد؛ راهنمای [پنل مدیریت وب](docs/WEB-ADMIN-PANEL.md) را ببین.
 - محدودسازی تعداد نشست‌ها و handshakeهای هم‌زمان در سرور.
 - گردش‌کار CI برای تست و cross-build لینوکس و ویندوز و ساخت فایل‌های Release از روی تگ نسخه.
 - اصلاح مسیر ماژول Go به `github.com/hatinati2/PQTunnel`.
