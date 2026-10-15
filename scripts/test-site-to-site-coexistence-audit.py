@@ -340,7 +340,7 @@ COMMIT
         fixture = """*raw
 :PREROUTING ACCEPT [0:0]
 -A PREROUTING -p tcp --sport 40000 -j NOTRACK
--A PREROUTING -p tcp --dport 8443 -j NOTRACK
+-A PREROUTING -p tcp --dport 443 -j NOTRACK
 -A PREROUTING -p tcp -m conntrack --ctstate NEW -j NOTRACK
 :OUTPUT ACCEPT [0:0]
 -A OUTPUT -p tcp --dport 40000 -j NOTRACK
