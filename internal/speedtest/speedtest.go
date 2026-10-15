@@ -283,9 +283,22 @@ func runAgainst(ctx context.Context, endpoint, baseURL, token string, sizeMiB in
 // listens on the configured private IP, never a wildcard or public interface.
 func ServeAgent(ctx context.Context, address, token string) error {
 	if err := ValidatePrivateEndpoint(address); err != nil { return err }
+	ip, _, err := ParseEndpointAddress(address)
+	if err != nil { return err }
 	handler, err := NewHandler(token)
 	if err != nil { return err }
 	for {
+		// Wait until the configured literal address is assigned specifically
+		// to the tunnel interface. This avoids accidentally exposing the test
+		// agent on a physical private LAN address that overlaps a broad prefix.
+		if !interfaceHasAddress("pqtun0", ip) {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(3 * time.Second):
+				continue
+			}
+		}
 		ln, err := net.Listen("tcp", address)
 		if err == nil {
 			server := &http.Server{
@@ -316,6 +329,24 @@ func ServeAgent(ctx context.Context, address, token string) error {
 		case <-time.After(3 * time.Second):
 		}
 	}
+}
+
+func interfaceHasAddress(name string, want netip.Addr) bool {
+	iface, err := net.InterfaceByName(name)
+	if err != nil { return false }
+	addrs, err := iface.Addrs()
+	if err != nil { return false }
+	for _, raw := range addrs {
+		value := strings.Split(raw.String(), "%")[0]
+		if prefix, err := netip.ParsePrefix(value); err == nil {
+			if prefix.Addr().Unmap() == want.Unmap() { return true }
+			continue
+		}
+		if address, err := netip.ParseAddr(value); err == nil && address.Unmap() == want.Unmap() {
+			return true
+		}
+	}
+	return false
 }
 
 func ParseEndpointAddress(address string) (netip.Addr, uint16, error) {
