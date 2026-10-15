@@ -58,7 +58,7 @@ After login, it shows limited daemon and connected-peer status and allows discon
 
 ## Requirements
 
-- Go 1.24 or later; CI uses Go 1.27.x. Go 1.24 introduced the standardized TLS `X25519MLKEM768` hybrid key exchange. See the [Go 1.24 release notes](https://go.dev/doc/go1.24).
+- Go 1.26 or later to build this source tree (`go.mod` declares Go 1.26.0); CI uses Go 1.27.x. The standardized TLS `X25519MLKEM768` hybrid key exchange was introduced in Go 1.24. See the [Go 1.24 release notes](https://go.dev/doc/go1.24).
 - Ubuntu/Linux server with systemd, `iproute2`, `nftables`, and `/dev/net/tun` for the supplied deployment scripts.
 - Linux client with `iproute2` and `systemd-resolved` (`resolvectl`) for the supplied client route helper.
 - Windows: official Wintun DLL/driver and a provisioned adapter named `pqtun0`; this project does not distribute the driver.
@@ -69,7 +69,7 @@ After login, it shows limited daemon and connected-peer status and allows discon
 ```sh
 go test ./...
 go vet ./...
-go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
+go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki ./cmd/pqtunnel-manager
 ```
 
 CI runs unit tests, vet and Linux builds on both Ubuntu 24.04 and 26.04, cross-compiles Linux amd64/arm64 and Windows amd64, and exercises real Linux TUN devices plus IPv4/IPv6 routes between disposable network namespaces. These namespace tests cover the tunnel packet path, inbound TCP/UDP port-forward round trips, and multi-port selective egress: TCP/443 and TCP/8443 plus UDP/53 and UDP/5354 use the tunnel, while TCP/8080, TCP/9443, UDP/5353, UDP/5355 and protocol-mismatched TCP/53 or UDP/443 remain direct, over IPv4 and IPv6. They do not validate public VPS routing, provider firewalls or production NAT/firewall integration, arbitrary egress policies beyond these test cases, DNS leaks, the four cross-version pairings, Windows route management, or Android physical devices.
