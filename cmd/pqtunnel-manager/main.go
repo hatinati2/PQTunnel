@@ -45,15 +45,19 @@ func main() {
 	agentListen := os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_LISTEN")
 	agentToken := os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_TOKEN")
 	if agentListen != "" || agentToken != "" {
+		// Misconfigured optional benchmarking must not take the management UI
+		// offline; keep the panel available so the operator can repair config.
 		if agentListen == "" || len([]byte(agentToken)) < 32 {
-			fatalIf(fmt.Errorf("set both PQTUNNEL_MANAGER_SPEEDTEST_LISTEN and a speed-test token of at least 32 bytes"))
+			fmt.Fprintln(os.Stderr, "pqtunnel-manager: speed-test agent disabled: set both the private listen address and a separate token of at least 32 bytes")
+		} else if err := controller.ValidateSpeedTestListener(agentListen, agentToken); err != nil {
+			fmt.Fprintln(os.Stderr, "pqtunnel-manager: speed-test agent disabled:", err)
+		} else {
+			go func() {
+				if err := speedtest.ServeAgent(ctx, agentListen, agentToken); err != nil && ctx.Err() == nil {
+					fmt.Fprintln(os.Stderr, "pqtunnel-manager: speed-test agent:", err)
+				}
+			}()
 		}
-		fatalIf(controller.ValidateSpeedTestListener(agentListen, agentToken))
-		go func() {
-			if err := speedtest.ServeAgent(ctx, agentListen, agentToken); err != nil && ctx.Err() == nil {
-				fmt.Fprintln(os.Stderr, "pqtunnel-manager: speed-test agent:", err)
-			}
-		}()
 	}
 	listener, err := net.Listen("tcp", listen)
 	fatalIf(err)
