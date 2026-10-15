@@ -56,6 +56,24 @@ After login, it shows limited daemon and connected-peer status and allows discon
 6. The single TCP transport can suffer TCP-over-TCP head-of-line blocking.
 7. There is no online certificate revocation service, secure device provisioning flow, or PQ signature/certificate chain yet.
 
+## Quick install entry point (experimental)
+
+A one-line entry point is available for the optional standalone manager and read-only preflight:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
+```
+
+The menu offers read-only host checks or installation of the standalone manager from the matching Linux release bundle. To install only the manager directly on the Iran/Dialer host:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
+```
+
+The installer verifies the selected release archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go for manager installation. The manager is installed but **not started**; set a random `PQTUNNEL_MANAGER_TOKEN` of at least 32 bytes in `/etc/default/pqtunnel-manager`, review the file, then start the service deliberately. Keep its listener on loopback and use SSH forwarding.
+
+This is not a one-command tunnel configuration: Gateway/Dialer setup still requires reviewed certificates and role-specific environment files. The tunnel install/start commands are separate because they can change services or network state. The current release remains experimental and is not independently security-audited.
+
 ## Requirements
 
 - Go 1.26 or later to build this source tree (`go.mod` declares Go 1.26.0); CI uses Go 1.27.x. The standardized TLS `X25519MLKEM768` hybrid key exchange was introduced in Go 1.24. See the [Go 1.24 release notes](https://go.dev/doc/go1.24).
