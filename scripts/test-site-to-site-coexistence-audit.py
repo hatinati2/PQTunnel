@@ -246,6 +246,54 @@ COMMIT
         self.assertEqual(parsed["notrack_rules"][0]["candidate_overlap"], "unknown")
         self.assertEqual(parsed["notrack_rules"][0]["endpoint_port_side"], "unknown")
 
+
+    def test_inspect_tcp_port_checks_source_and_destination_separately(self):
+        fixture = """*raw
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -p tcp --dport 443 -j NOTRACK
+-A PREROUTING -p tcp --sport 80 -j NOTRACK
+-A PREROUTING -p udp --dport 443 -j NOTRACK
+-A PREROUTING -p tcp --dport https -j NOTRACK
+-A PREROUTING -p tcp -j NOTRACK
+-A PREROUTING -p tcp --ports 443 -j NOTRACK
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(fixture, inspect_tcp_port=443)
+        rules = parsed["notrack_rules"]
+        self.assertEqual(
+            [(r["source_port_overlap"], r["destination_port_overlap"]) for r in rules],
+            [
+                ("unknown", "match"),
+                ("no_match", "unknown"),
+                ("no_match", "no_match"),
+                ("unknown", "unknown"),
+                ("match", "match"),
+                ("match", "match"),
+            ],
+        )
+        self.assertEqual(rules[0]["destination_port_overlap_reason"], "known_conditions_allow_port")
+        self.assertEqual(rules[0]["source_port_overlap_reason"], "opposite_port_selector_present")
+        self.assertEqual(rules[2]["source_port_overlap_reason"], "protocol_excludes_tcp")
+        self.assertEqual(rules[3]["destination_port_overlap_reason"], "unsupported_port_spec")
+        self.assertNotIn("443", repr(rules))
+        self.assertNotIn("https", repr(rules))
+        self.assertNotIn("80", repr(rules))
+
+    def test_candidate_check_reports_redacted_reason_codes(self):
+        fixture = """*raw
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp --dport https -j NOTRACK
+-A OUTPUT -p udp --dport 8443 -j NOTRACK
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(fixture, candidate_port=8443, role="dialer")
+        self.assertEqual(
+            [r["candidate_overlap_reason"] for r in parsed["notrack_rules"]],
+            ["unsupported_port_spec", "protocol_excludes_tcp"],
+        )
+        self.assertNotIn("https", repr(parsed["notrack_rules"]))
+        self.assertNotIn("8443", repr(parsed["notrack_rules"]))
+
     def test_accept_is_counted(self):
         parsed = audit.parse_iptables_save("*filter\n:FORWARD ACCEPT [0:0]\n-A FORWARD -j ACCEPT\nCOMMIT\n")
         self.assertEqual(parsed["rules"][("filter", "FORWARD")]["accept"], 1)
