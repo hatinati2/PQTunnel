@@ -121,7 +121,7 @@ case "$MODE" in
     systemctl enable --now pqtunnel-manager
     systemctl --no-pager --full status pqtunnel-manager
     printf '\nPQTunnel manager installed and started. Its token is stored root-only in %s.\n' "$CONFIG"
-    printf 'The token was not printed. Keep port 9091 private; remote access must use SSH local forwarding.\n'
+    printf 'The token was not printed. Default access is loopback-only; direct public-IP access requires a trusted TLS certificate with that IP in its IP SAN.\n'
     printf 'No tunnel service, route, firewall, NAT, or forwarding settings were changed.\n'
     ;;
 esac
