@@ -517,7 +517,6 @@ func TestStandaloneManagerDashboardAndLifecycleActions(t *testing.T) {
 	if len(manager.speedSizes) != 1 || manager.speedSizes[0] != 2 {
 		t.Fatalf("unexpected speed-test sizes: %v", manager.speedSizes)
 	}
-}
 
 	logsReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/logs", nil)
 	logsReq.AddCookie(cookie)
