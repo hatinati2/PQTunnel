@@ -120,6 +120,111 @@ COMMIT
         self.assertEqual(parsed["rules"][("filter", "FORWARD")]["drop_reject"], 1)
         self.assertEqual(parsed["policies"][("filter", "FORWARD")], "DROP")
 
+    def test_selector_categories_ignore_option_like_text_inside_comments(self):
+        line = (
+            '-A OUTPUT -p tcp --dport 8443 -m comment '
+            '--comment "--ctstate NEW --uid-owner 1000 --dport 80 -m owner" '
+            '-j NOTRACK'
+        )
+        self.assertEqual(
+            audit.iptables_selector_categories(line),
+            ["port", "protocol"],
+        )
+        status, reason, _, _ = audit.candidate_tcp_flow_overlap_detail(
+            line, 8443, (32768, 60999), "dialer", "OUTPUT"
+        )
+        self.assertEqual((status, reason), ("match", "known_conditions_allow_flow"))
+
+    def test_selector_categories_remain_conservative_for_unparseable_rules(self):
+        self.assertEqual(
+            audit.iptables_selector_categories('-A OUTPUT --comment "unterminated -j DROP'),
+            ["other"],
+        )
+
+    def test_unrecognized_selector_option_is_classified_as_other(self):
+        line = "-A OUTPUT -p tcp -m tcp --tcp-option 2 -j DROP"
+        self.assertEqual(
+            audit.iptables_selector_categories(line),
+            ["other", "protocol"],
+        )
+        status, reason, _, _ = audit.candidate_tcp_flow_overlap_detail(
+            line, 8443, (32768, 60999), "dialer", "OUTPUT"
+        )
+        self.assertEqual((status, reason), ("unknown", "additional_selector_present"))
+
+    def test_unknown_option_like_text_inside_comment_is_not_a_selector(self):
+        line = (
+            '-A OUTPUT -p tcp -m comment '
+            '--comment "--tcp-option 2 --custom-match value" -j NOTRACK'
+        )
+        self.assertEqual(
+            audit.iptables_selector_categories(line),
+            ["protocol"],
+        )
+
+
+    def test_overlap_checks_ignore_option_like_comment_values(self):
+        line = (
+            '-A OUTPUT -p tcp -m comment --comment "--dport" '
+            '--dport 8443 -j NOTRACK'
+        )
+        self.assertEqual(
+            audit.candidate_tcp_overlap_detail(line, 8443, "destination"),
+            ("match", "known_conditions_allow_port"),
+        )
+        status, reason, _, _ = audit.candidate_tcp_flow_overlap_detail(
+            line, 8443, (32768, 60999), "dialer", "OUTPUT"
+        )
+        self.assertEqual((status, reason), ("match", "known_conditions_allow_flow"))
+
+    def test_iptables_feature_counts_ignore_fake_actions_inside_comments(self):
+        fixture = """*raw
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -p tcp -m comment --comment "-j NOTRACK --notrack --set-mark 1 -j MARK -j DNAT -j DROP -j ACCEPT" -j ACCEPT
+-A PREROUTING -p tcp -m comment --comment "--notrack --set-xmark 1/1 -j CT" -j ACCEPT
+-A PREROUTING -p tcp -j NOTRACK
+-A PREROUTING -p tcp -j CT --notrack
+COMMIT
+*mangle
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -m comment --comment "-j MARK --set-mark 1 -j CONNMARK" -j ACCEPT
+-A PREROUTING -j MARK --set-xmark 0x20/0xff
+-A PREROUTING -m connmark --mark 0x20 -j ACCEPT
+COMMIT
+*nat
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -m comment --comment "-j DNAT" -j ACCEPT
+-A PREROUTING -j DNAT --to-destination 203.0.113.2:443
+COMMIT
+*filter
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -m comment --comment "-j DROP -j REJECT" -j ACCEPT
+-A OUTPUT -j DROP
+-A OUTPUT -j REJECT
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(fixture)
+        raw = parsed["rules"][("raw", "PREROUTING")]
+        self.assertEqual(raw["notrack"], 2)
+        self.assertEqual(raw["packet_mark"], 0)
+        self.assertEqual(raw["nat"], 0)
+        self.assertEqual(raw["drop_reject"], 0)
+        self.assertEqual(raw["accept"], 2)
+        self.assertEqual(
+            [rule["mechanism"] for rule in parsed["notrack_rules"]],
+            ["direct_target", "ct_target_option"],
+        )
+
+        mangle = parsed["rules"][("mangle", "PREROUTING")]
+        self.assertEqual(mangle["packet_mark"], 2)
+        self.assertEqual(mangle["accept"], 2)
+        nat = parsed["rules"][("nat", "PREROUTING")]
+        self.assertEqual(nat["nat"], 1)
+        self.assertEqual(nat["accept"], 1)
+        output = parsed["rules"][("filter", "OUTPUT")]
+        self.assertEqual(output["drop_reject"], 2)
+        self.assertEqual(output["accept"], 1)
+
     def test_notrack_scope_reports_selector_types_without_values(self):
         fixture = """*raw
 :PREROUTING ACCEPT [0:0]
@@ -357,6 +462,77 @@ COMMIT
         self.assertEqual(parsed["notrack_rules"][2]["flow_overlap_reason"], "additional_selector_present")
         self.assertNotIn("8443", repr(parsed["notrack_rules"]))
 
+    def test_outer_tcp_rst_audit_recognizes_ece_and_cwr_flags(self):
+        self.assertEqual(audit.tcp_flag_bits("ECE,CWR"), 0xC0)
+        self.assertEqual(audit.tcp_flag_bits("ALL"), 0xFF)
+
+        fixture = """*filter
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp --tcp-flags ALL ECE -j DROP
+-A OUTPUT -p tcp --tcp-flags ALL CWR -j DROP
+-A OUTPUT -p tcp --tcp-flags ALL RST,ECE -j DROP
+-A OUTPUT -p tcp --tcp-flags ALL RST,CWR -j DROP
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="dialer", inspect_outer_tcp_rst=(8443, (32768, 60999))
+        )
+        rules = parsed["outer_tcp_rst_rules"]
+        self.assertEqual(
+            [r["overlap"] for r in rules],
+            ["no_match", "no_match", "match", "match"],
+        )
+        self.assertEqual(
+            [r["reason"] for r in rules],
+            [
+                "tcp_flags_exclude_rst",
+                "tcp_flags_exclude_rst",
+                "known_conditions_allow_rst_flow",
+                "known_conditions_allow_rst_flow",
+            ],
+        )
+
+    def test_outer_tcp_rst_audit_reports_filter_output_drop_policy(self):
+        fixture = """*filter
+:OUTPUT DROP [0:0]
+COMMIT
+*raw
+:OUTPUT ACCEPT [0:0]
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="dialer", inspect_outer_tcp_rst=(8443, (32768, 60999))
+        )
+        self.assertEqual(parsed["outer_tcp_rst_policy"], "DROP")
+        self.assertEqual(parsed["outer_tcp_rst_rules"], [])
+
+    def test_outer_tcp_rst_audit_does_not_flag_accept_policy_as_drop(self):
+        fixture = """*filter
+:OUTPUT ACCEPT [0:0]
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="dialer", inspect_outer_tcp_rst=(8443, (32768, 60999))
+        )
+        self.assertIsNone(parsed["outer_tcp_rst_policy"])
+
+    def test_outer_tcp_rst_audit_ignores_jump_text_inside_comments(self):
+        fixture = """*filter
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp -m comment --comment "-j DROP" -j ACCEPT
+-A OUTPUT -p tcp -m comment --comment "-j REJECT" -j ACCEPT
+-A OUTPUT -p tcp -m comment --comment "-j ACCEPT" -j DROP
+-A OUTPUT -p tcp -m comment --comment "ordinary comment" -j REJECT
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="dialer", inspect_outer_tcp_rst=(8443, (32768, 60999))
+        )
+        rules = parsed["outer_tcp_rst_rules"]
+        self.assertEqual(len(rules), 2)
+        self.assertEqual([rule["action"] for rule in rules], ["drop", "reject"])
+        self.assertEqual([rule["overlap"] for rule in rules], ["match", "match"])
+
     def test_outer_tcp_rst_audit_classifies_filter_output_rules_and_redacts_values(self):
         fixture = """*filter
 :OUTPUT ACCEPT [0:0]
@@ -393,6 +569,14 @@ COMMIT
         self.assertNotIn("60999", rendered)
         self.assertNotIn("https", rendered)
         self.assertNotIn("203.0.113.", rendered)
+
+    def test_outer_tcp_rst_audit_ignores_flag_option_text_inside_comments(self):
+        status, reason = audit.candidate_tcp_rst_flow_overlap_detail(
+            '-A OUTPUT -p tcp -m comment --comment "--tcp-flags" '
+            '--sport 40000 --dport 8443 --tcp-flags RST RST -j DROP',
+            8443, (32768, 60999), "dialer",
+        )
+        self.assertEqual((status, reason), ("match", "known_conditions_allow_rst_flow"))
 
     def test_outer_tcp_rst_syn_shortcut_does_not_overlap_rst_packets(self):
         status, reason = audit.candidate_tcp_rst_flow_overlap_detail(

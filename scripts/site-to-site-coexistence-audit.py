@@ -114,53 +114,212 @@ def parse_nft_json(data: dict[str, Any]) -> dict[str, Any]:
             tables.add((key[0], key[1]))
     return {"tables": sorted(tables), "chains": chains, "rules": dict(rules)}
 
-MARK_RE = re.compile(r"(?:--set-(?:x)?mark\b|--restore-mark\b|--save-mark\b|(?:-j|--jump)\s+(?:CONN)?MARK\b|CONNMARK)", re.I)
-NOTRACK_RE = re.compile(r"(?:--notrack\b|(?:-j|--jump)\s+NOTRACK\b)", re.I)
-DIRECT_NOTRACK_RE = re.compile(r"(?:-j|--jump)\s+NOTRACK\b", re.I)
-CT_NOTRACK_RE = re.compile(r"(?:-j|--jump)\s+CT\b.*--notrack\b", re.I)
-NOTRACK_OPTION_RE = re.compile(r"--notrack\b", re.I)
-
 def notrack_mechanism(line: str) -> str:
-    """Classify NOTRACK mechanics without retaining or printing rule values."""
-    if CT_NOTRACK_RE.search(line):
-        return "ct_target_option"
-    if DIRECT_NOTRACK_RE.search(line):
-        return "direct_target"
-    if NOTRACK_OPTION_RE.search(line):
-        return "option_other_target"
-    return "other_notrack_match"
-NAT_RE = re.compile(r"(?:-j|--jump)\s+(?:DNAT|SNAT|MASQUERADE|REDIRECT)\b", re.I)
-DROP_RE = re.compile(r"(?:-j|--jump)\s+(?:DROP|REJECT)\b", re.I)
-ACCEPT_RE = re.compile(r"(?:-j|--jump)\s+ACCEPT\b", re.I)
+    """Classify NOTRACK mechanics using parsed rule options, never comment text."""
+    features = iptables_rule_features(line)
+    if features is None:
+        return "other_notrack_match"
+    return features["notrack_mechanism"]
 
-SELECTOR_PATTERNS: dict[str, re.Pattern[str]] = {
-    "interface": re.compile(r"(?:^|\s)(?:-i|--in-interface|-o|--out-interface)(?:\s|=)", re.I),
-    "protocol": re.compile(r"(?:^|\s)(?:-p|--protocol)(?:\s|=)", re.I),
-    "address": re.compile(r"(?:^|\s)(?:-s|--source|-d|--destination|--src|--dst)(?:\s|=)", re.I),
-    "port": re.compile(r"(?:^|\s)(?:--(?:sport|source-port|sports|dport|destination-port|dports|ports))(?:\s|=)", re.I),
-    "connection": re.compile(r"(?:^|\s)(?:--(?:ctstate|state|ctstatus|ctdir|ctexpire))(?:\s|=)", re.I),
-    "mark": re.compile(r"(?:^|\s)(?:--(?:mark|ctmark|nfmark|nfmask|ctmask))(?:\s|=)", re.I),
-    "tcp_flags": re.compile(r"(?:^|\s)(?:--tcp-flags|--syn)(?:\s|=)", re.I),
+
+def iptables_jump_target(line: str) -> str | None:
+    """Return the actual -j/--jump target, ignoring option values and comments."""
+    parsed = iptables_rule_options(line)
+    if parsed is None:
+        return None
+    for option, args in parsed:
+        if option in ("-j", "--jump") and args:
+            return args[0].upper()
+    return None
+
+SELECTOR_OPTION_CATEGORIES = {
+    "-i": "interface", "--in-interface": "interface",
+    "-o": "interface", "--out-interface": "interface",
+    "-p": "protocol", "--protocol": "protocol",
+    "-s": "address", "--source": "address",
+    "-d": "address", "--destination": "address",
+    "--src": "address", "--dst": "address",
+    "--sport": "port", "--source-port": "port", "--sports": "port",
+    "--dport": "port", "--destination-port": "port", "--dports": "port",
+    "--ports": "port",
+    "--ctstate": "connection", "--state": "connection",
+    "--ctstatus": "connection", "--ctdir": "connection", "--ctexpire": "connection",
+    "--mark": "mark", "--ctmark": "mark", "--nfmark": "mark",
+    "--nfmask": "mark", "--ctmask": "mark",
+    "--tcp-flags": "tcp_flags", "--syn": "tcp_flags",
 }
-OTHER_SELECTOR_RE = re.compile(
-    r"(?:^|\s)(?:-f|--fragment|--(?:icmp-type|icmpv6-type|uid-owner|gid-owner|socket-exists|"
-    r"limit|limit-burst|hashlimit|string|mac-source|length|frag|probability|src-type|dst-type|"
-    r"physdev-in|physdev-out))(?:\s|=)", re.I
-)
+OTHER_SELECTOR_ARITY = {
+    "-f": 0, "--fragment": 0, "--icmp-type": 1, "--icmpv6-type": 1,
+    "--uid-owner": 1, "--gid-owner": 1, "--socket-exists": 0,
+    "--limit": 1, "--limit-burst": 1, "--hashlimit": 1, "--string": 1,
+    "--mac-source": 1, "--length": 1, "--frag": 1, "--probability": 1,
+    "--src-type": 1, "--dst-type": 1, "--physdev-in": 1, "--physdev-out": 1,
+}
 IGNORABLE_MATCH_MODULES = {
     "comment", "tcp", "udp", "icmp", "icmp6", "ipv6-icmp", "multiport",
     "conntrack", "state", "mark", "connmark",
 }
 
+# Consume argument-bearing options so a quoted value is never reinterpreted
+# as another selector (for example --comment "--ctstate NEW").
+OPTION_ARITY = {
+    "-A": 1, "--append": 1, "-m": 1, "--match": 1, "-p": 1, "--protocol": 1,
+    "-i": 1, "--in-interface": 1, "-o": 1, "--out-interface": 1,
+    "-s": 1, "--source": 1, "-d": 1, "--destination": 1, "--src": 1, "--dst": 1,
+    "--sport": 1, "--source-port": 1, "--sports": 1,
+    "--dport": 1, "--destination-port": 1, "--dports": 1, "--ports": 1,
+    "--ctstate": 1, "--state": 1, "--ctstatus": 1, "--ctdir": 1, "--ctexpire": 1,
+    "--mark": 1, "--ctmark": 1, "--nfmark": 1, "--nfmask": 1, "--ctmask": 1,
+    "--tcp-flags": 2, "--syn": 0,
+    "--comment": 1, "--set-mark": 1, "--set-xmark": 1, "--set-nfmark": 1,
+    "--restore-mark": 0, "--save-mark": 0,
+    "-j": 1, "--jump": 1, "-g": 1, "--goto": 1,
+    "--to-source": 1, "--to-destination": 1, "--to-ports": 1,
+    "--limit": 1, "--limit-burst": 1, "--hashlimit": 1, "--string": 1,
+    "--mac-source": 1, "--length": 1, "--frag": 1, "--probability": 1,
+    "--src-type": 1, "--dst-type": 1, "--physdev-in": 1, "--physdev-out": 1,
+    "-f": 0, "--fragment": 0, "--icmp-type": 1, "--icmpv6-type": 1,
+    "--uid-owner": 1, "--gid-owner": 1, "--socket-exists": 0,
+}
+
+def iptables_rule_options(line: str) -> list[tuple[str, tuple[str, ...]]] | None:
+    """Parse iptables options and their values, so quoted values cannot impersonate flags."""
+    try:
+        tokens = shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        return None
+
+    parsed: list[tuple[str, tuple[str, ...]]] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "!":
+            parsed.append(("!", ()))
+            i += 1
+            continue
+
+        has_inline_value = token.startswith("--") and "=" in token
+        if has_inline_value:
+            option, inline_value = token.split("=", 1)
+            arity = OPTION_ARITY.get(option)
+            if arity is None:
+                parsed.append((option, (inline_value,)))
+                i += 1
+                continue
+            extra_args = max(arity - 1, 0)
+            if len(tokens) - i - 1 < extra_args:
+                return None
+            args = (inline_value, *tokens[i + 1:i + 1 + extra_args])
+            parsed.append((option, tuple(args)))
+            i += 1 + extra_args
+            continue
+
+        if token in OPTION_ARITY:
+            arity = OPTION_ARITY[token]
+            if len(tokens) - i - 1 < arity:
+                return None
+            args = tuple(tokens[i + 1:i + 1 + arity])
+            parsed.append((token, args))
+            i += 1 + arity
+            continue
+
+        if token.startswith("-"):
+            parsed.append((token, ()))
+        i += 1
+
+    return parsed
+
+
+# Options known to configure actions, matches, or rule structure rather than
+# packet-selection predicates. Any other unrecognized option is treated as an
+# additional selector so the audit never silently claims "none-detected".
+KNOWN_NON_SELECTOR_OPTIONS = (
+    set(OPTION_ARITY) - set(SELECTOR_OPTION_CATEGORIES) - set(OTHER_SELECTOR_ARITY)
+)
+
+
 def iptables_selector_categories(line: str) -> list[str]:
-    """Return selector *types*, never selector values, for a saved iptables rule."""
-    selectors = {name for name, pattern in SELECTOR_PATTERNS.items() if pattern.search(line)}
-    if OTHER_SELECTOR_RE.search(line):
-        selectors.add("other")
-    modules = re.findall(r"(?:^|\s)(?:-m|--match)\s+([^\s]+)", line, re.I)
-    if any(module.lower() not in IGNORABLE_MATCH_MODULES for module in modules):
-        selectors.add("other")
+    """Return selector *types*, never values, using parsed option tokens."""
+    parsed = iptables_rule_options(line)
+    if parsed is None:
+        return ["other"]
+
+    selectors: set[str] = set()
+    known_options = (
+        set(SELECTOR_OPTION_CATEGORIES)
+        | set(OTHER_SELECTOR_ARITY)
+        | KNOWN_NON_SELECTOR_OPTIONS
+    )
+    for option, args in parsed:
+        if option == "!":
+            # Negation modifies the following predicate; it is not a predicate
+            # category on its own.
+            continue
+        if option in SELECTOR_OPTION_CATEGORIES:
+            selectors.add(SELECTOR_OPTION_CATEGORIES[option])
+        elif option in OTHER_SELECTOR_ARITY:
+            selectors.add("other")
+        elif option.startswith("-") and option not in known_options:
+            selectors.add("other")
+        if option in ("-m", "--match"):
+            if not args:
+                return sorted(selectors | {"other"})
+            if args[0].lower() not in IGNORABLE_MATCH_MODULES:
+                selectors.add("other")
     return sorted(selectors)
+
+
+def iptables_rule_features(line: str) -> dict[str, Any] | None:
+    """Classify real iptables targets/options without matching quoted text."""
+    parsed = iptables_rule_options(line)
+    if parsed is None:
+        return None
+
+    targets = [
+        args[0].upper()
+        for option, args in parsed
+        if option in ("-j", "--jump") and args
+    ]
+    modules = {
+        args[0].lower()
+        for option, args in parsed
+        if option in ("-m", "--match") and args
+    }
+    option_names = {option for option, _ in parsed}
+    has_notrack_option = "--notrack" in option_names
+    has_notrack_target = "NOTRACK" in targets
+    notrack = has_notrack_target or has_notrack_option
+
+    if "CT" in targets and has_notrack_option:
+        mechanism = "ct_target_option"
+    elif has_notrack_target:
+        mechanism = "direct_target"
+    elif has_notrack_option:
+        mechanism = "option_other_target"
+    else:
+        mechanism = "other_notrack_match"
+
+    mark_options = {
+        "--set-mark", "--set-xmark", "--set-nfmark",
+        "--restore-mark", "--save-mark",
+    }
+    packet_mark = bool(
+        {"MARK", "CONNMARK"} & set(targets)
+        or mark_options & option_names
+        or {"mark", "connmark"} & modules
+    )
+    nat = bool({"DNAT", "SNAT", "MASQUERADE", "REDIRECT"} & set(targets))
+    drop_reject = bool({"DROP", "REJECT"} & set(targets))
+    accept = "ACCEPT" in targets
+    return {
+        "jump_targets": targets,
+        "notrack": notrack,
+        "notrack_mechanism": mechanism,
+        "packet_mark": packet_mark,
+        "nat": nat,
+        "drop_reject": drop_reject,
+        "accept": accept,
+    }
 
 
 PORT_OPTIONS = {
@@ -271,9 +430,8 @@ def candidate_tcp_flow_overlap_detail(
     if flow is None:
         return "unknown", "unsupported_role_or_chain", "unknown", "unknown"
     source_possible, destination_possible, source_label, destination_label = flow
-    try:
-        tokens = shlex.split(line, comments=True, posix=True)
-    except ValueError:
+    parsed = iptables_rule_options(line)
+    if parsed is None:
         return "unknown", "unparseable_rule_tokens", source_label, destination_label
 
     protocol = None
@@ -281,31 +439,26 @@ def candidate_tcp_flow_overlap_detail(
     modules: list[str] = []
     conditions: list[tuple[str, str, bool]] = []
     pending_negation = False
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if token == "!":
+    for option, args in parsed:
+        if option == "!":
             pending_negation = True
-            i += 1
             continue
-        if token in ("-p", "--protocol") and i + 1 < len(tokens):
-            protocol = tokens[i + 1].lower()
+        if option in ("-p", "--protocol") and args:
+            protocol = args[0].lower()
             protocol_negated = pending_negation
             pending_negation = False
-            i += 2
             continue
-        if token in ("-m", "--match") and i + 1 < len(tokens):
-            modules.append(tokens[i + 1].lower())
-            i += 2
+        if option in ("-m", "--match") and args:
+            modules.append(args[0].lower())
             continue
-        if token in PORT_OPTIONS and i + 1 < len(tokens):
-            conditions.append((PORT_OPTIONS[token], tokens[i + 1], pending_negation))
+        if option in PORT_OPTIONS and args:
+            conditions.append((PORT_OPTIONS[option], args[0], pending_negation))
             pending_negation = False
-            i += 2
             continue
         if pending_negation:
             return "unknown", "unsupported_negation", source_label, destination_label
-        i += 1
+    if pending_negation:
+        return "unknown", "unsupported_negation", source_label, destination_label
 
     if protocol is not None:
         if protocol in ("tcp", "6", "all", "0"):
@@ -351,10 +504,10 @@ def candidate_tcp_flow_overlap_detail(
         return "unknown", "additional_selector_present", source_label, destination_label
     return "match", "known_conditions_allow_flow", source_label, destination_label
 
-
 TCP_FLAG_BITS = {
     "FIN": 0x01, "SYN": 0x02, "RST": 0x04,
     "PSH": 0x08, "ACK": 0x10, "URG": 0x20,
+    "ECE": 0x40, "CWR": 0x80,
 }
 
 
@@ -391,37 +544,38 @@ def candidate_tcp_rst_flow_overlap_detail(
     line: str, listener_port: int, ephemeral_range: tuple[int, int], role: str
 ) -> tuple[str, str]:
     """Classify explicit filter OUTPUT DROP/REJECT rules for possible outer-flow TCP RST packets."""
-    try:
-        tokens = shlex.split(line, comments=True, posix=True)
-    except ValueError:
+    parsed = iptables_rule_options(line)
+    if parsed is None:
         return "unknown", "unparseable_rule_tokens"
 
     filtered: list[str] = []
     flag_checks: list[tuple[str, str, bool]] = []
-    i = 0
-    while i < len(tokens):
-        if tokens[i] == "!" and i + 1 < len(tokens):
-            next_token = tokens[i + 1]
-            if next_token == "--tcp-flags":
+    pending_negation = False
+    for option, args in parsed:
+        if option == "!":
+            pending_negation = True
+            continue
+        if option == "--tcp-flags":
+            if pending_negation:
                 return "unknown", "negated_tcp_flags_not_modeled"
-            if next_token == "--syn":
-                flag_checks.append(("FIN,SYN,RST,ACK", "SYN", True))
-                i += 2
-                continue
-        token = tokens[i]
-        if token == "--tcp-flags":
-            if i + 2 >= len(tokens):
+            if len(args) < 2:
                 return "unknown", "incomplete_tcp_flags_selector"
-            flag_checks.append((tokens[i + 1], tokens[i + 2], False))
-            i += 3
+            flag_checks.append((args[0], args[1], False))
+            pending_negation = False
             continue
-        if token == "--syn":
-            flag_checks.append(("FIN,SYN,RST,ACK", "SYN", False))
-            i += 1
+        if option == "--syn":
+            flag_checks.append(("FIN,SYN,RST,ACK", "SYN", pending_negation))
+            pending_negation = False
             continue
-        filtered.append(token)
-        i += 1
 
+        if pending_negation:
+            filtered.append("!")
+            pending_negation = False
+        filtered.append(option)
+        filtered.extend(args)
+
+    if pending_negation:
+        filtered.append("!")
     sanitized_line = shlex.join(filtered)
     flow_status, flow_reason, _, _ = candidate_tcp_flow_overlap_detail(
         sanitized_line, listener_port, ephemeral_range, role, "OUTPUT"
@@ -445,14 +599,12 @@ def candidate_tcp_rst_flow_overlap_detail(
         return flow_status, flow_reason
     return "match", "known_conditions_allow_rst_flow"
 
-
 def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, str]:
     """Classify one candidate port on one packet side; reasons are fixed, non-sensitive labels."""
     if side not in ("source", "destination"):
         return "unknown", "unsupported_port_side"
-    try:
-        tokens = shlex.split(line, comments=True, posix=True)
-    except ValueError:
+    parsed = iptables_rule_options(line)
+    if parsed is None:
         return "unknown", "unparseable_rule_tokens"
 
     protocol = None
@@ -460,32 +612,27 @@ def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, 
     modules: list[str] = []
     conditions: list[tuple[str, str, bool]] = []
     pending_negation = False
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if token == "!":
+    for option, args in parsed:
+        if option == "!":
             pending_negation = True
-            i += 1
             continue
-        if token in ("-p", "--protocol") and i + 1 < len(tokens):
-            protocol = tokens[i + 1].lower()
+        if option in ("-p", "--protocol") and args:
+            protocol = args[0].lower()
             protocol_negated = pending_negation
             pending_negation = False
-            i += 2
             continue
-        if token in ("-m", "--match") and i + 1 < len(tokens):
-            modules.append(tokens[i + 1].lower())
-            i += 2
+        if option in ("-m", "--match") and args:
+            modules.append(args[0].lower())
             continue
-        if token in PORT_OPTIONS and i + 1 < len(tokens):
-            conditions.append((PORT_OPTIONS[token], tokens[i + 1], pending_negation))
+        if option in PORT_OPTIONS and args:
+            conditions.append((PORT_OPTIONS[option], args[0], pending_negation))
             pending_negation = False
-            i += 2
             continue
         # A negation not consumed by a selector is outside this check's model.
         if pending_negation:
             return "unknown", "unsupported_negation"
-        i += 1
+    if pending_negation:
+        return "unknown", "unsupported_negation"
 
     # Establish whether the rule's protocol predicate can match a TCP packet.
     if protocol is not None:
@@ -502,9 +649,6 @@ def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, 
         return "no_match", "protocol_excludes_tcp"
     # No protocol means any protocol and therefore includes TCP.
 
-    # Extra match criteria beyond protocol/port can narrow the rule. If the
-    # candidate is excluded by known protocol/port tests, report no_match;
-    # otherwise any unsupported or opposite-side condition remains unknown.
     selectors = set(iptables_selector_categories(line))
     has_unmodeled_selector = bool(selectors - {"protocol", "port"})
     side_conditions = [c for c in conditions if c[0] == side]
@@ -528,8 +672,6 @@ def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, 
             if negated:
                 return "unknown", "negated_either_port_selector"
             if not match:
-                # The option can match either packet side, so evaluating only
-                # one side cannot prove the entire rule does not overlap.
                 return "unknown", "either_port_selector_needs_packet_pair"
 
     if opposite_conditions:
@@ -537,7 +679,6 @@ def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, 
     if has_unmodeled_selector:
         return "unknown", "additional_selector_present"
     return "match", "known_conditions_allow_port"
-
 
 def candidate_tcp_overlap(line: str, port: int, role: str, chain: str) -> str:
     """Return match/no_match/unknown for the outer endpoint port, with values redacted."""
@@ -555,6 +696,7 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
     )
     notrack_rules: list[dict[str, Any]] = []
     outer_tcp_rst_rules: list[dict[str, Any]] = []
+    outer_tcp_rst_policy: str | None = None
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("*"):
@@ -568,7 +710,15 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
         if line.startswith(":"):
             fields = line[1:].split()
             if fields:
-                policies[(table, fields[0])] = fields[1] if len(fields) > 1 else "-"
+                chain_policy = fields[1] if len(fields) > 1 else "-"
+                policies[(table, fields[0])] = chain_policy
+                if (
+                    inspect_outer_tcp_rst is not None
+                    and table == "filter"
+                    and fields[0] == "OUTPUT"
+                    and chain_policy.upper() == "DROP"
+                ):
+                    outer_tcp_rst_policy = "DROP"
             continue
         if not line.startswith("-A "):
             continue
@@ -578,24 +728,25 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
         counts = rules[(table, fields[1])]
         counts["rules"] += 1
         if inspect_outer_tcp_rst is not None and table == "filter" and fields[1] == "OUTPUT":
-            target_match = re.search(r"(?:-j|--jump)\s+(DROP|REJECT)\b", line, re.I)
-            if target_match:
+            jump_target = iptables_jump_target(line)
+            if jump_target in ("DROP", "REJECT"):
                 listener_port, ephemeral_range = inspect_outer_tcp_rst
                 overlap, reason = candidate_tcp_rst_flow_overlap_detail(
                     line, listener_port, ephemeral_range, role
                 )
                 outer_tcp_rst_rules.append({
-                    "action": target_match.group(1).lower(),
+                    "action": jump_target.lower(),
                     "selectors": iptables_selector_categories(line),
                     "overlap": overlap,
                     "reason": reason,
                 })
-        if NOTRACK_RE.search(line):
+        rule_features = iptables_rule_features(line)
+        if rule_features is not None and rule_features["notrack"]:
             counts["notrack"] += 1
             record = {
                 "table": table, "chain": fields[1],
                 "selectors": iptables_selector_categories(line),
-                "mechanism": notrack_mechanism(line),
+                "mechanism": rule_features["notrack_mechanism"],
             }
             if table == "raw" and fields[1] in ("OUTPUT", "PREROUTING"):
                 if candidate_port is not None:
@@ -620,11 +771,18 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
                     record["flow_source_port_role"] = source_label
                     record["flow_destination_port_role"] = destination_label
             notrack_rules.append(record)
-        if MARK_RE.search(line): counts["packet_mark"] += 1
-        if NAT_RE.search(line): counts["nat"] += 1
-        if DROP_RE.search(line): counts["drop_reject"] += 1
-        if ACCEPT_RE.search(line): counts["accept"] += 1
-    return {"policies": policies, "rules": dict(rules), "notrack_rules": notrack_rules, "outer_tcp_rst_rules": outer_tcp_rst_rules}
+        if rule_features is not None:
+            counts["packet_mark"] += int(rule_features["packet_mark"])
+            counts["nat"] += int(rule_features["nat"])
+            counts["drop_reject"] += int(rule_features["drop_reject"])
+            counts["accept"] += int(rule_features["accept"])
+    return {
+        "policies": policies,
+        "rules": dict(rules),
+        "notrack_rules": notrack_rules,
+        "outer_tcp_rst_rules": outer_tcp_rst_rules,
+        "outer_tcp_rst_policy": outer_tcp_rst_policy,
+    }
 
 def run_readonly(argv: list[str]) -> tuple[int, str]:
     try:
@@ -714,6 +872,11 @@ def audit_iptables(command: str, family: str, role: str, candidate_port: int | N
             f"{family}_iptables_outer_tcp_rst table=filter chain=OUTPUT rule={index} "
             f"action={rule['action']} selectors={selectors} "
             f"rst_flow_overlap={rule['overlap']} rst_flow_reason={rule['reason']}"
+        )
+    if parsed.get("outer_tcp_rst_policy") == "DROP":
+        print(
+            f"{family}_iptables_outer_tcp_rst_default_policy table=filter chain=OUTPUT "
+            "policy=DROP effect=may-drop-unmatched-rst"
         )
 
 def main() -> int:
