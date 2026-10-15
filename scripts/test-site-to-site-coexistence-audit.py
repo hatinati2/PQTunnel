@@ -357,6 +357,36 @@ COMMIT
         self.assertEqual(parsed["notrack_rules"][2]["flow_overlap_reason"], "additional_selector_present")
         self.assertNotIn("8443", repr(parsed["notrack_rules"]))
 
+    def test_outer_tcp_rst_audit_recognizes_ece_and_cwr_flags(self):
+        self.assertEqual(audit.tcp_flag_bits("ECE,CWR"), 0xC0)
+        self.assertEqual(audit.tcp_flag_bits("ALL"), 0xFF)
+
+        fixture = """*filter
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp --tcp-flags ALL ECE -j DROP
+-A OUTPUT -p tcp --tcp-flags ALL CWR -j DROP
+-A OUTPUT -p tcp --tcp-flags ALL RST,ECE -j DROP
+-A OUTPUT -p tcp --tcp-flags ALL RST,CWR -j DROP
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="dialer", inspect_outer_tcp_rst=(8443, (32768, 60999))
+        )
+        rules = parsed["outer_tcp_rst_rules"]
+        self.assertEqual(
+            [r["overlap"] for r in rules],
+            ["no_match", "no_match", "match", "match"],
+        )
+        self.assertEqual(
+            [r["reason"] for r in rules],
+            [
+                "tcp_flags_exclude_rst",
+                "tcp_flags_exclude_rst",
+                "known_conditions_allow_rst_flow",
+                "known_conditions_allow_rst_flow",
+            ],
+        )
+
     def test_outer_tcp_rst_audit_classifies_filter_output_rules_and_redacts_values(self):
         fixture = """*filter
 :OUTPUT ACCEPT [0:0]
