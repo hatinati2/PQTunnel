@@ -284,7 +284,9 @@ func (m *Controller) ValidateSpeedTestListener(address, token string) error {
 }
 
 func (m *Controller) RunSpeedTest(ctx context.Context, sizeMiB int) (adminapi.SpeedTestResult, error) {
-	m.speedRunMu.Lock()
+	if !m.speedRunMu.TryLock() {
+		return adminapi.SpeedTestResult{}, errors.New("a speed test is already running")
+	}
 	defer m.speedRunMu.Unlock()
 
 	cfg, _, err := m.readConfiguration()
