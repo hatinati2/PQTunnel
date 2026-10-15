@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -88,9 +90,17 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
-	fmt.Printf("PQTunnel manager (%s) available at http://%s/ (loopback-only; token protected)\n", role, listen)
-	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fatalIf(err)
+	if isLoopback {
+		fmt.Printf("PQTunnel manager (%s) available at http://%s/ (loopback-only; token protected)\\n", role, listen)
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fatalIf(err)
+		}
+	} else {
+		server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		fmt.Printf("PQTunnel manager (%s) available at https://%s/ (TLS enabled; host allowlisted)\\n", role, publicHost)
+		if err := server.ServeTLS(listener, certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fatalIf(err)
+		}
 	}
 }
 
@@ -117,11 +127,19 @@ func validatePublicTLSListener(address, publicHost, certFile, keyFile string) er
 	if !filepath.IsAbs(certFile) || !filepath.IsAbs(keyFile) {
 		return fmt.Errorf("TLS certificate and key paths must be absolute")
 	}
-	if _, err := os.Stat(certFile); err != nil {
-		return fmt.Errorf("cannot access TLS certificate: %w", err)
+	pair, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("cannot load TLS certificate/key pair: %w", err)
 	}
-	if _, err := os.Stat(keyFile); err != nil {
-		return fmt.Errorf("cannot access TLS private key: %w", err)
+	if len(pair.Certificate) == 0 {
+		return fmt.Errorf("TLS certificate chain is empty")
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return fmt.Errorf("cannot parse TLS leaf certificate: %w", err)
+	}
+	if err := leaf.VerifyHostname(publicHost); err != nil {
+		return fmt.Errorf("TLS certificate must contain the configured public IP in its IP SAN: %w", err)
 	}
 	return nil
 }
