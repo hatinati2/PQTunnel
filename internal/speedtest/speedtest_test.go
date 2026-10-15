@@ -40,16 +40,17 @@ func TestHandlerRequiresBearerTokenAndBoundsTransfers(t *testing.T) {
 		t.Fatalf("unauthorized status=%d, want 401", unauthorized.Code)
 	}
 
-	for _, path := range []string{
-		"/v1/upload?bytes=0", "/v1/upload?bytes=999",
-		"/v1/download?bytes=999999999999",
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/v1/upload?bytes=0"},
+		{http.MethodPost, "/v1/upload?bytes=999"},
+		{http.MethodGet, "/v1/download?bytes=999999999999"},
 	} {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequest(tc.method, tc.path, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
-			t.Errorf("%s status=%d, want 400", path, rec.Code)
+			t.Errorf("%s %s status=%d, want 400", tc.method, tc.path, rec.Code)
 		}
 	}
 }
