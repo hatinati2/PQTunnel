@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"net"
 
 	"github.com/hatinati2/PQTunnel/internal/adminapi"
 	"github.com/hatinati2/PQTunnel/internal/adminipc"
@@ -21,4 +20,3 @@ func startClientAdminIPC(ctx context.Context, controller adminapi.Controller) (f
 	return func() { _ = listener.Close() }, nil
 }
 
-var _ net.Listener
