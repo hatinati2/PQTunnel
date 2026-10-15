@@ -35,7 +35,7 @@ Modes:
   --help                     Show this help.
 
 Manager setup does NOT configure or start the tunnel and does not change routes, firewall,
-NAT, or forwarding. The web manager binds only to 127.0.0.1:9091; use SSH forwarding remotely.
+NAT, or forwarding. The web manager defaults to 127.0.0.1:9091. Public-IP access is optional and requires a trusted TLS certificate with the public IP in its IP SAN; plaintext public HTTP is rejected.
 USAGE
 }
 
