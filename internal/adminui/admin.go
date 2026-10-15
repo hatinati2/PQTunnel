@@ -195,6 +195,7 @@ type loginAttempt struct {
 type Handler struct {
 	token         []byte
 	controller    adminapi.Controller
+	allowedPublicHost string
 	manager       adminapi.ManagerController
 	mu            sync.Mutex
 	sessions           map[string]session
@@ -203,15 +204,27 @@ type Handler struct {
 }
 
 func New(token string, controller adminapi.Controller) (*Handler, error) {
+	return NewWithAllowedPublicHost(token, controller, "")
+}
+
+// NewWithAllowedPublicHost permits a non-loopback HTTPS origin only when its
+// literal public IP is explicitly configured. The HTTP listener itself enforces TLS.
+func NewWithAllowedPublicHost(token string, controller adminapi.Controller, allowedPublicHost string) (*Handler, error) {
 	if len([]byte(token)) < 32 {
 		return nil, errors.New("admin token must contain at least 32 bytes")
 	}
 	if controller == nil {
 		return nil, errors.New("admin controller is required")
 	}
+	if allowedPublicHost != "" {
+		ip, err := netip.ParseAddr(allowedPublicHost)
+		if err != nil || ip.IsLoopback() || ip.IsUnspecified() {
+			return nil, errors.New("allowed public host must be a public literal IP address")
+		}
+	}
 	handler := &Handler{
-		token: []byte(token), controller: controller, sessions: make(map[string]session),
-		loginAttempts: make(map[string]loginAttempt),
+		token: []byte(token), controller: controller, allowedPublicHost: allowedPublicHost,
+		sessions: make(map[string]session), loginAttempts: make(map[string]loginAttempt),
 	}
 	if manager, ok := controller.(adminapi.ManagerController); ok {
 		handler.manager = manager
@@ -461,7 +474,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
+	if !sameOrigin(r, h.allowedPublicHost) {
 		http.Error(w, "مبدأ درخواست پذیرفته نشد.", http.StatusForbidden)
 		return
 	}
@@ -508,10 +521,9 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	h.sessions[id] = session{CSRF: csrf, ExpiresAt: expires}
 	h.mu.Unlock()
 
-	// Secure is intentionally false because this handler refuses non-loopback
-	// binds and serves plain HTTP only there. Remote access should be tunneled.
+	// Cookies are Secure whenever the request is served over TLS.
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookieName, Value: id, Path: "/", HttpOnly: true,
+		Name: sessionCookieName, Value: id, Path: "/", HttpOnly: true, Secure: r.TLS != nil,
 		SameSite: http.SameSiteStrictMode, Expires: expires, MaxAge: int(sessionLifetime.Seconds()),
 	})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -633,25 +645,36 @@ func (h *Handler) requirePostSession(w http.ResponseWriter, r *http.Request) (st
 	return id, current, true
 }
 
-func sameOrigin(r *http.Request) bool {
+func sameOrigin(r *http.Request, allowedPublicHost string) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" || r.Host == "" {
 		return false
 	}
 	u, err := url.Parse(origin)
-	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return false
-	}
-	if u.Scheme != "http" || !strings.EqualFold(u.Host, r.Host) {
+	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !strings.EqualFold(u.Host, r.Host) {
 		return false
 	}
 	if u.Path != "" && u.Path != "/" {
 		return false
 	}
-	// Match against a literal loopback IP as well as Host. Comparing only
-	// Origin and Host would accept an attacker-controlled DNS-rebinding name
-	// when the browser resolves it to this loopback listener.
-	return isLoopbackHost(u.Host) && isLoopbackHost(r.Host)
+	if isLoopbackHost(u.Host) && isLoopbackHost(r.Host) {
+		return u.Scheme == "http" || (u.Scheme == "https" && r.TLS != nil)
+	}
+	// Public access requires TLS and an explicit literal-IP allowlist. This
+	// rejects arbitrary Host/Origin pairs used by DNS-rebinding attacks.
+	if allowedPublicHost == "" || u.Scheme != "https" || r.TLS == nil {
+		return false
+	}
+	host := r.Host
+	if parsed, _, err := net.SplitHostPort(r.Host); err == nil {
+		host = parsed
+	}
+	ip, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	if err != nil {
+		return false
+	}
+	allowed, err := netip.ParseAddr(allowedPublicHost)
+	return err == nil && ip == allowed
 }
 
 func isLoopbackHost(hostport string) bool {
