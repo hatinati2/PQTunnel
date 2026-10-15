@@ -83,8 +83,9 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 <form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">خروج از پنل</button></form></div></header>
 {{if .Notice}}<div class="notice" role="status">{{.Notice}}{{if .Detail}} — {{.Detail}}{{end}}</div>{{end}}
 <section class="grid" aria-label="خلاصه وضعیت">
-<div class="card"><div class="kicker">وضعیت تونل</div><div class="metric status"><span class="dot {{if .Snapshot.Running}}up{{end}}"></span>{{if .Snapshot.Running}}فعال{{else}}متوقف / در حال راه‌اندازی{{end}}</div></div>
-<div class="card"><div class="kicker">همتایان متصل</div><div class="metric">{{len .Snapshot.Peers}} / {{.Snapshot.MaxClients}}</div></div>
+<div class="card"><div class="kicker">وضعیت سرویس</div><div class="metric status"><span class="dot {{if .Snapshot.Running}}up{{end}}"></span>{{if .Snapshot.Running}}فعال{{else}}متوقف / در حال راه‌اندازی{{end}}</div></div>
+<div class="card"><div class="kicker">وضعیت اتصال تونل</div><div class="metric status"><span class="dot {{if .Snapshot.TransportConnected}}up{{end}}"></span>{{if not .Snapshot.Running}}سرویس متوقف{{else if .Manager}}{{if .Manager.PeerDataReady}}{{if .Manager.TransportConnected}}متصل{{else}}قطع / در انتظار اتصال{{end}}{{else}}نامشخص؛ control socket در دسترس نیست{{end}}{{else}}{{if .Snapshot.TransportConnected}}متصل{{else}}قطع / در انتظار اتصال{{end}}{{end}}</div></div>
+<div class="card"><div class="kicker">همتایان متصل</div><div class="metric">{{if .Manager}}{{if .Manager.PeerDataReady}}{{len .Snapshot.Peers}} / {{.Snapshot.MaxClients}}{{else}}نامشخص{{end}}{{else}}{{len .Snapshot.Peers}} / {{.Snapshot.MaxClients}}{{end}}</div></div>
 <div class="card"><div class="kicker">مدت اجرای جاری</div><div class="metric">{{if .Snapshot.Uptime}}{{.Snapshot.Uptime}}{{else}}—{{end}}</div></div>
 <div class="card"><div class="kicker">حالت تونل</div><div class="metric">{{if .Snapshot.SiteToSite}}سایت‌به‌سایت{{else}}میزبان / کلاینت{{end}}</div></div>
 </section>
