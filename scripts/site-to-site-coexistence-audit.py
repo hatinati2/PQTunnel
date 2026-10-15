@@ -133,6 +133,18 @@ NAT_RE = re.compile(r"(?:-j|--jump)\s+(?:DNAT|SNAT|MASQUERADE|REDIRECT)\b", re.I
 DROP_RE = re.compile(r"(?:-j|--jump)\s+(?:DROP|REJECT)\b", re.I)
 ACCEPT_RE = re.compile(r"(?:-j|--jump)\s+ACCEPT\b", re.I)
 
+
+def iptables_jump_target(line: str) -> str | None:
+    """Return the actual jump target, ignoring strings in quoted comments."""
+    try:
+        tokens = shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        return None
+    for index, token in enumerate(tokens[:-1]):
+        if token in ("-j", "--jump"):
+            return tokens[index + 1].upper()
+    return None
+
 SELECTOR_PATTERNS: dict[str, re.Pattern[str]] = {
     "interface": re.compile(r"(?:^|\s)(?:-i|--in-interface|-o|--out-interface)(?:\s|=)", re.I),
     "protocol": re.compile(r"(?:^|\s)(?:-p|--protocol)(?:\s|=)", re.I),
@@ -355,6 +367,7 @@ def candidate_tcp_flow_overlap_detail(
 TCP_FLAG_BITS = {
     "FIN": 0x01, "SYN": 0x02, "RST": 0x04,
     "PSH": 0x08, "ACK": 0x10, "URG": 0x20,
+    "ECE": 0x40, "CWR": 0x80,
 }
 
 
@@ -555,6 +568,7 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
     )
     notrack_rules: list[dict[str, Any]] = []
     outer_tcp_rst_rules: list[dict[str, Any]] = []
+    outer_tcp_rst_policy: str | None = None
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("*"):
@@ -568,7 +582,15 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
         if line.startswith(":"):
             fields = line[1:].split()
             if fields:
-                policies[(table, fields[0])] = fields[1] if len(fields) > 1 else "-"
+                chain_policy = fields[1] if len(fields) > 1 else "-"
+                policies[(table, fields[0])] = chain_policy
+                if (
+                    inspect_outer_tcp_rst is not None
+                    and table == "filter"
+                    and fields[0] == "OUTPUT"
+                    and chain_policy.upper() == "DROP"
+                ):
+                    outer_tcp_rst_policy = "DROP"
             continue
         if not line.startswith("-A "):
             continue
@@ -578,14 +600,14 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
         counts = rules[(table, fields[1])]
         counts["rules"] += 1
         if inspect_outer_tcp_rst is not None and table == "filter" and fields[1] == "OUTPUT":
-            target_match = re.search(r"(?:-j|--jump)\s+(DROP|REJECT)\b", line, re.I)
-            if target_match:
+            jump_target = iptables_jump_target(line)
+            if jump_target in ("DROP", "REJECT"):
                 listener_port, ephemeral_range = inspect_outer_tcp_rst
                 overlap, reason = candidate_tcp_rst_flow_overlap_detail(
                     line, listener_port, ephemeral_range, role
                 )
                 outer_tcp_rst_rules.append({
-                    "action": target_match.group(1).lower(),
+                    "action": jump_target.lower(),
                     "selectors": iptables_selector_categories(line),
                     "overlap": overlap,
                     "reason": reason,
@@ -624,7 +646,13 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
         if NAT_RE.search(line): counts["nat"] += 1
         if DROP_RE.search(line): counts["drop_reject"] += 1
         if ACCEPT_RE.search(line): counts["accept"] += 1
-    return {"policies": policies, "rules": dict(rules), "notrack_rules": notrack_rules, "outer_tcp_rst_rules": outer_tcp_rst_rules}
+    return {
+        "policies": policies,
+        "rules": dict(rules),
+        "notrack_rules": notrack_rules,
+        "outer_tcp_rst_rules": outer_tcp_rst_rules,
+        "outer_tcp_rst_policy": outer_tcp_rst_policy,
+    }
 
 def run_readonly(argv: list[str]) -> tuple[int, str]:
     try:
@@ -714,6 +742,11 @@ def audit_iptables(command: str, family: str, role: str, candidate_port: int | N
             f"{family}_iptables_outer_tcp_rst table=filter chain=OUTPUT rule={index} "
             f"action={rule['action']} selectors={selectors} "
             f"rst_flow_overlap={rule['overlap']} rst_flow_reason={rule['reason']}"
+        )
+    if parsed.get("outer_tcp_rst_policy") == "DROP":
+        print(
+            f"{family}_iptables_outer_tcp_rst_default_policy table=filter chain=OUTPUT "
+            "policy=DROP effect=may-drop-unmatched-rst"
         )
 
 def main() -> int:
