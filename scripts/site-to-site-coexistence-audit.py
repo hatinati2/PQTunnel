@@ -411,9 +411,8 @@ def candidate_tcp_flow_overlap_detail(
     if flow is None:
         return "unknown", "unsupported_role_or_chain", "unknown", "unknown"
     source_possible, destination_possible, source_label, destination_label = flow
-    try:
-        tokens = shlex.split(line, comments=True, posix=True)
-    except ValueError:
+    parsed = iptables_rule_options(line)
+    if parsed is None:
         return "unknown", "unparseable_rule_tokens", source_label, destination_label
 
     protocol = None
@@ -421,31 +420,26 @@ def candidate_tcp_flow_overlap_detail(
     modules: list[str] = []
     conditions: list[tuple[str, str, bool]] = []
     pending_negation = False
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if token == "!":
+    for option, args in parsed:
+        if option == "!":
             pending_negation = True
-            i += 1
             continue
-        if token in ("-p", "--protocol") and i + 1 < len(tokens):
-            protocol = tokens[i + 1].lower()
+        if option in ("-p", "--protocol") and args:
+            protocol = args[0].lower()
             protocol_negated = pending_negation
             pending_negation = False
-            i += 2
             continue
-        if token in ("-m", "--match") and i + 1 < len(tokens):
-            modules.append(tokens[i + 1].lower())
-            i += 2
+        if option in ("-m", "--match") and args:
+            modules.append(args[0].lower())
             continue
-        if token in PORT_OPTIONS and i + 1 < len(tokens):
-            conditions.append((PORT_OPTIONS[token], tokens[i + 1], pending_negation))
+        if option in PORT_OPTIONS and args:
+            conditions.append((PORT_OPTIONS[option], args[0], pending_negation))
             pending_negation = False
-            i += 2
             continue
         if pending_negation:
             return "unknown", "unsupported_negation", source_label, destination_label
-        i += 1
+    if pending_negation:
+        return "unknown", "unsupported_negation", source_label, destination_label
 
     if protocol is not None:
         if protocol in ("tcp", "6", "all", "0"):
@@ -491,14 +485,6 @@ def candidate_tcp_flow_overlap_detail(
         return "unknown", "additional_selector_present", source_label, destination_label
     return "match", "known_conditions_allow_flow", source_label, destination_label
 
-
-TCP_FLAG_BITS = {
-    "FIN": 0x01, "SYN": 0x02, "RST": 0x04,
-    "PSH": 0x08, "ACK": 0x10, "URG": 0x20,
-    "ECE": 0x40, "CWR": 0x80,
-}
-
-
 def tcp_flag_bits(value: str) -> int | None:
     """Parse iptables TCP flag names without retaining or printing values."""
     names = [part.strip().upper() for part in value.split(",")]
@@ -532,37 +518,38 @@ def candidate_tcp_rst_flow_overlap_detail(
     line: str, listener_port: int, ephemeral_range: tuple[int, int], role: str
 ) -> tuple[str, str]:
     """Classify explicit filter OUTPUT DROP/REJECT rules for possible outer-flow TCP RST packets."""
-    try:
-        tokens = shlex.split(line, comments=True, posix=True)
-    except ValueError:
+    parsed = iptables_rule_options(line)
+    if parsed is None:
         return "unknown", "unparseable_rule_tokens"
 
     filtered: list[str] = []
     flag_checks: list[tuple[str, str, bool]] = []
-    i = 0
-    while i < len(tokens):
-        if tokens[i] == "!" and i + 1 < len(tokens):
-            next_token = tokens[i + 1]
-            if next_token == "--tcp-flags":
+    pending_negation = False
+    for option, args in parsed:
+        if option == "!":
+            pending_negation = True
+            continue
+        if option == "--tcp-flags":
+            if pending_negation:
                 return "unknown", "negated_tcp_flags_not_modeled"
-            if next_token == "--syn":
-                flag_checks.append(("FIN,SYN,RST,ACK", "SYN", True))
-                i += 2
-                continue
-        token = tokens[i]
-        if token == "--tcp-flags":
-            if i + 2 >= len(tokens):
+            if len(args) < 2:
                 return "unknown", "incomplete_tcp_flags_selector"
-            flag_checks.append((tokens[i + 1], tokens[i + 2], False))
-            i += 3
+            flag_checks.append((args[0], args[1], False))
+            pending_negation = False
             continue
-        if token == "--syn":
-            flag_checks.append(("FIN,SYN,RST,ACK", "SYN", False))
-            i += 1
+        if option == "--syn":
+            flag_checks.append(("FIN,SYN,RST,ACK", "SYN", pending_negation))
+            pending_negation = False
             continue
-        filtered.append(token)
-        i += 1
 
+        if pending_negation:
+            filtered.append("!")
+            pending_negation = False
+        filtered.append(option)
+        filtered.extend(args)
+
+    if pending_negation:
+        filtered.append("!")
     sanitized_line = shlex.join(filtered)
     flow_status, flow_reason, _, _ = candidate_tcp_flow_overlap_detail(
         sanitized_line, listener_port, ephemeral_range, role, "OUTPUT"
@@ -586,14 +573,12 @@ def candidate_tcp_rst_flow_overlap_detail(
         return flow_status, flow_reason
     return "match", "known_conditions_allow_rst_flow"
 
-
 def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, str]:
     """Classify one candidate port on one packet side; reasons are fixed, non-sensitive labels."""
     if side not in ("source", "destination"):
         return "unknown", "unsupported_port_side"
-    try:
-        tokens = shlex.split(line, comments=True, posix=True)
-    except ValueError:
+    parsed = iptables_rule_options(line)
+    if parsed is None:
         return "unknown", "unparseable_rule_tokens"
 
     protocol = None
@@ -601,32 +586,27 @@ def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, 
     modules: list[str] = []
     conditions: list[tuple[str, str, bool]] = []
     pending_negation = False
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if token == "!":
+    for option, args in parsed:
+        if option == "!":
             pending_negation = True
-            i += 1
             continue
-        if token in ("-p", "--protocol") and i + 1 < len(tokens):
-            protocol = tokens[i + 1].lower()
+        if option in ("-p", "--protocol") and args:
+            protocol = args[0].lower()
             protocol_negated = pending_negation
             pending_negation = False
-            i += 2
             continue
-        if token in ("-m", "--match") and i + 1 < len(tokens):
-            modules.append(tokens[i + 1].lower())
-            i += 2
+        if option in ("-m", "--match") and args:
+            modules.append(args[0].lower())
             continue
-        if token in PORT_OPTIONS and i + 1 < len(tokens):
-            conditions.append((PORT_OPTIONS[token], tokens[i + 1], pending_negation))
+        if option in PORT_OPTIONS and args:
+            conditions.append((PORT_OPTIONS[option], args[0], pending_negation))
             pending_negation = False
-            i += 2
             continue
         # A negation not consumed by a selector is outside this check's model.
         if pending_negation:
             return "unknown", "unsupported_negation"
-        i += 1
+    if pending_negation:
+        return "unknown", "unsupported_negation"
 
     # Establish whether the rule's protocol predicate can match a TCP packet.
     if protocol is not None:
@@ -643,9 +623,6 @@ def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, 
         return "no_match", "protocol_excludes_tcp"
     # No protocol means any protocol and therefore includes TCP.
 
-    # Extra match criteria beyond protocol/port can narrow the rule. If the
-    # candidate is excluded by known protocol/port tests, report no_match;
-    # otherwise any unsupported or opposite-side condition remains unknown.
     selectors = set(iptables_selector_categories(line))
     has_unmodeled_selector = bool(selectors - {"protocol", "port"})
     side_conditions = [c for c in conditions if c[0] == side]
@@ -669,8 +646,6 @@ def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, 
             if negated:
                 return "unknown", "negated_either_port_selector"
             if not match:
-                # The option can match either packet side, so evaluating only
-                # one side cannot prove the entire rule does not overlap.
                 return "unknown", "either_port_selector_needs_packet_pair"
 
     if opposite_conditions:
@@ -678,7 +653,6 @@ def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, 
     if has_unmodeled_selector:
         return "unknown", "additional_selector_present"
     return "match", "known_conditions_allow_port"
-
 
 def candidate_tcp_overlap(line: str, port: int, role: str, chain: str) -> str:
     """Return match/no_match/unknown for the outer endpoint port, with values redacted."""
