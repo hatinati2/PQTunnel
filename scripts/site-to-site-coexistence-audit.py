@@ -133,33 +133,93 @@ NAT_RE = re.compile(r"(?:-j|--jump)\s+(?:DNAT|SNAT|MASQUERADE|REDIRECT)\b", re.I
 DROP_RE = re.compile(r"(?:-j|--jump)\s+(?:DROP|REJECT)\b", re.I)
 ACCEPT_RE = re.compile(r"(?:-j|--jump)\s+ACCEPT\b", re.I)
 
-SELECTOR_PATTERNS: dict[str, re.Pattern[str]] = {
-    "interface": re.compile(r"(?:^|\s)(?:-i|--in-interface|-o|--out-interface)(?:\s|=)", re.I),
-    "protocol": re.compile(r"(?:^|\s)(?:-p|--protocol)(?:\s|=)", re.I),
-    "address": re.compile(r"(?:^|\s)(?:-s|--source|-d|--destination|--src|--dst)(?:\s|=)", re.I),
-    "port": re.compile(r"(?:^|\s)(?:--(?:sport|source-port|sports|dport|destination-port|dports|ports))(?:\s|=)", re.I),
-    "connection": re.compile(r"(?:^|\s)(?:--(?:ctstate|state|ctstatus|ctdir|ctexpire))(?:\s|=)", re.I),
-    "mark": re.compile(r"(?:^|\s)(?:--(?:mark|ctmark|nfmark|nfmask|ctmask))(?:\s|=)", re.I),
-    "tcp_flags": re.compile(r"(?:^|\s)(?:--tcp-flags|--syn)(?:\s|=)", re.I),
+SELECTOR_OPTION_CATEGORIES = {
+    "-i": "interface", "--in-interface": "interface",
+    "-o": "interface", "--out-interface": "interface",
+    "-p": "protocol", "--protocol": "protocol",
+    "-s": "address", "--source": "address",
+    "-d": "address", "--destination": "address",
+    "--src": "address", "--dst": "address",
+    "--sport": "port", "--source-port": "port", "--sports": "port",
+    "--dport": "port", "--destination-port": "port", "--dports": "port",
+    "--ports": "port",
+    "--ctstate": "connection", "--state": "connection",
+    "--ctstatus": "connection", "--ctdir": "connection", "--ctexpire": "connection",
+    "--mark": "mark", "--ctmark": "mark", "--nfmark": "mark",
+    "--nfmask": "mark", "--ctmask": "mark",
+    "--tcp-flags": "tcp_flags", "--syn": "tcp_flags",
 }
-OTHER_SELECTOR_RE = re.compile(
-    r"(?:^|\s)(?:-f|--fragment|--(?:icmp-type|icmpv6-type|uid-owner|gid-owner|socket-exists|"
-    r"limit|limit-burst|hashlimit|string|mac-source|length|frag|probability|src-type|dst-type|"
-    r"physdev-in|physdev-out))(?:\s|=)", re.I
-)
+OTHER_SELECTOR_ARITY = {
+    "-f": 0, "--fragment": 0, "--icmp-type": 1, "--icmpv6-type": 1,
+    "--uid-owner": 1, "--gid-owner": 1, "--socket-exists": 0,
+    "--limit": 1, "--limit-burst": 1, "--hashlimit": 1, "--string": 1,
+    "--mac-source": 1, "--length": 1, "--frag": 1, "--probability": 1,
+    "--src-type": 1, "--dst-type": 1, "--physdev-in": 1, "--physdev-out": 1,
+}
 IGNORABLE_MATCH_MODULES = {
     "comment", "tcp", "udp", "icmp", "icmp6", "ipv6-icmp", "multiport",
     "conntrack", "state", "mark", "connmark",
 }
 
+# Consume argument-bearing options so a quoted value is never reinterpreted
+# as another selector (for example --comment "--ctstate NEW").
+OPTION_ARITY = {
+    "-A": 1, "--append": 1, "-m": 1, "--match": 1, "-p": 1, "--protocol": 1,
+    "-i": 1, "--in-interface": 1, "-o": 1, "--out-interface": 1,
+    "-s": 1, "--source": 1, "-d": 1, "--destination": 1, "--src": 1, "--dst": 1,
+    "--sport": 1, "--source-port": 1, "--sports": 1,
+    "--dport": 1, "--destination-port": 1, "--dports": 1, "--ports": 1,
+    "--ctstate": 1, "--state": 1, "--ctstatus": 1, "--ctdir": 1, "--ctexpire": 1,
+    "--mark": 1, "--ctmark": 1, "--nfmark": 1, "--nfmask": 1, "--ctmask": 1,
+    "--tcp-flags": 2, "--syn": 0,
+    "--comment": 1, "--set-mark": 1, "--set-xmark": 1, "--set-nfmark": 1,
+    "--restore-mark": 0, "--save-mark": 0,
+    "-j": 1, "--jump": 1, "-g": 1, "--goto": 1,
+    "--to-source": 1, "--to-destination": 1, "--to-ports": 1,
+    "--limit": 1, "--limit-burst": 1, "--hashlimit": 1, "--string": 1,
+    "--mac-source": 1, "--length": 1, "--frag": 1, "--probability": 1,
+    "--src-type": 1, "--dst-type": 1, "--physdev-in": 1, "--physdev-out": 1,
+    "-f": 0, "--fragment": 0, "--icmp-type": 1, "--icmpv6-type": 1,
+    "--uid-owner": 1, "--gid-owner": 1, "--socket-exists": 0,
+}
+
 def iptables_selector_categories(line: str) -> list[str]:
-    """Return selector *types*, never selector values, for a saved iptables rule."""
-    selectors = {name for name, pattern in SELECTOR_PATTERNS.items() if pattern.search(line)}
-    if OTHER_SELECTOR_RE.search(line):
-        selectors.add("other")
-    modules = re.findall(r"(?:^|\s)(?:-m|--match)\s+([^\s]+)", line, re.I)
-    if any(module.lower() not in IGNORABLE_MATCH_MODULES for module in modules):
-        selectors.add("other")
+    """Return selector *types*, never values, using parsed option tokens."""
+    try:
+        tokens = shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        # Unparseable rules must remain conservative.
+        return ["other"]
+
+    selectors: set[str] = set()
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        option = token.split("=", 1)[0] if token.startswith("--") else token
+        inline_value = token.startswith("--") and "=" in token
+
+        if option in SELECTOR_OPTION_CATEGORIES:
+            selectors.add(SELECTOR_OPTION_CATEGORIES[option])
+        if option in OTHER_SELECTOR_ARITY:
+            selectors.add("other")
+
+        if option in ("-m", "--match"):
+            if inline_value:
+                module = token.split("=", 1)[1]
+            elif i + 1 < len(tokens):
+                module = tokens[i + 1]
+            else:
+                return sorted(selectors | {"other"})
+            if module.lower() not in IGNORABLE_MATCH_MODULES:
+                selectors.add("other")
+
+        arity = OPTION_ARITY.get(option)
+        if inline_value and option in OPTION_ARITY:
+            arity = 0
+        if arity is None:
+            i += 1
+        else:
+            i += 1 + arity
     return sorted(selectors)
 
 
