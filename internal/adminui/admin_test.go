@@ -29,6 +29,8 @@ type fakeManagerController struct {
 	serviceErr error
 	configErr error
 	speedErr error
+	logs string
+	logsErr error
 }
 
 func (f *fakeManagerController) ManagementSnapshot() adminapi.ManagerSnapshot { return f.view }
@@ -43,6 +45,9 @@ func (f *fakeManagerController) ApplyConfiguration(_ context.Context, cfg admina
 func (f *fakeManagerController) RunSpeedTest(_ context.Context, sizeMiB int) (adminapi.SpeedTestResult, error) {
 	f.speedSizes = append(f.speedSizes, sizeMiB)
 	return f.speedResult, f.speedErr
+}
+func (f *fakeManagerController) RecentLogs(_ context.Context) (string, error) {
+	return f.logs, f.logsErr
 }
 
 func managerSession(t *testing.T, h *Handler, token string) (*http.Cookie, string) {
@@ -435,6 +440,7 @@ func TestStandaloneManagerDashboardAndLifecycleActions(t *testing.T) {
 	}}
 	manager := &fakeManagerController{
 		fakeController: base,
+		logs: "Oct 15 pqtunneld[123]: tunnel started\nOct 15 pqtunneld[123]: peer connected",
 		view: adminapi.ManagerSnapshot{
 			Role: "gateway", ServiceUnit: "pqtunneld.service", ActiveState: "active",
 			SubState: "running", MainPID: "123", ConfigReady: true,
@@ -461,7 +467,7 @@ func TestStandaloneManagerDashboardAndLifecycleActions(t *testing.T) {
 	dashboardResp := httptest.NewRecorder()
 	h.ServeHTTP(dashboardResp, dashboardReq)
 	for _, expected := range []string{
-		"pqtunneld.service", "/service/action", "/config/apply", "/speedtest/run",
+		"pqtunneld.service", "/service/action", "/config/apply", "/speedtest/run", "/logs",
 		"10.66.0.2:9109", "80.00 Mbps", "75.00 Mbps",
 	} {
 		if !strings.Contains(dashboardResp.Body.String(), expected) {
@@ -510,6 +516,15 @@ func TestStandaloneManagerDashboardAndLifecycleActions(t *testing.T) {
 	}
 	if len(manager.speedSizes) != 1 || manager.speedSizes[0] != 2 {
 		t.Fatalf("unexpected speed-test sizes: %v", manager.speedSizes)
+	}
+}
+
+	logsReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/logs", nil)
+	logsReq.AddCookie(cookie)
+	logsResp := httptest.NewRecorder()
+	h.ServeHTTP(logsResp, logsReq)
+	if logsResp.Code != http.StatusOK || !strings.Contains(logsResp.Body.String(), "tunnel started") || !strings.Contains(logsResp.Body.String(), "pqtunneld.service") {
+		t.Fatalf("manager logs page failed: status=%d body=%s", logsResp.Code, logsResp.Body.String())
 	}
 }
 
