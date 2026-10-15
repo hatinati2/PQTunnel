@@ -196,6 +196,7 @@ type Handler struct {
 	token         []byte
 	controller    adminapi.Controller
 	allowedPublicHost string
+	allowInsecurePublicHTTP bool
 	manager       adminapi.ManagerController
 	mu            sync.Mutex
 	sessions           map[string]session
@@ -210,6 +211,12 @@ func New(token string, controller adminapi.Controller) (*Handler, error) {
 // NewWithAllowedPublicHost permits a non-loopback HTTPS origin only when its
 // literal public IP is explicitly configured. The HTTP listener itself enforces TLS.
 func NewWithAllowedPublicHost(token string, controller adminapi.Controller, allowedPublicHost string) (*Handler, error) {
+	return NewWithPublicAccess(token, controller, allowedPublicHost, false)
+}
+
+// NewWithPublicAccess allows plaintext public HTTP only when the caller has
+// explicitly opted in at the process configuration layer.
+func NewWithPublicAccess(token string, controller adminapi.Controller, allowedPublicHost string, allowInsecurePublicHTTP bool) (*Handler, error) {
 	if len([]byte(token)) < 32 {
 		return nil, errors.New("admin token must contain at least 32 bytes")
 	}
@@ -223,7 +230,7 @@ func NewWithAllowedPublicHost(token string, controller adminapi.Controller, allo
 		}
 	}
 	handler := &Handler{
-		token: []byte(token), controller: controller, allowedPublicHost: allowedPublicHost,
+		token: []byte(token), controller: controller, allowedPublicHost: allowedPublicHost, allowInsecurePublicHTTP: allowInsecurePublicHTTP,
 		sessions: make(map[string]session), loginAttempts: make(map[string]loginAttempt),
 	}
 	if manager, ok := controller.(adminapi.ManagerController); ok {
@@ -474,7 +481,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r, h.allowedPublicHost) {
+	if !sameOrigin(r, h.allowedPublicHost, h.allowInsecurePublicHTTP) {
 		http.Error(w, "مبدأ درخواست پذیرفته نشد.", http.StatusForbidden)
 		return
 	}
@@ -645,7 +652,7 @@ func (h *Handler) requirePostSession(w http.ResponseWriter, r *http.Request) (st
 	return id, current, true
 }
 
-func sameOrigin(r *http.Request, allowedPublicHost string) bool {
+func sameOrigin(r *http.Request, allowedPublicHost string, allowInsecurePublicHTTP bool) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" || r.Host == "" {
 		return false
@@ -660,9 +667,17 @@ func sameOrigin(r *http.Request, allowedPublicHost string) bool {
 	if isLoopbackHost(u.Host) && isLoopbackHost(r.Host) {
 		return u.Scheme == "http" || (u.Scheme == "https" && r.TLS != nil)
 	}
-	// Public access requires TLS and an explicit literal-IP allowlist. This
-	// rejects arbitrary Host/Origin pairs used by DNS-rebinding attacks.
-	if allowedPublicHost == "" || u.Scheme != "https" || r.TLS == nil {
+	// Public access requires an explicit literal-IP allowlist. Plain HTTP
+	// is accepted only under the deliberate insecure opt-in; credentials and
+	// session cookies are then vulnerable to network interception.
+	if allowedPublicHost == "" {
+		return false
+	}
+	if r.TLS == nil {
+		if !allowInsecurePublicHTTP || u.Scheme != "http" {
+			return false
+		}
+	} else if u.Scheme != "https" {
 		return false
 	}
 	host := r.Host
