@@ -357,6 +357,23 @@ COMMIT
         self.assertEqual(parsed["notrack_rules"][2]["flow_overlap_reason"], "additional_selector_present")
         self.assertNotIn("8443", repr(parsed["notrack_rules"]))
 
+    def test_outer_tcp_rst_audit_ignores_jump_text_inside_comments(self):
+        fixture = """*filter
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp -m comment --comment "-j DROP" -j ACCEPT
+-A OUTPUT -p tcp -m comment --comment "-j REJECT" -j ACCEPT
+-A OUTPUT -p tcp -m comment --comment "-j ACCEPT" -j DROP
+-A OUTPUT -p tcp -m comment --comment "ordinary comment" -j REJECT
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="dialer", inspect_outer_tcp_rst=(8443, (32768, 60999))
+        )
+        rules = parsed["outer_tcp_rst_rules"]
+        self.assertEqual(len(rules), 2)
+        self.assertEqual([rule["action"] for rule in rules], ["drop", "reject"])
+        self.assertEqual([rule["overlap"] for rule in rules], ["match", "match"])
+
     def test_outer_tcp_rst_audit_classifies_filter_output_rules_and_redacts_values(self):
         fixture = """*filter
 :OUTPUT ACCEPT [0:0]
