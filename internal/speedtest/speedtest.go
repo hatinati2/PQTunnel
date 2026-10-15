@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	MaxMiB = 64
+	MaxMiB = 32
 	minBytes = 1 << 20
 	maxBytes = MaxMiB << 20
 	chunkSize = 32 << 10
@@ -128,7 +128,6 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { <-h.active }()
-	start := time.Now()
 	n, err := io.CopyN(io.Discard, r.Body, size)
 	if err != nil || n != size {
 		http.Error(w, "incomplete upload", http.StatusBadRequest)
@@ -136,7 +135,6 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(transferResponse{Bytes: n})
-	_ = start // preserve a clear measurement boundary for future server-side metrics.
 }
 
 func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -169,7 +167,7 @@ func requestedBytes(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	raw := r.URL.Query().Get("bytes")
 	size, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || size < minBytes || size > maxBytes {
-		http.Error(w, "bytes must be between 1 MiB and 64 MiB", http.StatusBadRequest)
+		http.Error(w, "bytes must be between 1 MiB and 32 MiB", http.StatusBadRequest)
 		return 0, false
 	}
 	return size, true
@@ -208,7 +206,7 @@ func runAgainst(ctx context.Context, endpoint, baseURL, token string, sizeMiB in
 	defer transport.CloseIdleConnections()
 	client := &http.Client{
 		Transport: transport,
-		Timeout: 90 * time.Second,
+		Timeout: 300 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	request := func(method, path string, body io.Reader, size int64) (*http.Response, error) {
@@ -291,7 +289,7 @@ func ServeAgent(ctx context.Context, address, token string) error {
 				Handler: handler,
 				ReadHeaderTimeout: 3 * time.Second,
 				ReadTimeout: 30 * time.Second,
-				WriteTimeout: 90 * time.Second,
+				WriteTimeout: 300 * time.Second,
 				IdleTimeout: 15 * time.Second,
 				MaxHeaderBytes: 8 << 10,
 			}
