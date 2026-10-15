@@ -82,6 +82,11 @@ func TestLoginDashboardDisconnectAndLogout(t *testing.T) {
 	if dashboardResp.Code != http.StatusOK || !strings.Contains(dashboardResp.Body.String(), "peer-1") {
 		t.Fatalf("dashboard not rendered: status=%d", dashboardResp.Code)
 	}
+	if !strings.Contains(dashboardResp.Body.String(), "به‌روزرسانی وضعیت") ||
+		!strings.Contains(dashboardResp.Body.String(), `<details class="disconnect">`) ||
+		!strings.Contains(dashboardResp.Body.String(), "تأیید قطع اتصال") {
+		t.Fatal("dashboard must offer manual refresh and a second step before disconnect")
+	}
 	matches := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(dashboardResp.Body.String())
 	if len(matches) != 2 {
 		t.Fatal("dashboard did not include CSRF token")
