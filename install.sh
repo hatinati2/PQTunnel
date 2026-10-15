@@ -92,22 +92,28 @@ case "$MODE" in
     tar -xzf "$TMP_DIR/$ASSET" -C "$TMP_DIR"
     SOURCE_DIR="$TMP_DIR/PQTunnel-${VERSION}-linux-${ARCH}"
     [[ -x "$SOURCE_DIR/pqtunnel-manager" && -f "$SOURCE_DIR/deploy/systemd/pqtunnel-manager.service" ]] || fail 'release bundle is missing manager binary or systemd unit.'
-    bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE"
-
-    # Generate a fresh 256-bit web token locally; never print it to stdout.
-    TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
-    [[ "${#TOKEN}" -eq 64 ]] || fail 'could not generate a secure manager token; service left stopped.'
     CONFIG=/etc/default/pqtunnel-manager
-    [[ -f "$CONFIG" ]] || fail "manager config not found at $CONFIG; service left stopped."
-    if grep -q '^PQTUNNEL_MANAGER_TOKEN=.' "$CONFIG"; then
-      fail "manager token is already configured in $CONFIG; refusing to replace it automatically."
+    if [[ -x /usr/local/sbin/pqtunnel-manager && -f /etc/systemd/system/pqtunnel-manager.service && -f "$CONFIG" ]]; then
+      # Resume an earlier partial install safely; never overwrite the installed binary or unit.
+      EXISTING_ROLE="$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' "$CONFIG" | head -n1)"
+      [[ "$EXISTING_ROLE" == "$ROLE" ]] || fail "existing manager role is '$EXISTING_ROLE', not '$ROLE'; refusing to change it."
+      printf 'Existing manager installation found; keeping its binary, unit, and role.\n'
+    else
+      bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE"
     fi
-    sed -i "s/^PQTUNNEL_MANAGER_TOKEN=$/PQTUNNEL_MANAGER_TOKEN=$TOKEN/" "$CONFIG"
+
+    [[ -f "$CONFIG" ]] || fail "manager config not found at $CONFIG; service left stopped."
+    # If no token exists, generate a fresh 256-bit secret locally; never print it.
+    if ! grep -q '^PQTUNNEL_MANAGER_TOKEN=.' "$CONFIG"; then
+      TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+      [[ "${#TOKEN}" -eq 64 ]] || fail 'could not generate a secure manager token; service left stopped.'
+      sed -i "s/^PQTUNNEL_MANAGER_TOKEN=$/PQTUNNEL_MANAGER_TOKEN=$TOKEN/" "$CONFIG"
+      unset TOKEN
+    fi
     chown root:root "$CONFIG"
     chmod 0600 "$CONFIG"
-    unset TOKEN
 
-    if ! grep -q '^PQTUNNEL_MANAGER_TOKEN=[[:xdigit:]]\{64\}$' "$CONFIG"; then
+    if ! grep -q '^PQTUNNEL_MANAGER_TOKEN=.' "$CONFIG"; then
       fail "token configuration validation failed; service left stopped. Inspect $CONFIG locally."
     fi
     systemctl daemon-reload
