@@ -79,7 +79,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 </style></head>
 <body><main class="wrap">
 <header><div><h1>پنل مدیریت PQTunnel</h1><p class="sub">وضعیت سرویس و همتایان متصل · کنترل محدود و امن</p></div>
-<div class="header-actions"><a class="refresh" href="/">به‌روزرسانی وضعیت</a>
+<div class="header-actions">{{if .Manager}}<a class="refresh" href="/logs">لاگ سرویس</a>{{end}}<a class="refresh" href="/">به‌روزرسانی وضعیت</a>
 <form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">خروج از پنل</button></form></div></header>
 {{if .Notice}}<div class="notice" role="status">{{.Notice}}{{if .Detail}} — {{.Detail}}{{end}}</div>{{end}}
 <section class="grid" aria-label="خلاصه وضعیت">
@@ -161,9 +161,24 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 </section>
 <footer>{{if .Manager}}این پنل کنترل محدود سرویس، تنظیمات site-to-site و اتصال همتا را فراهم می‌کند. فایل‌های PKI، کلیدها، فایروال و قوانین NAT از این فرم تغییر نمی‌کنند. پنل باید فقط روی loopback در دسترس باشد.{{else}}این پنل فقط وضعیت را نمایش می‌دهد و اتصال همتا را قطع می‌کند؛ مسیرها، فایروال، NAT، گواهی‌ها و کلیدها را تغییر نمی‌دهد. پنل باید فقط روی loopback در دسترس باشد.{{end}}</footer>
 </main></body></html>`))
+	logsTemplate = template.Must(template.New("logs").Parse(`<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>لاگ سرویس PQTunnel</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--line:#26334d;--text:#edf2ff;--muted:#9eacc7;--accent:#7dd3fc}
+*{box-sizing:border-box}body{margin:0;background:#0b1020;color:var(--text);font:14px/1.65 ui-monospace,monospace}.wrap{width:min(1200px,calc(100% - 28px));margin:24px auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}a{color:var(--accent)}pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;background:#10182a;border:1px solid var(--line);border-radius:12px;padding:16px;max-height:75vh;overflow:auto}
+button{font:inherit;padding:8px 12px;background:#1b2940;color:var(--text);border:1px solid var(--line);border-radius:8px}
+</style></head>
+<body><main class="wrap"><header><div><h1>آخرین لاگ‌های سرویس {{.Unit}}</h1><p>حداکثر ۱۰۰ خط؛ مقادیر حساس شناخته‌شده حذف یا ماسک شده‌اند.</p></div>
+<div><a href="/">بازگشت به پنل</a>
+<form method="post" action="/logout" style="display:inline"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">خروج</button></form></div></header>
+<pre>{{.Logs}}</pre></main></body></html>`))
 )
 
-type session struct {
+type session {
 	CSRF      string
 	ExpiresAt time.Time
 }
@@ -263,6 +278,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := dashboardTemplate.Execute(w, data); err != nil {
+			return
+		}
+	case "/logs":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, "GET")
+			return
+		}
+		_, current, ok := h.sessionFor(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if h.manager == nil {
+			http.Error(w, "لاگ سرویس از این پنل در دسترس نیست.", http.StatusNotFound)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		logs, err := h.manager.RecentLogs(ctx)
+		if err != nil {
+			h.redirectWithDetail(w, r, "logs-failed", err.Error())
+			return
+		}
+		view := h.manager.ManagementSnapshot()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := logsTemplate.Execute(w, struct {
+			Unit string
+			Logs string
+			CSRF string
+		}{Unit: view.ServiceUnit, Logs: logs, CSRF: current.CSRF}); err != nil {
 			return
 		}
 	case "/speedtest/run":
@@ -647,6 +692,8 @@ func noticeMessage(notice string) string {
 		return "تست سرعت تونل کامل شد؛ نتایج در پایین صفحه نمایش داده می‌شود."
 	case "speedtest-failed":
 		return "تست سرعت کامل نشد."
+	case "logs-failed":
+		return "خواندن لاگ سرویس ناموفق بود."
 	case "operation-failed", "config-failed":
 		return "عملیات انجام نشد."
 	default:
