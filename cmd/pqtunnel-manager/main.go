@@ -28,11 +28,15 @@ func main() {
 	if len([]byte(token)) < 32 {
 		fatalIf(fmt.Errorf("PQTUNNEL_MANAGER_TOKEN must contain at least 32 bytes"))
 	}
+	controlSocket := "/run/pqtunnel/control.sock"
+	if role == manager.RoleDialer {
+		controlSocket = "/run/pqtunnel/client-control.sock"
+	}
 	controller, err := manager.New(manager.Options{
 		Role: role,
 		ConfigPath: manager.ConfigPathForRole(role),
 		BackupDir: "/var/lib/pqtunnel-manager/backups",
-		IPCSocket: "/run/pqtunnel/control.sock",
+		IPCSocket: controlSocket,
 		SpeedTestPeer: os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_PEER"),
 		SpeedTestToken: os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_TOKEN"),
 	})
