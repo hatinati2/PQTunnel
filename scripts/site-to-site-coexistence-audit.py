@@ -133,6 +133,18 @@ NAT_RE = re.compile(r"(?:-j|--jump)\s+(?:DNAT|SNAT|MASQUERADE|REDIRECT)\b", re.I
 DROP_RE = re.compile(r"(?:-j|--jump)\s+(?:DROP|REJECT)\b", re.I)
 ACCEPT_RE = re.compile(r"(?:-j|--jump)\s+ACCEPT\b", re.I)
 
+
+def iptables_jump_target(line: str) -> str | None:
+    """Return the first actual -j/--jump target, not text embedded in comments."""
+    try:
+        tokens = shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        return None
+    for index, token in enumerate(tokens[:-1]):
+        if token in ("-j", "--jump"):
+            return tokens[index + 1].upper()
+    return None
+
 SELECTOR_PATTERNS: dict[str, re.Pattern[str]] = {
     "interface": re.compile(r"(?:^|\s)(?:-i|--in-interface|-o|--out-interface)(?:\s|=)", re.I),
     "protocol": re.compile(r"(?:^|\s)(?:-p|--protocol)(?:\s|=)", re.I),
@@ -578,14 +590,14 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
         counts = rules[(table, fields[1])]
         counts["rules"] += 1
         if inspect_outer_tcp_rst is not None and table == "filter" and fields[1] == "OUTPUT":
-            target_match = re.search(r"(?:-j|--jump)\s+(DROP|REJECT)\b", line, re.I)
-            if target_match:
+            jump_target = iptables_jump_target(line)
+            if jump_target in ("DROP", "REJECT"):
                 listener_port, ephemeral_range = inspect_outer_tcp_rst
                 overlap, reason = candidate_tcp_rst_flow_overlap_detail(
                     line, listener_port, ephemeral_range, role
                 )
                 outer_tcp_rst_rules.append({
-                    "action": target_match.group(1).lower(),
+                    "action": jump_target.lower(),
                     "selectors": iptables_selector_categories(line),
                     "overlap": overlap,
                     "reason": reason,
