@@ -316,3 +316,28 @@ func TestRecentLogsUsesFixedUnitAndRedactsSecrets(t *testing.T) {
 	}
 	if !found { t.Fatalf("recent logs did not use fixed gateway unit: %#v", calls) }
 }
+
+
+func TestWriteExistingFileWithRollbackPreservesModeAndRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "config.env")
+	old := []byte("PQTUNNEL_LISTEN=:8443\n")
+	if err := os.WriteFile(real, old, 0600); err != nil { t.Fatal(err) }
+	if err := writeExistingFileWithRollback(real, []byte("PQTUNNEL_LISTEN=:9443\n"), 0600); err != nil {
+		t.Fatalf("in-place update: %v", err)
+	}
+	got, err := os.ReadFile(real)
+	if err != nil { t.Fatal(err) }
+	if string(got) != "PQTUNNEL_LISTEN=:9443\n" { t.Fatalf("in-place content=%q", got) }
+	if info, err := os.Stat(real); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("mode=%v err=%v, want 0600", info, err)
+	}
+	link := filepath.Join(dir, "link.env")
+	if err := os.Symlink(real, link); err != nil { t.Fatal(err) }
+	if err := writeExistingFileWithRollback(link, []byte("PQTUNNEL_LISTEN=:10443\n"), 0600); err == nil {
+		t.Fatal("in-place writer must reject symlinks")
+	}
+	got, err = os.ReadFile(real)
+	if err != nil { t.Fatal(err) }
+	if string(got) != "PQTUNNEL_LISTEN=:9443\n" { t.Fatalf("symlink attempt changed target: %q", got) }
+}
