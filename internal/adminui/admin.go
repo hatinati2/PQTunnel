@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hatinati2/PQTunnel/internal/adminapi"
+	"github.com/hatinati2/PQTunnel/internal/speedtest"
 )
 
 const (
@@ -40,6 +41,7 @@ var (
 main{width:min(100%,430px);background:#141c2fee;border:1px solid var(--line);border-radius:22px;padding:30px;box-shadow:0 24px 80px #0005}
 h1{font-size:1.5rem;margin:0 0 8px}.muted{color:var(--muted)}label{display:block;margin:18px 0 7px;font-weight:650}input{width:100%;padding:13px 14px;border-radius:11px;border:1px solid #394966;background:#0c1425;color:var(--text);font:inherit}
 button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:11px;background:var(--accent);color:#092033;font:inherit;font-weight:750;cursor:pointer}.error{color:var(--danger);margin:12px 0 0}
+ .configform{display:grid;gap:12px}.configform label{display:block;font-weight:650;margin:5px 0}.configform input:not([type=hidden]){display:block;width:100%;margin-top:6px;padding:11px 12px;border:1px solid #394966;border-radius:10px;background:#0c1425;color:var(--text);font:inherit}.configform input[type=number]{max-width:220px}.configform details{width:max-content;max-width:100%}.configform details p{max-width:700px}
 </style></head>
 <body><main><h1>مدیریت PQTunnel</h1><p class="muted">برای ورود، توکن مدیریتی تنظیم‌شده روی سرویس را وارد کنید.</p>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
@@ -125,6 +127,31 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 <p class="sub">تغییرات با اعتبارسنجی و تهیهٔ نسخهٔ پشتیبان ذخیره می‌شود. اگر سرویس فعال باشد، پنل آن را restart می‌کند؛ در صورت ناموفق‌بودن، تنظیم قبلی بازگردانده می‌شود. انتخاب default route یا CIDR هم‌پوشان رد می‌شود یا نیازمند بازبینی جداگانه است.</p>
 <details class="disconnect"><summary>بررسی و اعمال تنظیمات</summary><p>اعمال ممکن است تونل را برای چند لحظه قطع کند. فقط وقتی دسترسی کنسول/SSH مستقل داری تأیید کن.</p><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">تأیید اعتبارسنجی و اعمال</button></details>
 </form>
+</section>
+<section class="section"><h2>تست سرعت داخل تونل</h2>
+{{if .Manager.SpeedTestReady}}
+<p class="sub">مقصد ثابت و خصوصی: <b>{{.Manager.SpeedTestPeer}}</b>. اندازه‌گیری با RTT میانهٔ ۵ نمونه و انتقال داده در هر دو جهت از همین مسیر تونل انجام می‌شود. تست تا ۳۲ MiB داده تولید می‌کند و ممکن است پهنای باند را موقتاً اشغال کند.</p>
+<form method="post" action="/speedtest/run" class="configform">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>حجم داده برای هر جهت (MiB)
+<input type="number" name="megabytes" min="1" max="32" value="8" required>
+</label>
+<details class="disconnect"><summary>اجرای تست سرعت</summary><p>فقط یک تست هم‌زمان اجرا می‌شود؛ برای نتیجهٔ دقیق‌تر، انتقال‌های حجیم دیگر را متوقف کن.</p><input type="hidden" name="confirm" value="yes"><button type="submit">شروع تست دوطرفه</button></form></details>
+{{else}}
+<div class="empty">تست سرعت فعلاً غیرفعال است. روی هر دو سرور یک عامل speed test با IP خصوصی TUN و توکن مشترک تنظیم کن؛ نشانی مقصد این فرم قابل‌تغییر نیست و باید داخل prefixهای مجاز و allowlist پورت TCP باشد.</div>
+{{end}}
+{{if .Manager.LastSpeedTest}}
+<h3>آخرین نتیجه</h3>
+<div class="details">
+<div class="detail"><span class="kicker">RTT میانه</span><b>{{printf "%.2f" .Manager.LastSpeedTest.RTTMillis}} ms</b></div>
+<div class="detail"><span class="kicker">ارسال به سمت peer</span><b>{{printf "%.2f" .Manager.LastSpeedTest.UploadMbps}} Mbps</b></div>
+<div class="detail"><span class="kicker">دریافت از peer</span><b>{{printf "%.2f" .Manager.LastSpeedTest.DownloadMbps}} Mbps</b></div>
+<div class="detail"><span class="kicker">حجم هر جهت</span><b>{{.Manager.LastSpeedTest.SizeMiB}} MiB</b></div>
+<div class="detail"><span class="kicker">زمان ارسال</span><b>{{printf "%.2f" .Manager.LastSpeedTest.UploadSeconds}} s</b></div>
+<div class="detail"><span class="kicker">زمان دریافت</span><b>{{printf "%.2f" .Manager.LastSpeedTest.DownloadSeconds}} s</b></div>
+</div>
+<p class="sub">مقصد: {{.Manager.LastSpeedTest.Peer}} · زمان پایان: {{.Manager.LastSpeedTest.CompletedAt}}</p>
+{{end}}
 </section>
 {{end}}
 <section class="section"><h2>همتایان متصل</h2>
@@ -238,6 +265,38 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := dashboardTemplate.Execute(w, data); err != nil {
 			return
 		}
+	case "/speedtest/run":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, "POST")
+			return
+		}
+		_, current, ok := h.requirePostSession(w, r)
+		if !ok { return }
+		if h.manager == nil {
+			http.Error(w, "تست سرعت از این پنل در دسترس نیست.", http.StatusNotFound)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		if err := r.ParseForm(); err != nil || !secureEqual(r.PostForm.Get("csrf"), current.CSRF) {
+			http.Error(w, "درخواست نامعتبر است.", http.StatusBadRequest)
+			return
+		}
+		if r.PostForm.Get("confirm") != "yes" {
+			http.Error(w, "تأیید اجرای تست سرعت الزامی است.", http.StatusBadRequest)
+			return
+		}
+		sizeMiB, err := strconv.Atoi(r.PostForm.Get("megabytes"))
+		if err != nil || sizeMiB < 1 || sizeMiB > speedtest.MaxMiB {
+			http.Error(w, "حجم تست باید بین ۱ تا ۳۲ مگابایت باشد.", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 305*time.Second)
+		defer cancel()
+		if _, err := h.manager.RunSpeedTest(ctx, sizeMiB); err != nil {
+			h.redirectWithDetail(w, r, "speedtest-failed", err.Error())
+			return
+		}
+		http.Redirect(w, r, "/?notice=speedtest-completed", http.StatusSeeOther)
 	case "/service/action":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, "POST")
@@ -584,6 +643,10 @@ func noticeMessage(notice string) string {
 		return "سرویس مجدداً راه‌اندازی شد."
 	case "config-applied":
 		return "تنظیمات ذخیره شد؛ در صورت فعال‌بودن سرویس، راه‌اندازی مجدد هم موفق بود."
+	case "speedtest-completed":
+		return "تست سرعت تونل کامل شد؛ نتایج در پایین صفحه نمایش داده می‌شود."
+	case "speedtest-failed":
+		return "تست سرعت کامل نشد."
 	case "operation-failed", "config-failed":
 		return "عملیات انجام نشد."
 	default:
