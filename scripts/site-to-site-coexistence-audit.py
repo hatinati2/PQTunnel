@@ -114,65 +114,193 @@ def parse_nft_json(data: dict[str, Any]) -> dict[str, Any]:
             tables.add((key[0], key[1]))
     return {"tables": sorted(tables), "chains": chains, "rules": dict(rules)}
 
-MARK_RE = re.compile(r"(?:--set-(?:x)?mark\b|--restore-mark\b|--save-mark\b|(?:-j|--jump)\s+(?:CONN)?MARK\b|CONNMARK)", re.I)
-NOTRACK_RE = re.compile(r"(?:--notrack\b|(?:-j|--jump)\s+NOTRACK\b)", re.I)
-DIRECT_NOTRACK_RE = re.compile(r"(?:-j|--jump)\s+NOTRACK\b", re.I)
-CT_NOTRACK_RE = re.compile(r"(?:-j|--jump)\s+CT\b.*--notrack\b", re.I)
-NOTRACK_OPTION_RE = re.compile(r"--notrack\b", re.I)
-
 def notrack_mechanism(line: str) -> str:
-    """Classify NOTRACK mechanics without retaining or printing rule values."""
-    if CT_NOTRACK_RE.search(line):
-        return "ct_target_option"
-    if DIRECT_NOTRACK_RE.search(line):
-        return "direct_target"
-    if NOTRACK_OPTION_RE.search(line):
-        return "option_other_target"
-    return "other_notrack_match"
-NAT_RE = re.compile(r"(?:-j|--jump)\s+(?:DNAT|SNAT|MASQUERADE|REDIRECT)\b", re.I)
-DROP_RE = re.compile(r"(?:-j|--jump)\s+(?:DROP|REJECT)\b", re.I)
-ACCEPT_RE = re.compile(r"(?:-j|--jump)\s+ACCEPT\b", re.I)
+    """Classify NOTRACK mechanics using parsed rule options, never comment text."""
+    features = iptables_rule_features(line)
+    if features is None:
+        return "other_notrack_match"
+    return features["notrack_mechanism"]
 
 
 def iptables_jump_target(line: str) -> str | None:
-    """Return the actual jump target, ignoring strings in quoted comments."""
-    try:
-        tokens = shlex.split(line, comments=True, posix=True)
-    except ValueError:
+    """Return the actual -j/--jump target, ignoring option values and comments."""
+    parsed = iptables_rule_options(line)
+    if parsed is None:
         return None
-    for index, token in enumerate(tokens[:-1]):
-        if token in ("-j", "--jump"):
-            return tokens[index + 1].upper()
+    for option, args in parsed:
+        if option in ("-j", "--jump") and args:
+            return args[0].upper()
     return None
 
-SELECTOR_PATTERNS: dict[str, re.Pattern[str]] = {
-    "interface": re.compile(r"(?:^|\s)(?:-i|--in-interface|-o|--out-interface)(?:\s|=)", re.I),
-    "protocol": re.compile(r"(?:^|\s)(?:-p|--protocol)(?:\s|=)", re.I),
-    "address": re.compile(r"(?:^|\s)(?:-s|--source|-d|--destination|--src|--dst)(?:\s|=)", re.I),
-    "port": re.compile(r"(?:^|\s)(?:--(?:sport|source-port|sports|dport|destination-port|dports|ports))(?:\s|=)", re.I),
-    "connection": re.compile(r"(?:^|\s)(?:--(?:ctstate|state|ctstatus|ctdir|ctexpire))(?:\s|=)", re.I),
-    "mark": re.compile(r"(?:^|\s)(?:--(?:mark|ctmark|nfmark|nfmask|ctmask))(?:\s|=)", re.I),
-    "tcp_flags": re.compile(r"(?:^|\s)(?:--tcp-flags|--syn)(?:\s|=)", re.I),
+SELECTOR_OPTION_CATEGORIES = {
+    "-i": "interface", "--in-interface": "interface",
+    "-o": "interface", "--out-interface": "interface",
+    "-p": "protocol", "--protocol": "protocol",
+    "-s": "address", "--source": "address",
+    "-d": "address", "--destination": "address",
+    "--src": "address", "--dst": "address",
+    "--sport": "port", "--source-port": "port", "--sports": "port",
+    "--dport": "port", "--destination-port": "port", "--dports": "port",
+    "--ports": "port",
+    "--ctstate": "connection", "--state": "connection",
+    "--ctstatus": "connection", "--ctdir": "connection", "--ctexpire": "connection",
+    "--mark": "mark", "--ctmark": "mark", "--nfmark": "mark",
+    "--nfmask": "mark", "--ctmask": "mark",
+    "--tcp-flags": "tcp_flags", "--syn": "tcp_flags",
 }
-OTHER_SELECTOR_RE = re.compile(
-    r"(?:^|\s)(?:-f|--fragment|--(?:icmp-type|icmpv6-type|uid-owner|gid-owner|socket-exists|"
-    r"limit|limit-burst|hashlimit|string|mac-source|length|frag|probability|src-type|dst-type|"
-    r"physdev-in|physdev-out))(?:\s|=)", re.I
-)
+OTHER_SELECTOR_ARITY = {
+    "-f": 0, "--fragment": 0, "--icmp-type": 1, "--icmpv6-type": 1,
+    "--uid-owner": 1, "--gid-owner": 1, "--socket-exists": 0,
+    "--limit": 1, "--limit-burst": 1, "--hashlimit": 1, "--string": 1,
+    "--mac-source": 1, "--length": 1, "--frag": 1, "--probability": 1,
+    "--src-type": 1, "--dst-type": 1, "--physdev-in": 1, "--physdev-out": 1,
+}
 IGNORABLE_MATCH_MODULES = {
     "comment", "tcp", "udp", "icmp", "icmp6", "ipv6-icmp", "multiport",
     "conntrack", "state", "mark", "connmark",
 }
 
+# Consume argument-bearing options so a quoted value is never reinterpreted
+# as another selector (for example --comment "--ctstate NEW").
+OPTION_ARITY = {
+    "-A": 1, "--append": 1, "-m": 1, "--match": 1, "-p": 1, "--protocol": 1,
+    "-i": 1, "--in-interface": 1, "-o": 1, "--out-interface": 1,
+    "-s": 1, "--source": 1, "-d": 1, "--destination": 1, "--src": 1, "--dst": 1,
+    "--sport": 1, "--source-port": 1, "--sports": 1,
+    "--dport": 1, "--destination-port": 1, "--dports": 1, "--ports": 1,
+    "--ctstate": 1, "--state": 1, "--ctstatus": 1, "--ctdir": 1, "--ctexpire": 1,
+    "--mark": 1, "--ctmark": 1, "--nfmark": 1, "--nfmask": 1, "--ctmask": 1,
+    "--tcp-flags": 2, "--syn": 0,
+    "--comment": 1, "--set-mark": 1, "--set-xmark": 1, "--set-nfmark": 1,
+    "--restore-mark": 0, "--save-mark": 0,
+    "-j": 1, "--jump": 1, "-g": 1, "--goto": 1,
+    "--to-source": 1, "--to-destination": 1, "--to-ports": 1,
+    "--limit": 1, "--limit-burst": 1, "--hashlimit": 1, "--string": 1,
+    "--mac-source": 1, "--length": 1, "--frag": 1, "--probability": 1,
+    "--src-type": 1, "--dst-type": 1, "--physdev-in": 1, "--physdev-out": 1,
+    "-f": 0, "--fragment": 0, "--icmp-type": 1, "--icmpv6-type": 1,
+    "--uid-owner": 1, "--gid-owner": 1, "--socket-exists": 0,
+}
+
+def iptables_rule_options(line: str) -> list[tuple[str, tuple[str, ...]]] | None:
+    """Parse iptables options and their values, so quoted values cannot impersonate flags."""
+    try:
+        tokens = shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        return None
+
+    parsed: list[tuple[str, tuple[str, ...]]] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "!":
+            parsed.append(("!", ()))
+            i += 1
+            continue
+
+        has_inline_value = token.startswith("--") and "=" in token
+        if has_inline_value:
+            option, inline_value = token.split("=", 1)
+            arity = OPTION_ARITY.get(option)
+            if arity is None:
+                parsed.append((option, (inline_value,)))
+                i += 1
+                continue
+            extra_args = max(arity - 1, 0)
+            if len(tokens) - i - 1 < extra_args:
+                return None
+            args = (inline_value, *tokens[i + 1:i + 1 + extra_args])
+            parsed.append((option, tuple(args)))
+            i += 1 + extra_args
+            continue
+
+        if token in OPTION_ARITY:
+            arity = OPTION_ARITY[token]
+            if len(tokens) - i - 1 < arity:
+                return None
+            args = tuple(tokens[i + 1:i + 1 + arity])
+            parsed.append((token, args))
+            i += 1 + arity
+            continue
+
+        if token.startswith("-"):
+            parsed.append((token, ()))
+        i += 1
+
+    return parsed
+
+
 def iptables_selector_categories(line: str) -> list[str]:
-    """Return selector *types*, never selector values, for a saved iptables rule."""
-    selectors = {name for name, pattern in SELECTOR_PATTERNS.items() if pattern.search(line)}
-    if OTHER_SELECTOR_RE.search(line):
-        selectors.add("other")
-    modules = re.findall(r"(?:^|\s)(?:-m|--match)\s+([^\s]+)", line, re.I)
-    if any(module.lower() not in IGNORABLE_MATCH_MODULES for module in modules):
-        selectors.add("other")
+    """Return selector *types*, never values, using parsed option tokens."""
+    parsed = iptables_rule_options(line)
+    if parsed is None:
+        return ["other"]
+
+    selectors: set[str] = set()
+    for option, args in parsed:
+        if option in SELECTOR_OPTION_CATEGORIES:
+            selectors.add(SELECTOR_OPTION_CATEGORIES[option])
+        if option in OTHER_SELECTOR_ARITY:
+            selectors.add("other")
+        if option in ("-m", "--match"):
+            if not args:
+                return sorted(selectors | {"other"})
+            if args[0].lower() not in IGNORABLE_MATCH_MODULES:
+                selectors.add("other")
     return sorted(selectors)
+
+
+def iptables_rule_features(line: str) -> dict[str, Any] | None:
+    """Classify real iptables targets/options without matching quoted text."""
+    parsed = iptables_rule_options(line)
+    if parsed is None:
+        return None
+
+    targets = [
+        args[0].upper()
+        for option, args in parsed
+        if option in ("-j", "--jump") and args
+    ]
+    modules = {
+        args[0].lower()
+        for option, args in parsed
+        if option in ("-m", "--match") and args
+    }
+    option_names = {option for option, _ in parsed}
+    has_notrack_option = "--notrack" in option_names
+    has_notrack_target = "NOTRACK" in targets
+    notrack = has_notrack_target or has_notrack_option
+
+    if "CT" in targets and has_notrack_option:
+        mechanism = "ct_target_option"
+    elif has_notrack_target:
+        mechanism = "direct_target"
+    elif has_notrack_option:
+        mechanism = "option_other_target"
+    else:
+        mechanism = "other_notrack_match"
+
+    mark_options = {
+        "--set-mark", "--set-xmark", "--set-nfmark",
+        "--restore-mark", "--save-mark",
+    }
+    packet_mark = bool(
+        {"MARK", "CONNMARK"} & set(targets)
+        or mark_options & option_names
+        or {"mark", "connmark"} & modules
+    )
+    nat = bool({"DNAT", "SNAT", "MASQUERADE", "REDIRECT"} & set(targets))
+    drop_reject = bool({"DROP", "REJECT"} & set(targets))
+    accept = "ACCEPT" in targets
+    return {
+        "jump_targets": targets,
+        "notrack": notrack,
+        "notrack_mechanism": mechanism,
+        "packet_mark": packet_mark,
+        "nat": nat,
+        "drop_reject": drop_reject,
+        "accept": accept,
+    }
 
 
 PORT_OPTIONS = {
@@ -612,12 +740,13 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
                     "overlap": overlap,
                     "reason": reason,
                 })
-        if NOTRACK_RE.search(line):
+        rule_features = iptables_rule_features(line)
+        if rule_features is not None and rule_features["notrack"]:
             counts["notrack"] += 1
             record = {
                 "table": table, "chain": fields[1],
                 "selectors": iptables_selector_categories(line),
-                "mechanism": notrack_mechanism(line),
+                "mechanism": rule_features["notrack_mechanism"],
             }
             if table == "raw" and fields[1] in ("OUTPUT", "PREROUTING"):
                 if candidate_port is not None:
@@ -642,10 +771,11 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
                     record["flow_source_port_role"] = source_label
                     record["flow_destination_port_role"] = destination_label
             notrack_rules.append(record)
-        if MARK_RE.search(line): counts["packet_mark"] += 1
-        if NAT_RE.search(line): counts["nat"] += 1
-        if DROP_RE.search(line): counts["drop_reject"] += 1
-        if ACCEPT_RE.search(line): counts["accept"] += 1
+        if rule_features is not None:
+            counts["packet_mark"] += int(rule_features["packet_mark"])
+            counts["nat"] += int(rule_features["nat"])
+            counts["drop_reject"] += int(rule_features["drop_reject"])
+            counts["accept"] += int(rule_features["accept"])
     return {
         "policies": policies,
         "rules": dict(rules),
