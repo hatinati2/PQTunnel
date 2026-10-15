@@ -91,13 +91,13 @@ func main() {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 	if isLoopback {
-		fmt.Printf("PQTunnel manager (%s) available at http://%s/ (loopback-only; token protected)\\n", role, listen)
+		fmt.Printf("PQTunnel manager (%s) available at http://%s/ (loopback-only; token protected)\n", role, listen)
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fatalIf(err)
 		}
 	} else {
 		server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-		fmt.Printf("PQTunnel manager (%s) available at https://%s/ (TLS enabled; host allowlisted)\\n", role, publicHost)
+		fmt.Printf("PQTunnel manager (%s) available at https://%s/ (TLS enabled; host allowlisted)\n", role, publicHost)
 		if err := server.ServeTLS(listener, certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fatalIf(err)
 		}
