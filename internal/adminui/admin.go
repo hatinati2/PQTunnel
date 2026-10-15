@@ -136,7 +136,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 <label>حجم داده برای هر جهت (MiB)
 <input type="number" name="megabytes" min="1" max="32" value="8" required>
 </label>
-<details class="disconnect"><summary>اجرای تست سرعت</summary><p>فقط یک تست هم‌زمان اجرا می‌شود؛ برای نتیجهٔ دقیق‌تر، انتقال‌های حجیم دیگر را متوقف کن.</p><input type="hidden" name="confirm" value="yes"><button type="submit">شروع تست دوطرفه</button></form></details>
+<details class="disconnect"><summary>اجرای تست سرعت</summary><p>فقط یک تست هم‌زمان اجرا می‌شود؛ برای نتیجهٔ دقیق‌تر، انتقال‌های حجیم دیگر را متوقف کن.</p><input type="hidden" name="confirm" value="yes"><button type="submit">شروع تست دوطرفه</button></details></form>
 {{else}}
 <div class="empty">تست سرعت فعلاً غیرفعال است. روی هر دو سرور یک عامل speed test با IP خصوصی TUN و توکن مشترک تنظیم کن؛ نشانی مقصد این فرم قابل‌تغییر نیست و باید داخل prefixهای مجاز و allowlist پورت TCP باشد.</div>
 {{end}}
