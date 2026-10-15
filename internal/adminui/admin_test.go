@@ -382,6 +382,39 @@ func TestPublicIPOriginRequiresTLSAndExplicitHostAllowlist(t *testing.T) {
 	}
 }
 
+func TestPublicHTTPOriginRequiresExplicitInsecureOptIn(t *testing.T) {
+	const token = "public-http-manager-test-token-0123456789"
+	const publicIP = "198.51.100.10"
+	h, err := NewWithPublicAccess(token, &fakeController{}, publicIP, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"token": {token}}
+	req := httptest.NewRequest(http.MethodPost, "http://"+publicIP+":9091/login", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://"+publicIP+":9091")
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("explicitly opted-in public HTTP login status=%d, want redirect", resp.Code)
+	}
+	cookies := resp.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Secure {
+		t.Fatalf("plaintext HTTP session cookie should not claim Secure: %#v", cookies)
+	}
+
+	// The default constructor must continue to reject the same public HTTP origin.
+	defaultHandler, err := NewWithAllowedPublicHost(token, &fakeController{}, publicIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultResp := httptest.NewRecorder()
+	defaultHandler.ServeHTTP(defaultResp, req.Clone(req.Context()))
+	if defaultResp.Code != http.StatusForbidden {
+		t.Fatalf("public HTTP without opt-in status=%d, want 403", defaultResp.Code)
+	}
+}
+
 func TestDashboardRedirectsUnauthenticatedRequests(t *testing.T) {
 	h, err := New(strings.Repeat("z", 32), &fakeController{})
 	if err != nil {
