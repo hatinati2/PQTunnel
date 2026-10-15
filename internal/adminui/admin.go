@@ -654,7 +654,19 @@ func (h *Handler) requirePostSession(w http.ResponseWriter, r *http.Request) (st
 
 func sameOrigin(r *http.Request, allowedPublicHost string, allowInsecurePublicHTTP bool) bool {
 	origin := r.Header.Get("Origin")
-	if origin == "" || r.Host == "" {
+	if r.Host == "" {
+		return false
+	}
+	// Some Firefox configurations send Origin: null for a top-level form
+	// submission even when the target is the same loopback origin. Permit this
+	// only for loopback requests whose browser Fetch Metadata explicitly says
+	// same-origin navigation. Never use this fallback for public listeners.
+	if origin == "null" {
+		return isLoopbackHost(r.Host) &&
+			strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "same-origin") &&
+			strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate")
+	}
+	if origin == "" {
 		return false
 	}
 	u, err := url.Parse(origin)
