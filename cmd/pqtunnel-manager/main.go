@@ -102,7 +102,7 @@ func main() {
 			fatalIf(err)
 		}
 	} else if allowInsecurePublicHTTP {
-		fmt.Fprintf(os.Stderr, "WARNING: PQTunnel manager (%s) is exposed over INSECURE plaintext HTTP at http://%s/; credentials and session cookies can be intercepted. Disable this mode as soon as HTTPS is configured.\\n", role, publicHost)
+		fmt.Fprintf(os.Stderr, "WARNING: PQTunnel manager (%s) is exposed over INSECURE plaintext HTTP at http://%s/; credentials and session cookies can be intercepted. Disable this mode as soon as HTTPS is configured.\n", role, publicHost)
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fatalIf(err)
 		}
