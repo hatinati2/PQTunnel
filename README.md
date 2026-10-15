@@ -157,7 +157,6 @@ Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build L
 - [Protocol notes](docs/PROTOCOL.md)
 - [Experimental server-to-server guide (Persian)](docs/SITE-TO-SITE.fa.md)
 - [Pre-release checklist](docs/RELEASE-CHECKLIST.md)
-- [Web admin panel guide (Persian)](docs/WEB-ADMIN-PANEL.md)
 
 ## License
 
