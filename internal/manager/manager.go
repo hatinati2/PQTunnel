@@ -410,10 +410,14 @@ func (m *Controller) ApplyConfiguration(ctx context.Context, config adminapi.Tun
 	if rollbackErr != nil {
 		return fmt.Errorf("new configuration failed to start and automatic rollback failed; manual recovery required")
 	}
-	if _, err := m.runner.Run(ctx, "systemctl", "restart", m.unit); err != nil {
+	// A request deadline/cancellation must not prevent recovery of the known-good
+	// config. Use a fresh bounded context for the rollback restart.
+	rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer rollbackCancel()
+	if _, err := m.runner.Run(rollbackCtx, "systemctl", "restart", m.unit); err != nil {
 		return fmt.Errorf("new configuration failed; previous file was restored but service rollback restart failed")
 	}
-	if err := m.waitForState(ctx, "active"); err != nil {
+	if err := m.waitForState(rollbackCtx, "active"); err != nil {
 		return fmt.Errorf("new configuration failed; previous file was restored but previous service state could not be confirmed")
 	}
 	return fmt.Errorf("new configuration failed to start; previous configuration was restored and restarted")
