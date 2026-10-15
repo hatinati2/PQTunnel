@@ -140,9 +140,10 @@ SELECTOR_PATTERNS: dict[str, re.Pattern[str]] = {
     "port": re.compile(r"(?:^|\s)(?:--(?:sport|source-port|sports|dport|destination-port|dports|ports))(?:\s|=)", re.I),
     "connection": re.compile(r"(?:^|\s)(?:--(?:ctstate|state|ctstatus|ctdir|ctexpire))(?:\s|=)", re.I),
     "mark": re.compile(r"(?:^|\s)(?:--(?:mark|ctmark|nfmark|nfmask|ctmask))(?:\s|=)", re.I),
+    "tcp_flags": re.compile(r"(?:^|\s)(?:--tcp-flags|--syn)(?:\s|=)", re.I),
 }
 OTHER_SELECTOR_RE = re.compile(
-    r"(?:^|\s)(?:-f|--fragment|--(?:tcp-flags|syn|icmp-type|icmpv6-type|uid-owner|gid-owner|socket-exists|"
+    r"(?:^|\s)(?:-f|--fragment|--(?:icmp-type|icmpv6-type|uid-owner|gid-owner|socket-exists|"
     r"limit|limit-burst|hashlimit|string|mac-source|length|frag|probability|src-type|dst-type|"
     r"physdev-in|physdev-out))(?:\s|=)", re.I
 )
@@ -350,6 +351,101 @@ def candidate_tcp_flow_overlap_detail(
         return "unknown", "additional_selector_present", source_label, destination_label
     return "match", "known_conditions_allow_flow", source_label, destination_label
 
+
+TCP_FLAG_BITS = {
+    "FIN": 0x01, "SYN": 0x02, "RST": 0x04,
+    "PSH": 0x08, "ACK": 0x10, "URG": 0x20,
+}
+
+
+def tcp_flag_bits(value: str) -> int | None:
+    """Parse iptables TCP flag names without retaining or printing values."""
+    names = [part.strip().upper() for part in value.split(",")]
+    if not names or any(not name for name in names):
+        return None
+    if names == ["ALL"]:
+        return sum(TCP_FLAG_BITS.values())
+    if names == ["NONE"]:
+        return 0
+    if any(name not in TCP_FLAG_BITS for name in names):
+        return None
+    bits = 0
+    for name in names:
+        bits |= TCP_FLAG_BITS[name]
+    return bits
+
+
+def tcp_flags_allow_rst(mask: str, comp: str) -> tuple[str, str]:
+    """Return whether a --tcp-flags predicate can match any TCP RST packet."""
+    mask_bits = tcp_flag_bits(mask)
+    comp_bits = tcp_flag_bits(comp)
+    if mask_bits is None or comp_bits is None or (comp_bits & ~mask_bits):
+        return "unknown", "unsupported_tcp_flags"
+    rst_bit = TCP_FLAG_BITS["RST"]
+    if (mask_bits & rst_bit) and not (comp_bits & rst_bit):
+        return "no_match", "tcp_flags_exclude_rst"
+    return "match", "known_conditions_allow_rst"
+
+
+def candidate_tcp_rst_flow_overlap_detail(
+    line: str, listener_port: int, ephemeral_range: tuple[int, int], role: str
+) -> tuple[str, str]:
+    """Classify explicit filter OUTPUT DROP/REJECT rules for possible outer-flow TCP RST packets."""
+    try:
+        tokens = shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        return "unknown", "unparseable_rule_tokens"
+
+    filtered: list[str] = []
+    flag_checks: list[tuple[str, str, bool]] = []
+    i = 0
+    while i < len(tokens):
+        if tokens[i] == "!" and i + 1 < len(tokens):
+            next_token = tokens[i + 1]
+            if next_token == "--tcp-flags":
+                return "unknown", "negated_tcp_flags_not_modeled"
+            if next_token == "--syn":
+                flag_checks.append(("FIN,SYN,RST,ACK", "SYN", True))
+                i += 2
+                continue
+        token = tokens[i]
+        if token == "--tcp-flags":
+            if i + 2 >= len(tokens):
+                return "unknown", "incomplete_tcp_flags_selector"
+            flag_checks.append((tokens[i + 1], tokens[i + 2], False))
+            i += 3
+            continue
+        if token == "--syn":
+            flag_checks.append(("FIN,SYN,RST,ACK", "SYN", False))
+            i += 1
+            continue
+        filtered.append(token)
+        i += 1
+
+    sanitized_line = shlex.join(filtered)
+    flow_status, flow_reason, _, _ = candidate_tcp_flow_overlap_detail(
+        sanitized_line, listener_port, ephemeral_range, role, "OUTPUT"
+    )
+    if flow_status == "no_match":
+        return "no_match", flow_reason
+
+    for mask, comp, negated in flag_checks:
+        flag_status, flag_reason = tcp_flags_allow_rst(mask, comp)
+        if negated:
+            if flag_status == "no_match":
+                flag_status, flag_reason = "match", "negated_syn_allows_rst"
+            else:
+                return "unknown", "negated_tcp_flags_not_fully_modeled"
+        if flag_status == "no_match":
+            return flag_status, flag_reason
+        if flag_status == "unknown":
+            return flag_status, flag_reason
+
+    if flow_status == "unknown":
+        return flow_status, flow_reason
+    return "match", "known_conditions_allow_rst_flow"
+
+
 def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, str]:
     """Classify one candidate port on one packet side; reasons are fixed, non-sensitive labels."""
     if side not in ("source", "destination"):
@@ -451,13 +547,14 @@ def candidate_tcp_overlap(line: str, port: int, role: str, chain: str) -> str:
     return candidate_tcp_overlap_detail(line, port, side)[0]
 
 
-def parse_iptables_save(text: str, candidate_port: int | None = None, role: str = "both", inspect_tcp_port: int | None = None, flow_listener_port: int | None = None, flow_ephemeral_range: tuple[int, int] | None = None) -> dict[str, Any]:
+def parse_iptables_save(text: str, candidate_port: int | None = None, role: str = "both", inspect_tcp_port: int | None = None, flow_listener_port: int | None = None, flow_ephemeral_range: tuple[int, int] | None = None, inspect_outer_tcp_rst: tuple[int, tuple[int, int]] | None = None) -> dict[str, Any]:
     table = None
     policies: dict[tuple[str, str], str] = {}
     rules: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {"rules": 0, **{cat: 0 for cat in CATEGORIES}}
     )
     notrack_rules: list[dict[str, Any]] = []
+    outer_tcp_rst_rules: list[dict[str, Any]] = []
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("*"):
@@ -480,6 +577,19 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
             continue
         counts = rules[(table, fields[1])]
         counts["rules"] += 1
+        if inspect_outer_tcp_rst is not None and table == "filter" and fields[1] == "OUTPUT":
+            target_match = re.search(r"(?:-j|--jump)\s+(DROP|REJECT)\b", line, re.I)
+            if target_match:
+                listener_port, ephemeral_range = inspect_outer_tcp_rst
+                overlap, reason = candidate_tcp_rst_flow_overlap_detail(
+                    line, listener_port, ephemeral_range, role
+                )
+                outer_tcp_rst_rules.append({
+                    "action": target_match.group(1).lower(),
+                    "selectors": iptables_selector_categories(line),
+                    "overlap": overlap,
+                    "reason": reason,
+                })
         if NOTRACK_RE.search(line):
             counts["notrack"] += 1
             record = {
@@ -514,7 +624,7 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
         if NAT_RE.search(line): counts["nat"] += 1
         if DROP_RE.search(line): counts["drop_reject"] += 1
         if ACCEPT_RE.search(line): counts["accept"] += 1
-    return {"policies": policies, "rules": dict(rules), "notrack_rules": notrack_rules}
+    return {"policies": policies, "rules": dict(rules), "notrack_rules": notrack_rules, "outer_tcp_rst_rules": outer_tcp_rst_rules}
 
 def run_readonly(argv: list[str]) -> tuple[int, str]:
     try:
@@ -549,12 +659,12 @@ def audit_nft() -> None:
         if hook != "-" or any(counts[cat] for cat in CATEGORIES):
             print(f"nft_chain family={family} table={table} name={chain} hook={hook} priority={priority if priority is not None else '-'} policy={policy} {fmt_categories(counts)}")
 
-def audit_iptables(command: str, family: str, role: str, candidate_port: int | None, inspect_tcp_port: int | None, flow_listener_port: int | None, flow_ephemeral_range: tuple[int, int] | None) -> None:
+def audit_iptables(command: str, family: str, role: str, candidate_port: int | None, inspect_tcp_port: int | None, flow_listener_port: int | None, flow_ephemeral_range: tuple[int, int] | None, inspect_outer_tcp_rst: tuple[int, tuple[int, int]] | None) -> None:
     rc, output = run_readonly([command])
     if rc != 0:
         print(f"WARN {family}_iptables_save=query_failed_or_unavailable; state is unknown")
         return
-    parsed = parse_iptables_save(output, candidate_port=candidate_port, role=role, inspect_tcp_port=inspect_tcp_port, flow_listener_port=flow_listener_port, flow_ephemeral_range=flow_ephemeral_range)
+    parsed = parse_iptables_save(output, candidate_port=candidate_port, role=role, inspect_tcp_port=inspect_tcp_port, flow_listener_port=flow_listener_port, flow_ephemeral_range=flow_ephemeral_range, inspect_outer_tcp_rst=inspect_outer_tcp_rst)
     table_names = {t for t, _ in parsed["policies"]} | {t for t, _ in parsed["rules"]}
     total = sum(v["rules"] for v in parsed["rules"].values())
     print(f"{family}_iptables_save=ok tables={len(table_names)} rules={total}")
@@ -598,6 +708,13 @@ def audit_iptables(command: str, family: str, role: str, candidate_port: int | N
                 f" tcp_flow_reason={rule['flow_overlap_reason']}"
             )
         print(f"{family}_iptables_notrack_scope table={key[0]} chain={key[1]} rule={chain_indices[key]} selectors={selectors} mechanism={rule['mechanism']}{suffix}")
+    for index, rule in enumerate(parsed.get("outer_tcp_rst_rules", []), 1):
+        selectors = ",".join(rule["selectors"]) or "none-detected"
+        print(
+            f"{family}_iptables_outer_tcp_rst table=filter chain=OUTPUT rule={index} "
+            f"action={rule['action']} selectors={selectors} "
+            f"rst_flow_overlap={rule['overlap']} rst_flow_reason={rule['reason']}"
+        )
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only firewall inventory; raw rules are never printed.")
@@ -616,24 +733,33 @@ def main() -> int:
         default=None,
         help="check a role-aware outer TCP flow using listener port and client ephemeral range (for example 8443 32768:60999); all supplied port values are redacted in output",
     )
+    port_checks.add_argument(
+        "--inspect-outer-tcp-rst", nargs=2, metavar=("LISTENER_PORT", "EPHEMERAL_RANGE"),
+        default=None,
+        help="check explicit filter OUTPUT DROP/REJECT predicates for possible outer TCP RST overlap; supplied and rule port values are redacted",
+    )
     args = parser.parse_args()
     flow_listener_port = None
     flow_ephemeral_range = None
-    if args.inspect_outer_tcp_flow is not None:
+    inspect_outer_tcp_rst = None
+    outer_flow_args = args.inspect_outer_tcp_flow or args.inspect_outer_tcp_rst
+    if outer_flow_args is not None:
         try:
-            flow_listener_port = int(args.inspect_outer_tcp_flow[0])
+            flow_listener_port = int(outer_flow_args[0])
         except ValueError:
             parser.error("LISTENER_PORT must be a decimal TCP port")
         if not 1 <= flow_listener_port <= 65535:
             parser.error("LISTENER_PORT must be between 1 and 65535")
-        parsed_range = parse_port_spec(args.inspect_outer_tcp_flow[1])
+        parsed_range = parse_port_spec(outer_flow_args[1])
         if parsed_range is None or len(parsed_range) != 1:
             parser.error("EPHEMERAL_RANGE must be one numeric range, such as LOW:HIGH")
         flow_ephemeral_range = parsed_range[0]
         if flow_ephemeral_range[0] > flow_ephemeral_range[1]:
             parser.error("EPHEMERAL_RANGE lower bound must not exceed upper bound")
         if args.role == "both":
-            parser.error("--inspect-outer-tcp-flow requires --role dialer or --role gateway")
+            parser.error("outer flow inspection requires --role dialer or --role gateway")
+        if args.inspect_outer_tcp_rst is not None:
+            inspect_outer_tcp_rst = (flow_listener_port, flow_ephemeral_range)
     os_release = {}
     try:
         for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
@@ -649,11 +775,13 @@ def main() -> int:
         print("candidate_tcp_port_check=enabled port_value=redacted")
     if args.inspect_tcp_port is not None:
         print("tcp_port_probe=enabled port_value=redacted sides=source,destination mode=NOTRACK-rule-predicate")
-    if flow_listener_port is not None and flow_ephemeral_range is not None:
+    if flow_listener_port is not None and flow_ephemeral_range is not None and args.inspect_outer_tcp_flow is not None:
         print("outer_tcp_flow_check=enabled listener_port=redacted client_ephemeral_range=redacted tuple_values=redacted")
+    if inspect_outer_tcp_rst is not None:
+        print("outer_tcp_rst_check=enabled listener_port=redacted client_ephemeral_range=redacted rule_values=redacted mode=filter-OUTPUT-DROP-REJECT")
     audit_nft()
-    audit_iptables("iptables-save", "ipv4", args.role, args.candidate_tcp_port, args.inspect_tcp_port, flow_listener_port, flow_ephemeral_range)
-    audit_iptables("ip6tables-save", "ipv6", args.role, args.candidate_tcp_port, args.inspect_tcp_port, flow_listener_port, flow_ephemeral_range)
+    audit_iptables("iptables-save", "ipv4", args.role, args.candidate_tcp_port, args.inspect_tcp_port, flow_listener_port, flow_ephemeral_range, inspect_outer_tcp_rst)
+    audit_iptables("ip6tables-save", "ipv6", args.role, args.candidate_tcp_port, args.inspect_tcp_port, flow_listener_port, flow_ephemeral_range, inspect_outer_tcp_rst)
     print("READ-ONLY GUARANTEE: no files, routes, sysctls, firewall state or services were changed.")
     print("This inventory supports lab design; it is not approval to apply network changes.")
     return 0
