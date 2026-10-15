@@ -61,9 +61,9 @@ ssh -N -L 9090:127.0.0.1:9090 USER@SERVER
 از دایرکتوری ریشهٔ سورسِ بازبینی‌شده یا بستهٔ Linux استخراج‌شده اجرا کنید:
 
 ```sh
-sudo ./scripts/install-manager.sh --source "$PWD" --role gateway
+sudo bash ./scripts/install-manager.sh --source "$PWD" --role gateway
 # یا روی سرور Dialer:
-sudo ./scripts/install-manager.sh --source "$PWD" --role dialer
+sudo bash ./scripts/install-manager.sh --source "$PWD" --role dialer
 ```
 
 نصاب فایل اجرایی، واحد systemd و فایل `/etc/default/pqtunnel-manager` را نصب می‌کند، اما پنل را فعال یا شروع نمی‌کند و سرویس تونل، route، firewall، NAT یا forwarding را تغییر نمی‌دهد. در فایل manager یک توکن تصادفی حداقل ۳۲ بایتی بگذارید:
