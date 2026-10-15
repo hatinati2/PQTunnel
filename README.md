@@ -1,6 +1,6 @@
 # PQTunnel
 
-**Version:** 0.3.0-rc2 · **Status:** experimental release candidate, not production-ready.
+**Version:** 0.3.0-rc3 · **Status:** experimental release candidate, not production-ready.
 
 PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
 
@@ -21,7 +21,7 @@ The active project source tree and CI source of truth are at the **repository ro
 - Server systemd unit and separate, explicit Ubuntu IPv4 forwarding/NAT script.
 - Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
 - Privacy-preserving, read-only inventory of existing nftables/iptables firewall state. Unknown iptables options are treated conservatively as additional selectors; output excludes raw rules and selector values. See [firewall coexistence notes](docs/EXISTING-FIREWALL-COEXISTENCE.md).
-- Optional Persian-language web admin panel for limited daemon/peer status and disconnecting a selected peer; disabled by default and loopback-only. See [the web admin panel guide](docs/WEB-ADMIN-PANEL.md).
+- Optional standalone Linux server-to-server web manager (`pqtunnel-manager`) with fixed-role Start/Stop/Restart controls, validated non-secret tunnel configuration editing, redacted service logs, peer disconnect and in-tunnel peer speed tests. It is disabled by default, loopback-only, and intended for SSH forwarding; see [the manager guide](docs/WEB-ADMIN-PANEL.md). The older in-process panel remains a separate, more limited feature.
 - GitHub Actions tests/cross-builds, a loopback TLS integration test, and Linux network-namespace tests using real TUN interfaces, including inbound TCP/UDP port-forward round trips and selective-vs-direct egress checks over IPv4 and IPv6.
 - Android `VpnService` scaffold and Linux/Windows TUN adapters.
 
@@ -58,7 +58,7 @@ After login, it shows limited daemon and connected-peer status and allows discon
 
 ## Requirements
 
-- Go 1.24 or later; CI uses Go 1.27.x. Go 1.24 introduced the standardized TLS `X25519MLKEM768` hybrid key exchange. See the [Go 1.24 release notes](https://go.dev/doc/go1.24).
+- Go 1.26 or later to build this source tree (`go.mod` declares Go 1.26.0); CI uses Go 1.27.x. The standardized TLS `X25519MLKEM768` hybrid key exchange was introduced in Go 1.24. See the [Go 1.24 release notes](https://go.dev/doc/go1.24).
 - Ubuntu/Linux server with systemd, `iproute2`, `nftables`, and `/dev/net/tun` for the supplied deployment scripts.
 - Linux client with `iproute2` and `systemd-resolved` (`resolvectl`) for the supplied client route helper.
 - Windows: official Wintun DLL/driver and a provisioned adapter named `pqtun0`; this project does not distribute the driver.
@@ -69,7 +69,7 @@ After login, it shows limited daemon and connected-peer status and allows discon
 ```sh
 go test ./...
 go vet ./...
-go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
+go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki ./cmd/pqtunnel-manager
 ```
 
 CI runs unit tests, vet and Linux builds on both Ubuntu 24.04 and 26.04, cross-compiles Linux amd64/arm64 and Windows amd64, and exercises real Linux TUN devices plus IPv4/IPv6 routes between disposable network namespaces. These namespace tests cover the tunnel packet path, inbound TCP/UDP port-forward round trips, and multi-port selective egress: TCP/443 and TCP/8443 plus UDP/53 and UDP/5354 use the tunnel, while TCP/8080, TCP/9443, UDP/5353, UDP/5355 and protocol-mismatched TCP/53 or UDP/443 remain direct, over IPv4 and IPv6. They do not validate public VPS routing, provider firewalls or production NAT/firewall integration, arbitrary egress policies beyond these test cases, DNS leaks, the four cross-version pairings, Windows route management, or Android physical devices.
