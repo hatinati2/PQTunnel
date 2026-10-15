@@ -13,6 +13,7 @@ import (
 
 	"github.com/hatinati2/PQTunnel/internal/adminui"
 	"github.com/hatinati2/PQTunnel/internal/manager"
+	"github.com/hatinati2/PQTunnel/internal/speedtest"
 )
 
 func main() {
@@ -32,20 +33,35 @@ func main() {
 		ConfigPath: manager.ConfigPathForRole(role),
 		BackupDir: "/var/lib/pqtunnel-manager/backups",
 		IPCSocket: "/run/pqtunnel/control.sock",
+		SpeedTestPeer: os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_PEER"),
+		SpeedTestToken: os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_TOKEN"),
 	})
 	fatalIf(err)
 	handler, err := adminui.New(token, controller)
 	fatalIf(err)
 
-	listener, err := net.Listen("tcp", listen)
-	fatalIf(err)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	agentListen := os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_LISTEN")
+	agentToken := os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_TOKEN")
+	if agentListen != "" || agentToken != "" {
+		if agentListen == "" || len([]byte(agentToken)) < 32 {
+			fatalIf(fmt.Errorf("set both PQTUNNEL_MANAGER_SPEEDTEST_LISTEN and a speed-test token of at least 32 bytes"))
+		}
+		fatalIf(controller.ValidateSpeedTestListener(agentListen, agentToken))
+		go func() {
+			if err := speedtest.ServeAgent(ctx, agentListen, agentToken); err != nil && ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "pqtunnel-manager: speed-test agent:", err)
+			}
+		}()
+	}
+	listener, err := net.Listen("tcp", listen)
+	fatalIf(err)
 	server := &http.Server{
 		Addr: listen, Handler: handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 15 * time.Second,
-		WriteTimeout: 75 * time.Second,
+		WriteTimeout: 310 * time.Second,
 		IdleTimeout: 60 * time.Second,
 		MaxHeaderBytes: 8 << 10,
 	}
