@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PQTunnel one-line entry point. Default menu is interactive; preflight is read-only.
+# PQTunnel one-line entry point. Preflight is read-only; manager setup is automated.
 set -Eeuo pipefail
 
 VERSION="v0.3.0-rc3"
@@ -28,13 +28,14 @@ Usage:
 
 Modes:
   --manager gateway|dialer   Download and checksum-verify the Linux release bundle,
-                             then install the optional standalone manager. It remains stopped.
+                             install the manager, generate a strong token, configure it,
+                             validate the unit, then enable and start the local-only manager.
   --preflight gateway|dialer|both
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
 
-This does NOT configure or start the tunnel. Tunnel setup needs reviewed role-specific
-certificates and environment files. Existing firewall/routing state is never bypassed.
+Manager setup does NOT configure or start the tunnel and does not change routes, firewall,
+NAT, or forwarding. The web manager binds only to 127.0.0.1:9091; use SSH forwarding remotely.
 USAGE
 }
 
@@ -52,7 +53,7 @@ done
 if [[ -z "$MODE" ]]; then
   printf '\nPQTunnel %s — one-line setup\n' "$VERSION"
   printf '  1) Read-only preflight (no changes)\n'
-  printf '  2) Install standalone web manager (does not start it)\n'
+  printf '  2) Install, securely configure, and start local web manager\n'
   prompt 'Choose [1-2]: ' CHOICE
   case "$CHOICE" in
     1) MODE=preflight; ROLE=both ;;
@@ -76,7 +77,7 @@ case "$MODE" in
       prompt 'Manager role on this server [gateway/dialer]: ' ROLE
     fi
     [[ "$ROLE" == gateway || "$ROLE" == dialer ]] || fail 'manager role must be gateway or dialer.'
-    need curl; need tar; need sha256sum; need awk; need uname
+    need curl; need tar; need sha256sum; need awk; need uname; need od; need tr; need systemctl; need systemd-analyze; need sed; need grep
     case "$(uname -m)" in
       x86_64|amd64) ARCH=amd64 ;;
       aarch64|arm64) ARCH=arm64 ;;
@@ -92,8 +93,29 @@ case "$MODE" in
     SOURCE_DIR="$TMP_DIR/PQTunnel-${VERSION}-linux-${ARCH}"
     [[ -x "$SOURCE_DIR/pqtunnel-manager" && -f "$SOURCE_DIR/deploy/systemd/pqtunnel-manager.service" ]] || fail 'release bundle is missing manager binary or systemd unit.'
     bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE"
-    printf '\nManager binary installed; service is still stopped.\n'
-    printf 'Next: set a random token of at least 32 bytes in /etc/default/pqtunnel-manager, review it, then start deliberately.\n'
-    printf 'Remote access must use SSH forwarding; do not expose port 9091 publicly.\n'
+
+    # Generate a fresh 256-bit web token locally; never print it to stdout.
+    TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+    [[ "${#TOKEN}" -eq 64 ]] || fail 'could not generate a secure manager token; service left stopped.'
+    CONFIG=/etc/default/pqtunnel-manager
+    [[ -f "$CONFIG" ]] || fail "manager config not found at $CONFIG; service left stopped."
+    if grep -q '^PQTUNNEL_MANAGER_TOKEN=.' "$CONFIG"; then
+      fail "manager token is already configured in $CONFIG; refusing to replace it automatically."
+    fi
+    sed -i "s/^PQTUNNEL_MANAGER_TOKEN=$/PQTUNNEL_MANAGER_TOKEN=$TOKEN/" "$CONFIG"
+    chown root:root "$CONFIG"
+    chmod 0600 "$CONFIG"
+    unset TOKEN
+
+    if ! grep -q '^PQTUNNEL_MANAGER_TOKEN=[[:xdigit:]]\{64\}$' "$CONFIG"; then
+      fail "token configuration validation failed; service left stopped. Inspect $CONFIG locally."
+    fi
+    systemctl daemon-reload
+    systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service
+    systemctl enable --now pqtunnel-manager
+    systemctl --no-pager --full status pqtunnel-manager
+    printf '\nPQTunnel manager installed and started. Its token is stored root-only in %s.\n' "$CONFIG"
+    printf 'The token was not printed. Keep port 9091 private; remote access must use SSH local forwarding.\n'
+    printf 'No tunnel service, route, firewall, NAT, or forwarding settings were changed.\n'
     ;;
 esac
