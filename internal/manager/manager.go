@@ -203,6 +203,38 @@ func (m *Controller) DisconnectPeer(identity string) bool {
 	return err == nil
 }
 
+var logSecretPattern = regexp.MustCompile(`(?i)((?:PQTUNNEL_)?[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY)[A-Z0-9_]*=)[^\\s]+`)
+
+// RecentLogs returns a bounded, redacted tail for this role's fixed systemd unit.
+// It does not accept a unit name or journalctl arguments from the HTTP request.
+func (m *Controller) RecentLogs(ctx context.Context) (string, error) {
+	out, err := m.runner.Run(ctx, "journalctl", "-u", m.unit, "-n", "100", "--no-pager", "-o", "short-iso")
+	if err != nil {
+		return "", errors.New("could not read recent service logs")
+	}
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		upper := strings.ToUpper(line)
+		if strings.Contains(upper, "PRIVATE KEY") || strings.Contains(upper, "-----BEGIN") {
+			lines[i] = "[redacted sensitive log line]"
+			continue
+		}
+		line = logSecretPattern.ReplaceAllString(line, "$1[REDACTED]")
+		if len(line) > 1000 {
+			line = line[:1000] + " … [truncated]"
+		}
+		lines[i] = line
+	}
+	result := strings.Join(lines, "\n")
+	if len(result) > 24000 {
+		result = result[len(result)-24000:]
+		if idx := strings.IndexByte(result, '\n'); idx >= 0 {
+			result = result[idx+1:]
+		}
+	}
+	return result, nil
+}
+
 func (m *Controller) speedTestReady(cfg adminapi.TunnelConfiguration) bool {
 	if m.speedTestToken == "" || len([]byte(m.speedTestToken)) < 32 {
 		return false
