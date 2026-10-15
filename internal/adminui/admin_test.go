@@ -218,6 +218,52 @@ func TestRejectsCrossOriginLoginAndDisconnect(t *testing.T) {
 	}
 }
 
+func TestLoopbackOpaqueOriginRequiresSameOriginNavigationMetadata(t *testing.T) {
+	const token = "loopback-opaque-origin-test-token-012345"
+	h, err := New(token, &fakeController{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	values := url.Values{"token": {token}}
+	request := func(origin, site, mode string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/login", strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Sec-Fetch-Site", site)
+		req.Header.Set("Sec-Fetch-Mode", mode)
+		resp := httptest.NewRecorder()
+		h.ServeHTTP(resp, req)
+		return resp
+	}
+
+	if resp := request("null", "same-origin", "navigate"); resp.Code != http.StatusSeeOther {
+		t.Fatalf("same-origin loopback navigation with opaque Origin status=%d, want redirect", resp.Code)
+	}
+	if resp := request("null", "cross-site", "navigate"); resp.Code != http.StatusForbidden {
+		t.Fatalf("cross-site opaque Origin status=%d, want 403", resp.Code)
+	}
+	if resp := request("null", "same-origin", "cors"); resp.Code != http.StatusForbidden {
+		t.Fatalf("non-navigation opaque Origin status=%d, want 403", resp.Code)
+	}
+
+	// Opaque Origin is never accepted as a fallback for a public listener.
+	publicHandler, err := NewWithPublicAccess(token, &fakeController{}, "198.51.100.10", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicReq := httptest.NewRequest(http.MethodPost, "http://198.51.100.10:9091/login", strings.NewReader(values.Encode()))
+	publicReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	publicReq.Header.Set("Origin", "null")
+	publicReq.Header.Set("Sec-Fetch-Site", "same-origin")
+	publicReq.Header.Set("Sec-Fetch-Mode", "navigate")
+	publicResp := httptest.NewRecorder()
+	publicHandler.ServeHTTP(publicResp, publicReq)
+	if publicResp.Code != http.StatusForbidden {
+		t.Fatalf("public listener opaque Origin status=%d, want 403", publicResp.Code)
+	}
+}
+
 func postLogin(t *testing.T, h *Handler, token, remoteAddr string) *httptest.ResponseRecorder {
 	t.Helper()
 	values := url.Values{"token": {token}}
