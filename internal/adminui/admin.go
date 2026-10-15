@@ -638,7 +638,7 @@ func (h *Handler) requirePostSession(w http.ResponseWriter, r *http.Request) (st
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return "", session{}, false
 	}
-	if !sameOrigin(r) {
+	if !sameOrigin(r, h.allowedPublicHost) {
 		http.Error(w, "مبدأ درخواست پذیرفته نشد.", http.StatusForbidden)
 		return "", session{}, false
 	}
