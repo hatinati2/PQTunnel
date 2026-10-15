@@ -555,6 +555,7 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
     )
     notrack_rules: list[dict[str, Any]] = []
     outer_tcp_rst_rules: list[dict[str, Any]] = []
+    outer_tcp_rst_policy: str | None = None
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("*"):
@@ -568,7 +569,15 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
         if line.startswith(":"):
             fields = line[1:].split()
             if fields:
-                policies[(table, fields[0])] = fields[1] if len(fields) > 1 else "-"
+                chain_policy = fields[1] if len(fields) > 1 else "-"
+                policies[(table, fields[0])] = chain_policy
+                if (
+                    inspect_outer_tcp_rst is not None
+                    and table == "filter"
+                    and fields[0] == "OUTPUT"
+                    and chain_policy.upper() == "DROP"
+                ):
+                    outer_tcp_rst_policy = "DROP"
             continue
         if not line.startswith("-A "):
             continue
@@ -624,7 +633,13 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
         if NAT_RE.search(line): counts["nat"] += 1
         if DROP_RE.search(line): counts["drop_reject"] += 1
         if ACCEPT_RE.search(line): counts["accept"] += 1
-    return {"policies": policies, "rules": dict(rules), "notrack_rules": notrack_rules, "outer_tcp_rst_rules": outer_tcp_rst_rules}
+    return {
+        "policies": policies,
+        "rules": dict(rules),
+        "notrack_rules": notrack_rules,
+        "outer_tcp_rst_rules": outer_tcp_rst_rules,
+        "outer_tcp_rst_policy": outer_tcp_rst_policy,
+    }
 
 def run_readonly(argv: list[str]) -> tuple[int, str]:
     try:
@@ -714,6 +729,11 @@ def audit_iptables(command: str, family: str, role: str, candidate_port: int | N
             f"{family}_iptables_outer_tcp_rst table=filter chain=OUTPUT rule={index} "
             f"action={rule['action']} selectors={selectors} "
             f"rst_flow_overlap={rule['overlap']} rst_flow_reason={rule['reason']}"
+        )
+    if parsed.get("outer_tcp_rst_policy") == "DROP":
+        print(
+            f"{family}_iptables_outer_tcp_rst_default_policy table=filter chain=OUTPUT "
+            "policy=DROP effect=may-drop-unmatched-rst"
         )
 
 def main() -> int:
