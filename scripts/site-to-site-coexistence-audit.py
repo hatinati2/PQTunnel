@@ -485,6 +485,13 @@ def candidate_tcp_flow_overlap_detail(
         return "unknown", "additional_selector_present", source_label, destination_label
     return "match", "known_conditions_allow_flow", source_label, destination_label
 
+TCP_FLAG_BITS = {
+    "FIN": 0x01, "SYN": 0x02, "RST": 0x04,
+    "PSH": 0x08, "ACK": 0x10, "URG": 0x20,
+    "ECE": 0x40, "CWR": 0x80,
+}
+
+
 def tcp_flag_bits(value: str) -> int | None:
     """Parse iptables TCP flag names without retaining or printing values."""
     names = [part.strip().upper() for part in value.split(",")]
