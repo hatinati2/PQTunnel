@@ -86,6 +86,23 @@ go run ./cmd/pqtunnel-pki issue-server --out ./pki --server-name iran.example.co
 
 ## پیش‌بررسی VPS و راه‌انداز تک‌خطی
 
+برای نصب سادهٔ پنل مدیریتی مستقل (بدون نصب Go)، یک ورودی تک‌خطی اضافه شده است. منو به‌صورت پیش‌فرض فقط بین preflight فقط‌خواندنی و نصب پنل انتخاب می‌دهد:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
+```
+
+برای نصب مستقیم پنل روی سرور ایران که نقش Dialer دارد:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
+```
+
+نصاب بستهٔ لینوکس متناسب با معماری را می‌گیرد و checksum همان بسته را بررسی می‌کند. پنل نصب می‌شود ولی شروع نمی‌شود؛ ابتدا یک توکن تصادفی حداقل ۳۲ بایتی در `/etc/default/pqtunnel-manager` قرار بده و فایل را بازبینی کن. پورت پنل فقط روی loopback است و دسترسی راه‌دور باید از SSH forwarding باشد.
+
+**این فرمان به‌تنهایی تونل را پیکربندی یا اجرا نمی‌کند.** نصب تونل هنوز به گواهی‌ها و فایل‌های تنظیمات بازبینی‌شدهٔ هر نقش نیاز دارد. چون سرور ایران تو از قبل وضعیت شبکه و فایروال دارد، نصاب نباید guardهای شبکه را دور بزند یا قواعد موجود را پاک کند.
+
+
 قبل از آماده‌سازی هر دو VPS، اسکریپت **فقط‌خواندنی** را از checkout مخزن اجرا کن:
 
 ```sh
