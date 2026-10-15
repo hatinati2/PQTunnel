@@ -19,10 +19,16 @@ type fakeRunner struct {
 	calls [][]string
 	restartCount int
 	failFirstRestart bool
+	cancelOnFirstRestart context.CancelFunc
 	logs string
 }
 
-func (f *fakeRunner) Run(_ context.Context, args ...string) (string, error) {
+func (f *fakeRunner) Run(ctx context.Context, args ...string) (string, error) {
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, append([]string(nil), args...))
@@ -47,6 +53,7 @@ func (f *fakeRunner) Run(_ context.Context, args ...string) (string, error) {
 		f.restartCount++
 		if f.failFirstRestart && f.restartCount == 1 {
 			f.state = "failed"
+			if f.cancelOnFirstRestart != nil { f.cancelOnFirstRestart() }
 			return "simulated restart failure", errors.New("restart failed")
 		}
 		f.state = "active"
@@ -340,4 +347,25 @@ func TestWriteExistingFileWithRollbackPreservesModeAndRejectsSymlink(t *testing.
 	got, err = os.ReadFile(real)
 	if err != nil { t.Fatal(err) }
 	if string(got) != "PQTUNNEL_LISTEN=:9443\n" { t.Fatalf("symlink attempt changed target: %q", got) }
+}
+
+
+func TestApplyConfigurationRollbackSurvivesExpiredRequestContext(t *testing.T) {
+	original := "PQTUNNEL_LISTEN=:8443\n" +
+		"PQTUNNEL_MAX_CLIENTS=1\n" +
+		"PQTUNNEL_PEER_PREFIXES=10.66.0.2/32,192.0.2.0/24\n" +
+		"PQTUNNEL_LOCAL_PREFIXES=10.66.0.1/32,198.51.100.0/24,2001:db8:1::/48\n" +
+		"PQTUNNEL_PEER_NAME=iran-1\n" +
+		"PQTUNNEL_ALLOWED_DST_PORTS=tcp:443\n"
+	ctx, cancel := context.WithCancel(context.Background())
+	runner := &fakeRunner{state: "active", failFirstRestart: true, cancelOnFirstRestart: cancel}
+	m, path := newTestController(t, RoleGateway, original, runner)
+	err := m.ApplyConfiguration(ctx, validGatewayConfig())
+	if err == nil || !strings.Contains(err.Error(), "previous configuration was restored") {
+		t.Fatalf("expected recovered rollback message, got %v", err)
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil { t.Fatal(readErr) }
+	if string(got) != original { t.Fatalf("config not restored after request context cancellation:\ngot %q\nwant %q", got, original) }
+	if runner.restartCount != 2 { t.Fatalf("restart count=%d, want failed apply restart plus independent rollback restart", runner.restartCount) }
 }
