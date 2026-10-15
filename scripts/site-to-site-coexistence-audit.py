@@ -230,6 +230,14 @@ def iptables_rule_options(line: str) -> list[tuple[str, tuple[str, ...]]] | None
     return parsed
 
 
+# Options known to configure actions, matches, or rule structure rather than
+# packet-selection predicates. Any other unrecognized option is treated as an
+# additional selector so the audit never silently claims "none-detected".
+KNOWN_NON_SELECTOR_OPTIONS = (
+    set(OPTION_ARITY) - set(SELECTOR_OPTION_CATEGORIES) - set(OTHER_SELECTOR_ARITY)
+)
+
+
 def iptables_selector_categories(line: str) -> list[str]:
     """Return selector *types*, never values, using parsed option tokens."""
     parsed = iptables_rule_options(line)
@@ -237,10 +245,21 @@ def iptables_selector_categories(line: str) -> list[str]:
         return ["other"]
 
     selectors: set[str] = set()
+    known_options = (
+        set(SELECTOR_OPTION_CATEGORIES)
+        | set(OTHER_SELECTOR_ARITY)
+        | KNOWN_NON_SELECTOR_OPTIONS
+    )
     for option, args in parsed:
+        if option == "!":
+            # Negation modifies the following predicate; it is not a predicate
+            # category on its own.
+            continue
         if option in SELECTOR_OPTION_CATEGORIES:
             selectors.add(SELECTOR_OPTION_CATEGORIES[option])
-        if option in OTHER_SELECTOR_ARITY:
+        elif option in OTHER_SELECTOR_ARITY:
+            selectors.add("other")
+        elif option.startswith("-") and option not in known_options:
             selectors.add("other")
         if option in ("-m", "--match"):
             if not args:
