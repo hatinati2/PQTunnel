@@ -294,6 +294,69 @@ COMMIT
         self.assertNotIn("https", repr(parsed["notrack_rules"]))
         self.assertNotIn("8443", repr(parsed["notrack_rules"]))
 
+
+    def test_outer_flow_dialer_checks_ephemeral_and_listener_ports_as_a_tuple(self):
+        fixture = """*raw
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp --sport 40000 -j NOTRACK
+-A OUTPUT -p tcp --sport 80 -j NOTRACK
+-A OUTPUT -p tcp --dport 443 -j NOTRACK
+-A OUTPUT -p tcp --sport 40000 --dport 443 -j NOTRACK
+-A OUTPUT -p udp --sport 40000 -j NOTRACK
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -p tcp --dport 40000 -j NOTRACK
+-A PREROUTING -p tcp --dport 443 -j NOTRACK
+-A PREROUTING -p tcp --sport 443 -j NOTRACK
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="dialer", flow_listener_port=8443, flow_ephemeral_range=(32768, 60999)
+        )
+        observed = [r["flow_overlap"] for r in parsed["notrack_rules"]]
+        self.assertEqual(observed, [
+            "match", "no_match", "no_match", "no_match", "no_match",
+            "match", "no_match", "no_match",
+        ])
+        self.assertEqual(
+            [(r["flow_source_port_role"], r["flow_destination_port_role"]) for r in parsed["notrack_rules"]],
+            [
+                ("client_ephemeral_range", "gateway_listener"),
+                ("client_ephemeral_range", "gateway_listener"),
+                ("client_ephemeral_range", "gateway_listener"),
+                ("client_ephemeral_range", "gateway_listener"),
+                ("client_ephemeral_range", "gateway_listener"),
+                ("gateway_listener", "client_ephemeral_range"),
+                ("gateway_listener", "client_ephemeral_range"),
+                ("gateway_listener", "client_ephemeral_range"),
+            ],
+        )
+        self.assertEqual(parsed["notrack_rules"][0]["flow_overlap_reason"], "known_conditions_allow_flow")
+        self.assertEqual(parsed["notrack_rules"][4]["flow_overlap_reason"], "protocol_excludes_tcp")
+        self.assertNotIn("8443", repr(parsed["notrack_rules"]))
+        self.assertNotIn("40000", repr(parsed["notrack_rules"]))
+        self.assertNotIn("60999", repr(parsed["notrack_rules"]))
+
+    def test_outer_flow_gateway_direction_and_extra_selectors(self):
+        fixture = """*raw
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -p tcp --sport 40000 -j NOTRACK
+-A PREROUTING -p tcp --dport 8443 -j NOTRACK
+-A PREROUTING -p tcp -m conntrack --ctstate NEW -j NOTRACK
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp --dport 40000 -j NOTRACK
+-A OUTPUT -p tcp --sport 8443 -j NOTRACK
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="gateway", flow_listener_port=8443, flow_ephemeral_range=(32768, 60999)
+        )
+        self.assertEqual(
+            [r["flow_overlap"] for r in parsed["notrack_rules"]],
+            ["match", "no_match", "unknown", "match", "match"],
+        )
+        self.assertEqual(parsed["notrack_rules"][2]["flow_overlap_reason"], "additional_selector_present")
+        self.assertNotIn("8443", repr(parsed["notrack_rules"]))
+
     def test_accept_is_counted(self):
         parsed = audit.parse_iptables_save("*filter\n:FORWARD ACCEPT [0:0]\n-A FORWARD -j ACCEPT\nCOMMIT\n")
         self.assertEqual(parsed["rules"][("filter", "FORWARD")]["accept"], 1)
