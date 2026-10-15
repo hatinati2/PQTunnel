@@ -41,7 +41,6 @@ var (
 main{width:min(100%,430px);background:#141c2fee;border:1px solid var(--line);border-radius:22px;padding:30px;box-shadow:0 24px 80px #0005}
 h1{font-size:1.5rem;margin:0 0 8px}.muted{color:var(--muted)}label{display:block;margin:18px 0 7px;font-weight:650}input{width:100%;padding:13px 14px;border-radius:11px;border:1px solid #394966;background:#0c1425;color:var(--text);font:inherit}
 button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:11px;background:var(--accent);color:#092033;font:inherit;font-weight:750;cursor:pointer}.error{color:var(--danger);margin:12px 0 0}
- .configform{display:grid;gap:12px}.configform label{display:block;font-weight:650;margin:5px 0}.configform input:not([type=hidden]){display:block;width:100%;margin-top:6px;padding:11px 12px;border:1px solid #394966;border-radius:10px;background:#0c1425;color:var(--text);font:inherit}.configform input[type=number]{max-width:220px}.configform details{width:max-content;max-width:100%}.configform details p{max-width:700px}
 </style></head>
 <body><main><h1>مدیریت PQTunnel</h1><p class="muted">برای ورود، توکن مدیریتی تنظیم‌شده روی سرویس را وارد کنید.</p>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
@@ -76,6 +75,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:right;padding:13px 10
 footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 @media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.details{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:540px){.wrap{margin-top:22px}.grid,.details{grid-template-columns:1fr}.section{padding:14px}table,tbody,tr,td{display:block}thead{display:none}tr{border-bottom:1px solid #26334d;padding:9px 0}td{border:0;padding:5px 2px}td:before{content:attr(data-label) ": ";color:var(--muted)}td:last-child:before{content:""}}
+ .configform{display:grid;gap:12px}.configform label{display:block;font-weight:650;margin:5px 0}.configform input:not([type=hidden]){display:block;width:100%;margin-top:6px;padding:11px 12px;border:1px solid #394966;border-radius:10px;background:#0c1425;color:var(--text);font:inherit}.configform input[type=number]{max-width:220px}.configform details{width:max-content;max-width:100%}.configform details p{max-width:700px}
 </style></head>
 <body><main class="wrap">
 <header><div><h1>پنل مدیریت PQTunnel</h1><p class="sub">وضعیت سرویس و همتایان متصل · کنترل محدود و امن</p></div>
