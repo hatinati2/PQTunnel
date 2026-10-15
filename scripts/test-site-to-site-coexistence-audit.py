@@ -357,6 +357,49 @@ COMMIT
         self.assertEqual(parsed["notrack_rules"][2]["flow_overlap_reason"], "additional_selector_present")
         self.assertNotIn("8443", repr(parsed["notrack_rules"]))
 
+    def test_outer_tcp_rst_audit_classifies_filter_output_rules_and_redacts_values(self):
+        fixture = """*filter
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp -m tcp --sport 40000 --dport 8443 --tcp-flags RST RST -j DROP
+-A OUTPUT -p tcp --tcp-flags ALL SYN -j DROP
+-A OUTPUT -p tcp --sport 80 -j REJECT
+-A OUTPUT -p udp --sport 40000 -j DROP
+-A OUTPUT -p tcp --sport https -j DROP
+-A OUTPUT -p tcp -j DROP
+COMMIT
+*raw
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -p tcp --sport 40000 -j DROP
+COMMIT
+"""
+        parsed = audit.parse_iptables_save(
+            fixture, role="dialer", inspect_outer_tcp_rst=(8443, (32768, 60999))
+        )
+        rules = parsed["outer_tcp_rst_rules"]
+        self.assertEqual(len(rules), 6)
+        self.assertEqual([r["action"] for r in rules], ["drop", "drop", "reject", "drop", "drop", "drop"])
+        self.assertEqual(
+            [r["overlap"] for r in rules],
+            ["match", "no_match", "no_match", "no_match", "unknown", "match"],
+        )
+        self.assertEqual(rules[0]["reason"], "known_conditions_allow_rst_flow")
+        self.assertEqual(rules[1]["reason"], "tcp_flags_exclude_rst")
+        self.assertEqual(rules[3]["reason"], "protocol_excludes_tcp")
+        self.assertEqual(rules[4]["reason"], "unsupported_port_spec")
+        self.assertIn("tcp_flags", rules[0]["selectors"])
+        rendered = repr(rules)
+        self.assertNotIn("40000", rendered)
+        self.assertNotIn("8443", rendered)
+        self.assertNotIn("60999", rendered)
+        self.assertNotIn("https", rendered)
+        self.assertNotIn("203.0.113.", rendered)
+
+    def test_outer_tcp_rst_syn_shortcut_does_not_overlap_rst_packets(self):
+        status, reason = audit.candidate_tcp_rst_flow_overlap_detail(
+            "-A OUTPUT -p tcp --syn -j DROP", 8443, (32768, 60999), "dialer"
+        )
+        self.assertEqual((status, reason), ("no_match", "tcp_flags_exclude_rst"))
+
     def test_accept_is_counted(self):
         parsed = audit.parse_iptables_save("*filter\n:FORWARD ACCEPT [0:0]\n-A FORWARD -j ACCEPT\nCOMMIT\n")
         self.assertEqual(parsed["rules"][("filter", "FORWARD")]["accept"], 1)
