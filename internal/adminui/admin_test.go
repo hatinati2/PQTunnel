@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
-	"strings"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,6 +262,23 @@ func TestLoginAttemptTableOverflowFailsClosed(t *testing.T) {
 	}
 	if resp := postLogin(t, h, token, "127.0.0.130:12000"); resp.Code != http.StatusTooManyRequests {
 		t.Fatalf("overflow mode must fail closed for other clients, got %d", resp.Code)
+	}
+}
+
+func TestRejectsDNSRebindingHostEvenWhenOriginMatchesHost(t *testing.T) {
+	const token = "test-token-that-is-at-least-32-characters"
+	h, err := New(token, &fakeController{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"token": {token}}
+	req := httptest.NewRequest(http.MethodPost, "http://admin.attacker.invalid/login", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://admin.attacker.invalid")
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("matching attacker-controlled Host/Origin status=%d, want 403", resp.Code)
 	}
 }
 
