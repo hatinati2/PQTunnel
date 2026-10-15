@@ -224,8 +224,11 @@ func runAgainst(ctx context.Context, endpoint, baseURL, token string, sizeMiB in
 	if err != nil { return result, fmt.Errorf("connect to speed-test agent over tunnel: %w", err) }
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
 		return result, fmt.Errorf("peer speed-test agent returned HTTP %d", resp.StatusCode)
 	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
 
 	const rttSamples = 5
 	rtts := make([]float64, 0, rttSamples)
@@ -288,7 +291,7 @@ func ServeAgent(ctx context.Context, address, token string) error {
 			server := &http.Server{
 				Handler: handler,
 				ReadHeaderTimeout: 3 * time.Second,
-				ReadTimeout: 30 * time.Second,
+				ReadTimeout: 300 * time.Second,
 				WriteTimeout: 300 * time.Second,
 				IdleTimeout: 15 * time.Second,
 				MaxHeaderBytes: 8 << 10,
