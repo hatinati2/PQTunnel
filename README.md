@@ -21,7 +21,7 @@ The active project source tree and CI source of truth are at the **repository ro
 - Server systemd unit and separate, explicit Ubuntu IPv4 forwarding/NAT script.
 - Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
 - Privacy-preserving, read-only inventory of existing nftables/iptables firewall state. Unknown iptables options are treated conservatively as additional selectors; output excludes raw rules and selector values. See [firewall coexistence notes](docs/EXISTING-FIREWALL-COEXISTENCE.md).
-- Optional standalone Linux server-to-server web manager (`pqtunnel-manager`) with fixed-role Start/Stop/Restart controls, validated non-secret tunnel configuration editing, redacted service logs, peer disconnect and in-tunnel peer speed tests. It is disabled by default, loopback-only, and intended for SSH forwarding; see [the manager guide](docs/WEB-ADMIN-PANEL.md). The older in-process panel remains a separate, more limited feature.
+- Optional standalone Linux server-to-server web manager (`pqtunnel-manager`) with fixed-role Start/Stop/Restart controls, validated non-secret tunnel configuration editing, redacted service logs, peer disconnect and in-tunnel peer speed tests. It is disabled by default and binds to loopback by default; optional public-IP access requires a trusted TLS certificate with the public IP in its IP SAN. SSH forwarding remains recommended; see [the manager guide](docs/WEB-ADMIN-PANEL.md). The older in-process panel remains a separate, more limited feature.
 - GitHub Actions tests/cross-builds, a loopback TLS integration test, and Linux network-namespace tests using real TUN interfaces, including inbound TCP/UDP port-forward round trips and selective-vs-direct egress checks over IPv4 and IPv6.
 - Android `VpnService` scaffold and Linux/Windows TUN adapters.
 
@@ -70,7 +70,7 @@ The menu offers read-only host checks or installation of the standalone manager 
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
 ```
 
-The installer verifies the selected release archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go for manager installation. The manager is installed but **not started**; set a random `PQTUNNEL_MANAGER_TOKEN` of at least 32 bytes in `/etc/default/pqtunnel-manager`, review the file, then start the service deliberately. Keep its listener on loopback and use SSH forwarding.
+The installer verifies the selected release archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go for manager installation. The manager is installed but **not started**; set a random `PQTUNNEL_MANAGER_TOKEN` of at least 32 bytes in `/etc/default/pqtunnel-manager`, review the file, then start the service deliberately. It defaults to loopback. Direct public-IP access is supported only with trusted TLS and an IP SAN; see the manager guide.
 
 This is not a one-command tunnel configuration: Gateway/Dialer setup still requires reviewed certificates and role-specific environment files. The tunnel install/start commands are separate because they can change services or network state. The current release remains experimental and is not independently security-audited.
 
@@ -179,7 +179,7 @@ Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build L
 
 - [فارسی](README.fa.md)
 - [Security notes](SECURITY.md)
-- [Web management panel](docs/WEB-ADMIN-PANEL.md) (opt-in and loopback-only)
+- [Web management panel](docs/WEB-ADMIN-PANEL.md) (opt-in; loopback by default, optional TLS-only public IP)
 - [Two-VPS deployment readiness and recovery runbook](docs/TWO-VPS-DEPLOYMENT.md)
 - [Protocol notes](docs/PROTOCOL.md)
 - [Experimental server-to-server guide (Persian)](docs/SITE-TO-SITE.fa.md)
