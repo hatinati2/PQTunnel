@@ -84,7 +84,7 @@ func validGatewayConfig() adminapi.TunnelConfiguration {
 		PeerPrefixes: "10.66.0.2/32,192.0.2.0/24",
 		LocalPrefixes: "10.66.0.1/32,198.51.100.0/24,2001:db8:1::/48",
 		PeerIdentity: "iran-1",
-		AllowedDstPorts: "tcp:443,udp:53",
+		AllowedDstPorts: "tcp:443,udp:53,tcp:9109",
 	}
 }
 
@@ -94,7 +94,7 @@ func validDialerConfig() adminapi.TunnelConfiguration {
 		ServerName: "vpn.example.test",
 		LocalPrefixes: "10.66.0.2/32,192.0.2.0/24",
 		RemotePrefixes: "10.66.0.1/32,198.51.100.0/24,2001:db8:1::/48",
-		AllowedDstPorts: "tcp:443,udp:53",
+		AllowedDstPorts: "tcp:443,udp:53,tcp:9109",
 	}
 }
 
@@ -173,7 +173,7 @@ func TestUpdateEnvFilePreservesCommentsAndSecretSettings(t *testing.T) {
 }
 
 func TestApplyConfigurationBacksUpAndRestartsOnlyTheSelectedUnit(t *testing.T) {
-	original := "# gateway settings\nPQTUNNEL_LISTEN=:8443\nPQTUNNEL_MAX_CLIENTS=1\nPQTUNNEL_PEER_PREFIXES=10.66.0.2/32,192.0.2.0/24\nPQTUNNEL_LOCAL_PREFIXES=10.66.0.1/32,198.51.100.0/24,2001:db8:1::/48\nPQTUNNEL_PEER_NAME=iran-1\nPQTUNNEL_ALLOWED_DST_PORTS=tcp:443\nPQTUNNEL_ADMIN_TOKEN=abcdef0123456789abcdef0123456789\n"
+	original := "# gateway settings\nPQTUNNEL_LISTEN=:8443\nPQTUNNEL_MAX_CLIENTS=1\nPQTUNNEL_PEER_PREFIXES=10.66.0.2/32,192.0.2.0/24\nPQTUNNEL_LOCAL_PREFIXES=10.66.0.1/32,198.51.100.0/24,2001:db8:1::/48\nPQTUNNEL_PEER_NAME=iran-1\nPQTUNNEL_ALLOWED_DST_PORTS=tcp:443,tcp:9109\nPQTUNNEL_ADMIN_TOKEN=abcdef0123456789abcdef0123456789\n"
 	runner := &fakeRunner{state: "active"}
 	m, path := newTestController(t, RoleGateway, original, runner)
 	if err := m.ApplyConfiguration(context.Background(), validGatewayConfig()); err != nil {
@@ -184,7 +184,7 @@ func TestApplyConfigurationBacksUpAndRestartsOnlyTheSelectedUnit(t *testing.T) {
 	for _, want := range []string{"PQTUNNEL_LISTEN=0.0.0.0:8443,[::]:8443", "PQTUNNEL_MAX_CLIENTS=1", "PQTUNNEL_ADMIN_TOKEN=abcdef0123456789abcdef0123456789"} {
 		if !strings.Contains(string(got), want) { t.Fatalf("saved config lacks %q:\n%s", want, got) }
 	}
-	backupFiles, err := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(path)), "backups", "*.env"))
+	backupFiles, err := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(path))), "backups", "*.env"))
 	if err != nil { t.Fatal(err) }
 	if len(backupFiles) != 1 { t.Fatalf("backup count=%d, want 1", len(backupFiles)) }
 	if info, err := os.Stat(backupFiles[0]); err != nil || info.Mode().Perm() != 0600 {
@@ -200,7 +200,7 @@ func TestApplyConfigurationBacksUpAndRestartsOnlyTheSelectedUnit(t *testing.T) {
 }
 
 func TestApplyConfigurationRestoresPreviousFileWhenRestartFails(t *testing.T) {
-	original := "PQTUNNEL_LISTEN=:8443\nPQTUNNEL_MAX_CLIENTS=1\nPQTUNNEL_PEER_PREFIXES=10.66.0.2/32,192.0.2.0/24\nPQTUNNEL_LOCAL_PREFIXES=10.66.0.1/32,198.51.100.0/24,2001:db8:1::/48\nPQTUNNEL_PEER_NAME=iran-1\nPQTUNNEL_ALLOWED_DST_PORTS=tcp:443\n"
+	original := "PQTUNNEL_LISTEN=:8443\nPQTUNNEL_MAX_CLIENTS=1\nPQTUNNEL_PEER_PREFIXES=10.66.0.2/32,192.0.2.0/24\nPQTUNNEL_LOCAL_PREFIXES=10.66.0.1/32,198.51.100.0/24,2001:db8:1::/48\nPQTUNNEL_PEER_NAME=iran-1\nPQTUNNEL_ALLOWED_DST_PORTS=tcp:443,tcp:9109\n"
 	runner := &fakeRunner{state: "active", failFirstRestart: true}
 	m, path := newTestController(t, RoleGateway, original, runner)
 	err := m.ApplyConfiguration(context.Background(), validGatewayConfig())
@@ -248,4 +248,46 @@ func TestReadSecureConfigRejectsSymlinksAndWritableFiles(t *testing.T) {
 	if _, _, err := readSecureConfig(link); err == nil { t.Fatal("symlink config path must be rejected") }
 	if err := os.Chmod(real, 0666); err != nil { t.Fatal(err) }
 	if _, _, err := readSecureConfig(real); err == nil { t.Fatal("group/world-writable config must be rejected") }
+}
+
+
+func TestSpeedTestRequiresPrivatePeerPrefixAndAllowedTCPPort(t *testing.T) {
+	original := "PQTUNNEL_LISTEN=0.0.0.0:8443\n" +
+		"PQTUNNEL_MAX_CLIENTS=1\n" +
+		"PQTUNNEL_PEER_PREFIXES=10.66.0.2/32,192.0.2.0/24\n" +
+		"PQTUNNEL_LOCAL_PREFIXES=10.66.0.1/32,198.51.100.0/24\n" +
+		"PQTUNNEL_PEER_NAME=iran-1\n" +
+		"PQTUNNEL_ALLOWED_DST_PORTS=tcp:443,tcp:9109\n"
+	runner := &fakeRunner{state: "active"}
+	m, _ := newTestController(t, RoleGateway, original, runner)
+	m.speedTestPeer = "10.66.0.2:9109"
+	m.speedTestToken = "0123456789abcdef0123456789abcdef"
+
+	if !m.speedTestReady(validGatewayConfig()) {
+		t.Fatal("configured private peer endpoint with allowed TCP port should be ready")
+	}
+	if m.speedTestReady(adminapi.TunnelConfiguration{
+		PeerPrefixes: "10.66.0.3/32",
+		AllowedDstPorts: "tcp:9109",
+	}) {
+		t.Fatal("endpoint outside configured peer prefixes must not be speed-test ready")
+	}
+	if err := m.ValidateSpeedTestListener("10.66.0.1:9109", m.speedTestToken); err != nil {
+		t.Fatalf("valid local tunnel agent binding rejected: %v", err)
+	}
+	if err := m.ValidateSpeedTestListener("8.8.8.8:9109", m.speedTestToken); err == nil {
+		t.Fatal("public speed-test listener binding must be rejected")
+	}
+	if err := m.ValidateSpeedTestListener("10.66.0.2:9109", m.speedTestToken); err == nil {
+		t.Fatal("agent bind address outside local tunnel prefixes must be rejected")
+	}
+}
+
+func TestWebManagerRejectsDefaultRoutes(t *testing.T) {
+	m, _ := New(Options{Role: RoleDialer, ConfigPath: "/tmp/d", BackupDir: "/tmp/b", IPCSocket: "/tmp/s", Runner: &fakeRunner{state: "active"}})
+	cfg := validDialerConfig()
+	cfg.RemotePrefixes = "0.0.0.0/0"
+	if _, err := m.configurationChanges(cfg); err == nil {
+		t.Fatal("web manager must reject default-route changes without an out-of-band recovery review")
+	}
 }
