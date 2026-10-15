@@ -2,6 +2,7 @@ package adminui
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -336,6 +337,48 @@ func TestRejectsDNSRebindingHostEvenWhenOriginMatchesHost(t *testing.T) {
 	h.ServeHTTP(resp, req)
 	if resp.Code != http.StatusForbidden {
 		t.Fatalf("matching attacker-controlled Host/Origin status=%d, want 403", resp.Code)
+	}
+}
+
+
+func TestPublicIPOriginRequiresTLSAndExplicitHostAllowlist(t *testing.T) {
+	const token = "public-ip-manager-test-token-0123456789"
+	const publicIP = "198.51.100.10"
+	h, err := NewWithAllowedPublicHost(token, &fakeController{}, publicIP)
+	if err != nil { t.Fatal(err) }
+
+	values := url.Values{"token": {token}}
+	plain := httptest.NewRequest(http.MethodPost, "http://"+publicIP+":9091/login", strings.NewReader(values.Encode()))
+	plain.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	plain.Header.Set("Origin", "http://"+publicIP+":9091")
+	plainResp := httptest.NewRecorder()
+	h.ServeHTTP(plainResp, plain)
+	if plainResp.Code != http.StatusForbidden {
+		t.Fatalf("public plaintext login status=%d, want 403", plainResp.Code)
+	}
+
+	secure := httptest.NewRequest(http.MethodPost, "https://"+publicIP+":9091/login", strings.NewReader(values.Encode()))
+	secure.TLS = &tls.ConnectionState{}
+	secure.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	secure.Header.Set("Origin", "https://"+publicIP+":9091")
+	secureResp := httptest.NewRecorder()
+	h.ServeHTTP(secureResp, secure)
+	if secureResp.Code != http.StatusSeeOther {
+		t.Fatalf("allowlisted TLS login status=%d, want redirect", secureResp.Code)
+	}
+	cookies := secureResp.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].Secure {
+		t.Fatalf("public TLS session cookie must be Secure: %#v", cookies)
+	}
+
+	attacker := httptest.NewRequest(http.MethodPost, "https://admin.attacker.invalid:9091/login", strings.NewReader(values.Encode()))
+	attacker.TLS = &tls.ConnectionState{}
+	attacker.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	attacker.Header.Set("Origin", "https://admin.attacker.invalid:9091")
+	attackerResp := httptest.NewRecorder()
+	h.ServeHTTP(attackerResp, attacker)
+	if attackerResp.Code != http.StatusForbidden {
+		t.Fatalf("unlisted host/origin status=%d, want 403", attackerResp.Code)
 	}
 }
 
