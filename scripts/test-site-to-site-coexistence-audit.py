@@ -120,6 +120,27 @@ COMMIT
         self.assertEqual(parsed["rules"][("filter", "FORWARD")]["drop_reject"], 1)
         self.assertEqual(parsed["policies"][("filter", "FORWARD")], "DROP")
 
+    def test_selector_categories_ignore_option_like_text_inside_comments(self):
+        line = (
+            '-A OUTPUT -p tcp --dport 8443 -m comment '
+            '--comment "--ctstate NEW --uid-owner 1000 --dport 80 -m owner" '
+            '-j NOTRACK'
+        )
+        self.assertEqual(
+            audit.iptables_selector_categories(line),
+            ["port", "protocol"],
+        )
+        status, reason, _, _ = audit.candidate_tcp_flow_overlap_detail(
+            line, 8443, (32768, 60999), "dialer", "OUTPUT"
+        )
+        self.assertEqual((status, reason), ("match", "known_conditions_allow_flow"))
+
+    def test_selector_categories_remain_conservative_for_unparseable_rules(self):
+        self.assertEqual(
+            audit.iptables_selector_categories('-A OUTPUT --comment "unterminated -j DROP'),
+            ["other"],
+        )
+
     def test_notrack_scope_reports_selector_types_without_values(self):
         fixture = """*raw
 :PREROUTING ACCEPT [0:0]
