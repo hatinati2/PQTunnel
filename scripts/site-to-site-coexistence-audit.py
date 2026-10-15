@@ -208,6 +208,148 @@ def expected_endpoint_port_side(role: str, chain: str) -> str | None:
         return {"OUTPUT": "source", "PREROUTING": "destination"}.get(chain)
     return None
 
+
+def normalize_port_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[list[int]] = []
+    for low, high in sorted(ranges):
+        if merged and low <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], high)
+        else:
+            merged.append([low, high])
+    return [(low, high) for low, high in merged]
+
+
+def intersect_port_ranges(
+    left: list[tuple[int, int]], right: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    result = []
+    for left_low, left_high in left:
+        for right_low, right_high in right:
+            low, high = max(left_low, right_low), min(left_high, right_high)
+            if low <= high:
+                result.append((low, high))
+    return normalize_port_ranges(result)
+
+
+def complement_port_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    result = []
+    cursor = 0
+    for low, high in normalize_port_ranges(ranges):
+        if cursor < low:
+            result.append((cursor, low - 1))
+        cursor = max(cursor, high + 1)
+    if cursor <= 65535:
+        result.append((cursor, 65535))
+    return result
+
+
+def expected_outer_flow_sides(
+    role: str, chain: str, listener_port: int, ephemeral_range: tuple[int, int]
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]], str, str] | None:
+    """Return possible source/destination port sets and redacted labels for this chain."""
+    ephemeral = [ephemeral_range]
+    listener = [(listener_port, listener_port)]
+    if role == "dialer":
+        if chain == "OUTPUT":
+            return ephemeral, listener, "client_ephemeral_range", "gateway_listener"
+        if chain == "PREROUTING":
+            return listener, ephemeral, "gateway_listener", "client_ephemeral_range"
+    if role == "gateway":
+        if chain == "PREROUTING":
+            return ephemeral, listener, "client_ephemeral_range", "gateway_listener"
+        if chain == "OUTPUT":
+            return listener, ephemeral, "gateway_listener", "client_ephemeral_range"
+    return None
+
+
+def candidate_tcp_flow_overlap_detail(
+    line: str, listener_port: int, ephemeral_range: tuple[int, int], role: str, chain: str
+) -> tuple[str, str, str, str]:
+    """Check the outer TCP tuple using a listener port and an ephemeral range without leaking rule values."""
+    flow = expected_outer_flow_sides(role, chain, listener_port, ephemeral_range)
+    if flow is None:
+        return "unknown", "unsupported_role_or_chain", "unknown", "unknown"
+    source_possible, destination_possible, source_label, destination_label = flow
+    try:
+        tokens = shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        return "unknown", "unparseable_rule_tokens", source_label, destination_label
+
+    protocol = None
+    protocol_negated = False
+    modules: list[str] = []
+    conditions: list[tuple[str, str, bool]] = []
+    pending_negation = False
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "!":
+            pending_negation = True
+            i += 1
+            continue
+        if token in ("-p", "--protocol") and i + 1 < len(tokens):
+            protocol = tokens[i + 1].lower()
+            protocol_negated = pending_negation
+            pending_negation = False
+            i += 2
+            continue
+        if token in ("-m", "--match") and i + 1 < len(tokens):
+            modules.append(tokens[i + 1].lower())
+            i += 2
+            continue
+        if token in PORT_OPTIONS and i + 1 < len(tokens):
+            conditions.append((PORT_OPTIONS[token], tokens[i + 1], pending_negation))
+            pending_negation = False
+            i += 2
+            continue
+        if pending_negation:
+            return "unknown", "unsupported_negation", source_label, destination_label
+        i += 1
+
+    if protocol is not None:
+        if protocol in ("tcp", "6", "all", "0"):
+            protocol_matches_tcp = not protocol_negated
+        else:
+            protocol_matches_tcp = protocol_negated
+        if not protocol_matches_tcp:
+            return "no_match", "protocol_excludes_tcp", source_label, destination_label
+    elif "udp" in modules:
+        return "no_match", "protocol_excludes_tcp", source_label, destination_label
+
+    selectors = set(iptables_selector_categories(line))
+    if "protocol" in selectors and protocol is None:
+        return "unknown", "unsupported_protocol_selector_form", source_label, destination_label
+    if "port" in selectors and not conditions:
+        return "unknown", "unsupported_port_selector_form", source_label, destination_label
+
+    source_possible = normalize_port_ranges(source_possible)
+    destination_possible = normalize_port_ranges(destination_possible)
+    either_conditions = []
+    for side, value, negated in conditions:
+        parsed_ranges = parse_port_spec(value)
+        if parsed_ranges is None:
+            return "unknown", "unsupported_port_spec", source_label, destination_label
+        allowed = complement_port_ranges(parsed_ranges) if negated else normalize_port_ranges(parsed_ranges)
+        if side == "source":
+            source_possible = intersect_port_ranges(source_possible, allowed)
+            if not source_possible:
+                return "no_match", "port_excludes_flow_tuple", source_label, destination_label
+        elif side == "destination":
+            destination_possible = intersect_port_ranges(destination_possible, allowed)
+            if not destination_possible:
+                return "no_match", "port_excludes_flow_tuple", source_label, destination_label
+        else:
+            either_conditions.append((parsed_ranges, negated))
+
+    # --ports tests either field. Keep it conservative rather than combine
+    # multiple existential predicates incorrectly.
+    if either_conditions:
+        return "unknown", "either_port_selector_needs_joint_evaluation", source_label, destination_label
+
+    if set(selectors) - {"protocol", "port"}:
+        return "unknown", "additional_selector_present", source_label, destination_label
+    return "match", "known_conditions_allow_flow", source_label, destination_label
+
 def candidate_tcp_overlap_detail(line: str, port: int, side: str) -> tuple[str, str]:
     """Classify one candidate port on one packet side; reasons are fixed, non-sensitive labels."""
     if side not in ("source", "destination"):
@@ -309,7 +451,7 @@ def candidate_tcp_overlap(line: str, port: int, role: str, chain: str) -> str:
     return candidate_tcp_overlap_detail(line, port, side)[0]
 
 
-def parse_iptables_save(text: str, candidate_port: int | None = None, role: str = "both", inspect_tcp_port: int | None = None) -> dict[str, Any]:
+def parse_iptables_save(text: str, candidate_port: int | None = None, role: str = "both", inspect_tcp_port: int | None = None, flow_listener_port: int | None = None, flow_ephemeral_range: tuple[int, int] | None = None) -> dict[str, Any]:
     table = None
     policies: dict[tuple[str, str], str] = {}
     rules: dict[tuple[str, str], dict[str, int]] = defaultdict(
@@ -359,6 +501,14 @@ def parse_iptables_save(text: str, candidate_port: int | None = None, role: str 
                         status, reason = candidate_tcp_overlap_detail(line, inspect_tcp_port, port_side)
                         record[f"{port_side}_port_overlap"] = status
                         record[f"{port_side}_port_overlap_reason"] = reason
+                if flow_listener_port is not None and flow_ephemeral_range is not None:
+                    status, reason, source_label, destination_label = candidate_tcp_flow_overlap_detail(
+                        line, flow_listener_port, flow_ephemeral_range, role, fields[1]
+                    )
+                    record["flow_overlap"] = status
+                    record["flow_overlap_reason"] = reason
+                    record["flow_source_port_role"] = source_label
+                    record["flow_destination_port_role"] = destination_label
             notrack_rules.append(record)
         if MARK_RE.search(line): counts["packet_mark"] += 1
         if NAT_RE.search(line): counts["nat"] += 1
@@ -399,12 +549,12 @@ def audit_nft() -> None:
         if hook != "-" or any(counts[cat] for cat in CATEGORIES):
             print(f"nft_chain family={family} table={table} name={chain} hook={hook} priority={priority if priority is not None else '-'} policy={policy} {fmt_categories(counts)}")
 
-def audit_iptables(command: str, family: str, role: str, candidate_port: int | None, inspect_tcp_port: int | None) -> None:
+def audit_iptables(command: str, family: str, role: str, candidate_port: int | None, inspect_tcp_port: int | None, flow_listener_port: int | None, flow_ephemeral_range: tuple[int, int] | None) -> None:
     rc, output = run_readonly([command])
     if rc != 0:
         print(f"WARN {family}_iptables_save=query_failed_or_unavailable; state is unknown")
         return
-    parsed = parse_iptables_save(output, candidate_port=candidate_port, role=role, inspect_tcp_port=inspect_tcp_port)
+    parsed = parse_iptables_save(output, candidate_port=candidate_port, role=role, inspect_tcp_port=inspect_tcp_port, flow_listener_port=flow_listener_port, flow_ephemeral_range=flow_ephemeral_range)
     table_names = {t for t, _ in parsed["policies"]} | {t for t, _ in parsed["rules"]}
     total = sum(v["rules"] for v in parsed["rules"].values())
     print(f"{family}_iptables_save=ok tables={len(table_names)} rules={total}")
@@ -440,6 +590,13 @@ def audit_iptables(command: str, family: str, role: str, candidate_port: int | N
                 f" tcp_port_probe_destination_overlap={rule['destination_port_overlap']}"
                 f" tcp_port_probe_destination_reason={rule['destination_port_overlap_reason']}"
             )
+        if "flow_overlap" in rule:
+            suffix += (
+                f" tcp_flow_source_role={rule['flow_source_port_role']}"
+                f" tcp_flow_destination_role={rule['flow_destination_port_role']}"
+                f" tcp_flow_overlap={rule['flow_overlap']}"
+                f" tcp_flow_reason={rule['flow_overlap_reason']}"
+            )
         print(f"{family}_iptables_notrack_scope table={key[0]} chain={key[1]} rule={chain_indices[key]} selectors={selectors} mechanism={rule['mechanism']}{suffix}")
 
 def main() -> int:
@@ -454,7 +611,29 @@ def main() -> int:
         "--inspect-tcp-port", type=int, choices=range(1, 65536), default=None,
         help="probe this TCP port independently on source and destination sides of raw NOTRACK rules; rule values remain redacted",
     )
+    port_checks.add_argument(
+        "--inspect-outer-tcp-flow", nargs=2, metavar=("LISTENER_PORT", "EPHEMERAL_RANGE"),
+        default=None,
+        help="check a role-aware outer TCP flow using listener port and client ephemeral range (for example 8443 32768:60999); all supplied port values are redacted in output",
+    )
     args = parser.parse_args()
+    flow_listener_port = None
+    flow_ephemeral_range = None
+    if args.inspect_outer_tcp_flow is not None:
+        try:
+            flow_listener_port = int(args.inspect_outer_tcp_flow[0])
+        except ValueError:
+            parser.error("LISTENER_PORT must be a decimal TCP port")
+        if not 1 <= flow_listener_port <= 65535:
+            parser.error("LISTENER_PORT must be between 1 and 65535")
+        parsed_range = parse_port_spec(args.inspect_outer_tcp_flow[1])
+        if parsed_range is None or len(parsed_range) != 1:
+            parser.error("EPHEMERAL_RANGE must be one numeric range, such as LOW:HIGH")
+        flow_ephemeral_range = parsed_range[0]
+        if flow_ephemeral_range[0] > flow_ephemeral_range[1]:
+            parser.error("EPHEMERAL_RANGE lower bound must not exceed upper bound")
+        if args.role == "both":
+            parser.error("--inspect-outer-tcp-flow requires --role dialer or --role gateway")
     os_release = {}
     try:
         for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
@@ -470,9 +649,11 @@ def main() -> int:
         print("candidate_tcp_port_check=enabled port_value=redacted")
     if args.inspect_tcp_port is not None:
         print("tcp_port_probe=enabled port_value=redacted sides=source,destination mode=NOTRACK-rule-predicate")
+    if flow_listener_port is not None and flow_ephemeral_range is not None:
+        print("outer_tcp_flow_check=enabled listener_port=redacted client_ephemeral_range=redacted tuple_values=redacted")
     audit_nft()
-    audit_iptables("iptables-save", "ipv4", args.role, args.candidate_tcp_port, args.inspect_tcp_port)
-    audit_iptables("ip6tables-save", "ipv6", args.role, args.candidate_tcp_port, args.inspect_tcp_port)
+    audit_iptables("iptables-save", "ipv4", args.role, args.candidate_tcp_port, args.inspect_tcp_port, flow_listener_port, flow_ephemeral_range)
+    audit_iptables("ip6tables-save", "ipv6", args.role, args.candidate_tcp_port, args.inspect_tcp_port, flow_listener_port, flow_ephemeral_range)
     print("READ-ONLY GUARANTEE: no files, routes, sysctls, firewall state or services were changed.")
     print("This inventory supports lab design; it is not approval to apply network changes.")
     return 0
