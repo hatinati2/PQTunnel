@@ -3,6 +3,7 @@ package adminipc
 import (
 	"context"
 	"net"
+	"sync"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,7 @@ import (
 )
 
 type testController struct {
+	mu sync.Mutex
 	snapshot adminapi.Snapshot
 	disconnected string
 }
@@ -19,10 +21,17 @@ type testController struct {
 func (c *testController) AdminSnapshot() adminapi.Snapshot { return c.snapshot }
 func (c *testController) DisconnectPeer(identity string) bool {
 	if identity != "" && identity == "peer-1" {
+		c.mu.Lock()
 		c.disconnected = identity
+		c.mu.Unlock()
 		return true
 	}
 	return false
+}
+func (c *testController) disconnectedIdentity() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.disconnected
 }
 
 func TestPrivateSocketStatusAndDisconnect(t *testing.T) {
@@ -51,7 +60,7 @@ func TestPrivateSocketStatusAndDisconnect(t *testing.T) {
 	if _, err := Call(callCtx, path, "disconnect", "peer-1"); err != nil {
 		t.Fatalf("disconnect call: %v", err)
 	}
-	if controller.disconnected != "peer-1" { t.Fatalf("disconnected identity=%q", controller.disconnected) }
+	if got := controller.disconnectedIdentity(); got != "peer-1" { t.Fatalf("disconnected identity=%q", got) }
 	if _, err := Call(callCtx, path, "disconnect", "systemctl"); err == nil {
 		t.Fatal("unknown peer identity must not be accepted")
 	}
