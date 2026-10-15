@@ -1,6 +1,7 @@
 package adminui
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -78,7 +79,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 <header><div><h1>پنل مدیریت PQTunnel</h1><p class="sub">وضعیت سرویس و همتایان متصل · کنترل محدود و امن</p></div>
 <div class="header-actions"><a class="refresh" href="/">به‌روزرسانی وضعیت</a>
 <form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">خروج از پنل</button></form></div></header>
-{{if .Notice}}<div class="notice" role="status">{{.Notice}}</div>{{end}}
+{{if .Notice}}<div class="notice" role="status">{{.Notice}}{{if .Detail}} — {{.Detail}}{{end}}</div>{{end}}
 <section class="grid" aria-label="خلاصه وضعیت">
 <div class="card"><div class="kicker">وضعیت تونل</div><div class="metric status"><span class="dot {{if .Snapshot.Running}}up{{end}}"></span>{{if .Snapshot.Running}}فعال{{else}}متوقف / در حال راه‌اندازی{{end}}</div></div>
 <div class="card"><div class="kicker">همتایان متصل</div><div class="metric">{{len .Snapshot.Peers}} / {{.Snapshot.MaxClients}}</div></div>
@@ -90,12 +91,48 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 <div class="detail"><span class="kicker">هویت همتای مورد انتظار</span><b>{{if .Snapshot.PeerIdentity}}{{.Snapshot.PeerIdentity}}{{else}}تنظیم نشده{{end}}</b></div>
 <div class="detail"><span class="kicker">محدوده‌های مجاز</span><b>محلی: {{.Snapshot.LocalPrefixCount}} · همتا: {{.Snapshot.PeerPrefixCount}}</b></div>
 </div></section>
+{{if .Manager}}
+<section class="section"><h2>کنترل سرویس تونل</h2>
+<div class="details">
+<div class="detail"><span class="kicker">نقش این سرور</span><b>{{if eq .Manager.Role "gateway"}}Gateway / Listener{{else}}Dialer{{end}}</b></div>
+<div class="detail"><span class="kicker">واحد systemd</span><b>{{.Manager.ServiceUnit}}</b></div>
+<div class="detail"><span class="kicker">وضعیت systemd</span><b>{{.Manager.ActiveState}} / {{.Manager.SubState}} · PID {{if .Manager.MainPID}}{{.Manager.MainPID}}{{else}}—{{end}}</b></div>
+</div>
+<p class="sub">استارت/استاپ/ری‌استارت اتصال فعال را قطع می‌کند. این عملیات فقط واحد ثابتِ نقش انتخاب‌شده را کنترل می‌کند؛ برای اعمال تغییر روی سرور عملیاتی، ابتدا مسیر بازیابی خارج از تونل را آماده کن.</p>
+<div class="header-actions">
+<details class="disconnect"><summary>Start</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="start"><input type="hidden" name="confirm" value="yes"><button type="submit">تأیید راه‌اندازی</button></form></details>
+<details class="disconnect"><summary>Stop</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="stop"><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">تأیید توقف</button></form></details>
+<details class="disconnect"><summary>Restart</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="restart"><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">تأیید راه‌اندازی مجدد</button></form></details>
+</div>
+</section>
+<section class="section"><h2>ویرایش تنظیمات تونل</h2>
+{{if .Manager.ConfigError}}<div class="notice">{{.Manager.ConfigError}}</div>{{end}}
+{{if .Manager.ConfigReady}}<p class="sub">آخرین تنظیمات خوانده‌شده از فایل سرویس. مسیر گواهی‌ها، کلیدها، توکن‌ها و متغیرهای مدیریتی از این فرم قابل تغییر نیستند.</p>{{else}}<p class="sub">فایل تنظیمات قابل خواندن نیست یا هنوز برای site-to-site کامل نشده است. مقادیر معتبر وارد کن؛ قبل از اعمال، اعتبارسنجی انجام می‌شود.</p>{{end}}
+<form method="post" action="/config/apply" class="configform">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+{{if eq .Manager.Role "gateway"}}
+<label>نشانی شنونده (IP:port؛ برای چند نشانی با کاما جدا کن)<input name="listen_address" maxlength="512" required value="{{.Manager.Config.ListenAddress}}"></label>
+<label>CIDRهای شبکهٔ سمت Dialer<input name="peer_prefixes" maxlength="2048" required value="{{.Manager.Config.PeerPrefixes}}"></label>
+<label>CIDRهای مجاز سمت Gateway (از جمله IP تونل خود Gateway برای تست)<input name="local_prefixes" maxlength="2048" required value="{{.Manager.Config.LocalPrefixes}}"></label>
+<label>Common Name گواهی peer<input name="peer_identity" maxlength="128" required value="{{.Manager.Config.PeerIdentity}}"></label>
+{{else}}
+<label>آدرس Listener با پورت (دامنه، IPv4 یا [IPv6])<input name="server_address" maxlength="512" required value="{{.Manager.Config.ServerAddress}}"></label>
+<label>نام TLS که باید با SAN گواهی تطبیق داشته باشد<input name="server_name" maxlength="253" required value="{{.Manager.Config.ServerName}}"></label>
+<label>CIDRهای محلی سمت Dialer<input name="local_prefixes" maxlength="2048" required value="{{.Manager.Config.LocalPrefixes}}"></label>
+<label>CIDRهای سمت Gateway قابل‌دسترسی برای Dialer<input name="remote_prefixes" maxlength="2048" required value="{{.Manager.Config.RemotePrefixes}}"></label>
+{{end}}
+<label>Allowlist پورت‌های مقصد TCP/UDP<input name="allowed_dst_ports" maxlength="1024" required value="{{.Manager.Config.AllowedDstPorts}}"></label>
+<p class="sub">تغییرات با اعتبارسنجی و تهیهٔ نسخهٔ پشتیبان ذخیره می‌شود. اگر سرویس فعال باشد، پنل آن را restart می‌کند؛ در صورت ناموفق‌بودن، تنظیم قبلی بازگردانده می‌شود. انتخاب default route یا CIDR هم‌پوشان رد می‌شود یا نیازمند بازبینی جداگانه است.</p>
+<details class="disconnect"><summary>بررسی و اعمال تنظیمات</summary><p>اعمال ممکن است تونل را برای چند لحظه قطع کند. فقط وقتی دسترسی کنسول/SSH مستقل داری تأیید کن.</p><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">تأیید اعتبارسنجی و اعمال</button></details>
+</form>
+</section>
+{{end}}
 <section class="section"><h2>همتایان متصل</h2>
 {{if .Snapshot.Peers}}<table><thead><tr><th>هویت گواهی</th><th>مدت اتصال</th><th>عملیات</th></tr></thead><tbody>
 {{range .Snapshot.Peers}}<tr><td class="identity" data-label="هویت">{{.Identity}}</td><td data-label="مدت اتصال">{{.ConnectedFor}}</td><td><details class="disconnect"><summary>قطع اتصال</summary><form method="post" action="/peers/disconnect" class="peerform"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="identity" value="{{.Identity}}"><button class="danger" type="submit">تأیید قطع اتصال</button></form></details></td></tr>{{end}}
 </tbody></table>{{else}}<div class="empty">در حال حاضر هیچ همتای احراز هویت‌شده‌ای متصل نیست.</div>{{end}}
 </section>
-<footer>این پنل فقط وضعیت را نمایش می‌دهد و اتصال همتا را قطع می‌کند؛ مسیرها، فایروال، NAT، گواهی‌ها و کلیدها را تغییر نمی‌دهد. پنل باید فقط روی loopback در دسترس باشد.</footer>
+<footer>{{if .Manager}}این پنل کنترل محدود سرویس، تنظیمات site-to-site و اتصال همتا را فراهم می‌کند. فایل‌های PKI، کلیدها، فایروال و قوانین NAT از این فرم تغییر نمی‌کنند. پنل باید فقط روی loopback در دسترس باشد.{{else}}این پنل فقط وضعیت را نمایش می‌دهد و اتصال همتا را قطع می‌کند؛ مسیرها، فایروال، NAT، گواهی‌ها و کلیدها را تغییر نمی‌دهد. پنل باید فقط روی loopback در دسترس باشد.{{end}}</footer>
 </main></body></html>`))
 )
 
@@ -115,6 +152,7 @@ type loginAttempt struct {
 type Handler struct {
 	token         []byte
 	controller    adminapi.Controller
+	manager       adminapi.ManagerController
 	mu            sync.Mutex
 	sessions           map[string]session
 	loginAttempts      map[string]loginAttempt
@@ -128,10 +166,14 @@ func New(token string, controller adminapi.Controller) (*Handler, error) {
 	if controller == nil {
 		return nil, errors.New("admin controller is required")
 	}
-	return &Handler{
+	handler := &Handler{
 		token: []byte(token), controller: controller, sessions: make(map[string]session),
 		loginAttempts: make(map[string]loginAttempt),
-	}, nil
+	}
+	if manager, ok := controller.(adminapi.ManagerController); ok {
+		handler.manager = manager
+	}
+	return handler, nil
 }
 
 // ValidateLoopbackAddress forbids exposing the unencrypted admin HTTP server on
@@ -174,19 +216,94 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
+		var managerView *adminapi.ManagerSnapshot
+		if h.manager != nil {
+			view := h.manager.ManagementSnapshot()
+			managerView = &view
+		}
 		data := struct {
 			Snapshot adminapi.Snapshot
 			CSRF     string
 			Notice   string
+			Detail   string
+			Manager  *adminapi.ManagerSnapshot
 		}{
 			Snapshot: h.controller.AdminSnapshot(),
 			CSRF:     current.CSRF,
 			Notice:   noticeMessage(r.URL.Query().Get("notice")),
+			Detail:   safeNoticeDetail(r.URL.Query().Get("detail")),
+			Manager:  managerView,
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := dashboardTemplate.Execute(w, data); err != nil {
 			return
 		}
+	case "/service/action":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, "POST")
+			return
+		}
+		_, current, ok := h.requirePostSession(w, r)
+		if !ok { return }
+		if h.manager == nil {
+			http.Error(w, "مدیریت سرویس از این پنل در دسترس نیست.", http.StatusNotFound)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		if err := r.ParseForm(); err != nil || !secureEqual(r.PostForm.Get("csrf"), current.CSRF) {
+			http.Error(w, "درخواست نامعتبر است.", http.StatusBadRequest)
+			return
+		}
+		action := r.PostForm.Get("action")
+		if r.PostForm.Get("confirm") != "yes" || (action != "start" && action != "stop" && action != "restart") {
+			http.Error(w, "عملیات یا تأیید آن معتبر نیست.", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+		defer cancel()
+		if err := h.manager.ServiceAction(ctx, action); err != nil {
+			h.redirectWithDetail(w, r, "operation-failed", err.Error())
+			return
+		}
+		http.Redirect(w, r, "/?notice=service-"+action, http.StatusSeeOther)
+	case "/config/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, "POST")
+			return
+		}
+		_, current, ok := h.requirePostSession(w, r)
+		if !ok { return }
+		if h.manager == nil {
+			http.Error(w, "ویرایش تنظیمات از این پنل در دسترس نیست.", http.StatusNotFound)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 16384)
+		if err := r.ParseForm(); err != nil || !secureEqual(r.PostForm.Get("csrf"), current.CSRF) {
+			http.Error(w, "درخواست نامعتبر است.", http.StatusBadRequest)
+			return
+		}
+		if r.PostForm.Get("confirm") != "yes" {
+			http.Error(w, "تأیید اعمال تنظیمات الزامی است.", http.StatusBadRequest)
+			return
+		}
+		cfg := adminapi.TunnelConfiguration{
+			ListenAddress: r.PostForm.Get("listen_address"),
+			MaxClients: 1,
+			PeerPrefixes: r.PostForm.Get("peer_prefixes"),
+			LocalPrefixes: r.PostForm.Get("local_prefixes"),
+			PeerIdentity: r.PostForm.Get("peer_identity"),
+			ServerAddress: r.PostForm.Get("server_address"),
+			ServerName: r.PostForm.Get("server_name"),
+			RemotePrefixes: r.PostForm.Get("remote_prefixes"),
+			AllowedDstPorts: r.PostForm.Get("allowed_dst_ports"),
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		if err := h.manager.ApplyConfiguration(ctx, cfg); err != nil {
+			h.redirectWithDetail(w, r, "config-failed", err.Error())
+			return
+		}
+		http.Redirect(w, r, "/?notice=config-applied", http.StatusSeeOther)
 	case "/peers/disconnect":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, "POST")
@@ -459,9 +576,30 @@ func noticeMessage(notice string) string {
 		return "درخواست قطع اتصال ارسال شد."
 	case "peer-not-found":
 		return "این همتا دیگر متصل نیست."
+	case "service-start":
+		return "سرویس راه‌اندازی شد."
+	case "service-stop":
+		return "سرویس متوقف شد."
+	case "service-restart":
+		return "سرویس مجدداً راه‌اندازی شد."
+	case "config-applied":
+		return "تنظیمات ذخیره شد؛ در صورت فعال‌بودن سرویس، راه‌اندازی مجدد هم موفق بود."
+	case "operation-failed", "config-failed":
+		return "عملیات انجام نشد."
 	default:
 		return ""
 	}
+}
+
+func safeNoticeDetail(detail string) string {
+	if len(detail) > 400 { detail = detail[:400] }
+	return strings.ReplaceAll(strings.TrimSpace(detail), "\x00", "")
+}
+
+func (h *Handler) redirectWithDetail(w http.ResponseWriter, r *http.Request, notice, detail string) {
+	if len(detail) > 400 { detail = detail[:400] }
+	target := "/?notice=" + url.QueryEscape(notice) + "&detail=" + url.QueryEscape(detail)
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 func methodNotAllowed(w http.ResponseWriter, allow string) {
