@@ -35,6 +35,14 @@ PQTUNNEL_ADMIN_TOKEN=REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_BYTES
 
 Replace the example token with a strong random secret of at least 32 bytes. Do not commit the real token or place it in command-line arguments. The listener accepts only a literal loopback IP (for example, `127.0.0.1:9090` or `[::1]:9090`); wildcard and public addresses are rejected. The panel uses plain HTTP because it is loopback-only. Open it in the browser using a numeric loopback URL such as `http://127.0.0.1:9090/`, not `localhost` or a domain name; Origin validation rejects hostnames to reduce DNS-rebinding risk. For access from another machine, use an encrypted SSH tunnel and never expose the panel port directly to the internet.
 
+When using the repository's systemd unit, put these variables in `/etc/default/pqtunneld`, which the unit reads as its `EnvironmentFile`. Generate a random token in a secure terminal with `openssl rand -hex 32`, then place the output in the environment file (do not commit it or copy it into logs). Keep the file root-only readable with `sudo chmod 0600 /etc/default/pqtunneld`. Restarting the service is required after editing and will disconnect active tunnel peers, so plan a maintenance window. For remote access, keep the admin listener on loopback and create an SSH tunnel from your workstation:
+
+```sh
+ssh -N -L 9090:127.0.0.1:9090 USER@SERVER
+```
+
+Then open `http://127.0.0.1:9090/` locally. Replace `USER@SERVER` with your SSH account and host. Full setup notes are in [the panel guide](docs/WEB-ADMIN-PANEL.md).
+
 After login, it shows limited daemon and connected-peer status and allows disconnecting a selected peer. It does not start or stop systemd, or modify routes, sysctls, firewall, NAT, certificates, or keys. Sessions are in-memory and expire after 12 hours; state-changing requests have CSRF protection, and five failed logins from an IP trigger a 60-second lockout. This is an experimental admin surface, not a complete audit or user-management system.
 
 ## Important limitations
