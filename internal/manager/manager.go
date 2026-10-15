@@ -65,11 +65,12 @@ type Controller struct {
 	backupDir  string
 	ipcSocket  string
 	runner     Runner
-	mu         sync.Mutex
-	speedMu    sync.Mutex
-	speedTestPeer string
-	speedTestToken string
-	lastSpeedTest *adminapi.SpeedTestResult
+	mu              sync.Mutex
+	speedRunMu      sync.Mutex
+	lastSpeedTestMu sync.Mutex
+	speedTestPeer   string
+	speedTestToken  string
+	lastSpeedTest   *adminapi.SpeedTestResult
 	now        func() time.Time
 }
 
@@ -154,12 +155,12 @@ func (m *Controller) managementSnapshot(ctx context.Context) adminapi.ManagerSna
 	}
 	view.SpeedTestPeer = m.speedTestPeer
 	view.SpeedTestReady = m.speedTestReady(view.Config)
-	m.speedMu.Lock()
+	m.lastSpeedTestMu.Lock()
 	if m.lastSpeedTest != nil {
 		last := *m.lastSpeedTest
 		view.LastSpeedTest = &last
 	}
-	m.speedMu.Unlock()
+	m.lastSpeedTestMu.Unlock()
 	return view
 }
 
@@ -249,8 +250,8 @@ func (m *Controller) ValidateSpeedTestListener(address, token string) error {
 }
 
 func (m *Controller) RunSpeedTest(ctx context.Context, sizeMiB int) (adminapi.SpeedTestResult, error) {
-	m.speedMu.Lock()
-	defer m.speedMu.Unlock()
+	m.speedRunMu.Lock()
+	defer m.speedRunMu.Unlock()
 
 	cfg, _, err := m.readConfiguration()
 	if err != nil {
@@ -269,7 +270,9 @@ func (m *Controller) RunSpeedTest(ctx context.Context, sizeMiB int) (adminapi.Sp
 		UploadSeconds: result.UploadSeconds, DownloadSeconds: result.DownloadSeconds,
 		CompletedAt: result.CompletedAt.Format(time.RFC3339),
 	}
+	m.lastSpeedTestMu.Lock()
 	m.lastSpeedTest = &stored
+	m.lastSpeedTestMu.Unlock()
 	return stored, nil
 }
 
@@ -307,6 +310,10 @@ func tcpPortProbe(dst netip.Addr, port uint16) []byte {
 func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.speedRunMu.TryLock() {
+		return errors.New("a speed test is running; service actions are temporarily blocked")
+	}
+	defer m.speedRunMu.Unlock()
 	switch action {
 	case "start", "stop", "restart":
 	default:
@@ -325,6 +332,10 @@ func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 func (m *Controller) ApplyConfiguration(ctx context.Context, config adminapi.TunnelConfiguration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.speedRunMu.TryLock() {
+		return errors.New("a speed test is running; configuration changes are temporarily blocked")
+	}
+	defer m.speedRunMu.Unlock()
 	changes, err := m.configurationChanges(config)
 	if err != nil {
 		return err
