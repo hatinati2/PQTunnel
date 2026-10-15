@@ -70,6 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bash -n install.sh
           for script in scripts/*.sh; do bash -n "$script"; done
       - name: Install nftables parser for check-only regression test
         run: |
