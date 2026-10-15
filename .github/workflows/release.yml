@@ -8,7 +8,18 @@ permissions:
   contents: write
 
 jobs:
+  validate-release-version:
+    name: Validate release tag and documentation version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject tags that disagree with documented versions
+        run: python3 scripts/check-release-version.py "$GITHUB_REF_NAME"
+
   integration-test:
+    needs: validate-release-version
     name: netns integration (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
