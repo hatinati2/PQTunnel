@@ -9,7 +9,7 @@ import (
 	"github.com/hatinati2/PQTunnel/internal/adminipc"
 )
 
-const clientControlSocket = "/run/pqtunnel/control.sock"
+const clientControlSocket = "/run/pqtunnel/client-control.sock"
 
 func startClientAdminIPC(ctx context.Context, controller adminapi.Controller) (func(), error) {
 	listener, err := adminipc.Listen(clientControlSocket)
