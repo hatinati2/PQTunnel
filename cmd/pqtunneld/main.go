@@ -82,7 +82,8 @@ func main() {
 		fatalIf(err)
 		adminHTTP := &http.Server{
 			Addr: *adminListen, Handler: adminHandler,
-			ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
+			ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
+			WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second,
 			MaxHeaderBytes: 8 << 10,
 		}
 		go func() {
