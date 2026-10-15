@@ -79,13 +79,32 @@ sudoedit /etc/default/pqtunnel-manager
 sudo systemctl enable --now pqtunnel-manager
 ```
 
-دسترسی فقط از loopback است؛ پورت 9091 را در فایروال یا Security Group عمومی نکنید. از دستگاه مدیریت، تونل SSH بسازید:
+به‌صورت پیش‌فرض دسترسی فقط از loopback است؛ امن‌ترین روش همچنان تونل SSH است. برای دسترسی مستقیم با IP عمومی فقط حالت HTTPS با گواهی معتبر را طبق بخش بعدی تنظیم کنید. در حالت پیش‌فرض از دستگاه مدیریت، تونل SSH بسازید:
 
 ```sh
 ssh -N -L 9091:127.0.0.1:9091 USER@SERVER
 ```
 
 سپس در همان دستگاه به `http://127.0.0.1:9091/` بروید. پنل با توکن جداگانهٔ مدیر وارد می‌شود.
+
+### دسترسی مستقیم از طریق IP عمومی (HTTPS اجباری)
+
+حالت پیش‌فرض همچنان loopback-only است. برای بازکردن پنل از طریق `https://IP-عمومی:9091`، نسخهٔ manager باید با پیکربندی TLS اجرا شود؛ bind عمومی با HTTP ساده عمداً رد می‌شود. گواهی TLS باید در SAN خود، دقیقاً IP عمومی مورد استفاده در مرورگر را داشته باشد و زنجیرهٔ آن در دستگاه مدیریت مورد اعتماد باشد. گواهی self-signed باعث هشدار مرورگر می‌شود و برای پنل مدیریتی توصیه نمی‌شود.
+
+نمونهٔ فایل `/etc/default/pqtunnel-manager` (مقادیر نمونه را با IP واقعی و مسیر گواهی معتبر جایگزین کنید):
+
+```ini
+PQTUNNEL_MANAGER_ROLE=dialer
+PQTUNNEL_MANAGER_LISTEN=0.0.0.0:9091
+PQTUNNEL_MANAGER_PUBLIC_HOST=12.12.12.12
+PQTUNNEL_MANAGER_TLS_CERT=/etc/pqtunnel-manager/fullchain.pem
+PQTUNNEL_MANAGER_TLS_KEY=/etc/pqtunnel-manager/privkey.pem
+PQTUNNEL_MANAGER_TOKEN=...توکن تصادفی فعلی...
+```
+
+فایل را فقط برای root قابل‌خواندن نگه دارید (`chown root:root` و `chmod 0600`). پیش از راه‌اندازی، مطمئن شوید گواهی برای IP عمومی صادر شده و فایل کلید خصوصی فقط در اختیار root است. سپس `sudo systemctl restart pqtunnel-manager` را اجرا کنید. در فایروال سیستم و Security Group ارائه‌دهنده فقط دسترسی موردنیاز به TCP/9091 را مجاز کنید؛ این پروژه قوانین فایروال را خودکار تغییر نمی‌دهد. برای کاهش سطح حمله، در صورت امکان دسترسی را به IP مدیریت خود محدود کنید. بعد از آن پنل با `https://12.12.12.12:9091/` باز می‌شود.
+
+اگر `PQTUNNEL_MANAGER_PUBLIC_HOST` تنظیم شود، بررسی Origin فقط HTTPS با همان IP صریح را می‌پذیرد؛ درخواست‌های Origin با میزبان دلخواه/DNS-rebinding رد می‌شوند و کوکی نشست در HTTPS دارای پرچم Secure است. تنظیم listener عمومی بدون TLS certificate/key معتبر در زمان راه‌اندازی رد می‌شود. نشر مستقیم پنل روی اینترنت همچنان ریسک بالاتری از SSH یا VPN مدیریتی دارد.
 
 ### قابلیت‌ها و مرز عملیات
 
