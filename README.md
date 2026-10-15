@@ -1,6 +1,6 @@
 # PQTunnel
 
-**Version:** 0.3.0-dev · **Status:** experimental prototype, not production-ready.
+**Version:** 0.3.0-rc2 · **Status:** experimental release candidate, not production-ready.
 
 PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
 
@@ -20,8 +20,30 @@ The active project source tree and CI source of truth are at the **repository ro
 - Client transport can connect using a DNS name, IPv4 or bracketed IPv6 endpoint; `--network tcp4` and `--network tcp6` force the underlay address family.
 - Server systemd unit and separate, explicit Ubuntu IPv4 forwarding/NAT script.
 - Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
+- Optional Persian-language web admin panel for limited daemon/peer status and disconnecting a selected peer; disabled by default and loopback-only. See [the web admin panel guide](docs/WEB-ADMIN-PANEL.md).
 - GitHub Actions tests/cross-builds, a loopback TLS integration test, and Linux network-namespace tests using real TUN interfaces, including inbound TCP/UDP port-forward round trips and selective-vs-direct egress checks over IPv4 and IPv6.
 - Android `VpnService` scaffold and Linux/Windows TUN adapters.
+
+## Local web admin panel (experimental)
+
+The panel runs inside `pqtunneld` and is disabled unless explicitly configured in the daemon environment:
+
+```ini
+PQTUNNEL_ADMIN_LISTEN=127.0.0.1:9090
+PQTUNNEL_ADMIN_TOKEN=REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_BYTES
+```
+
+Replace the example token with a strong random secret of at least 32 bytes. Do not commit the real token or place it in command-line arguments. The listener accepts only a literal loopback IP (for example, `127.0.0.1:9090` or `[::1]:9090`); wildcard and public addresses are rejected. The panel uses plain HTTP because it is loopback-only. Open it in the browser using a numeric loopback URL such as `http://127.0.0.1:9090/`, not `localhost` or a domain name; Origin validation rejects hostnames to reduce DNS-rebinding risk. For access from another machine, use an encrypted SSH tunnel and never expose the panel port directly to the internet.
+
+When using the repository's systemd unit, put these variables in `/etc/default/pqtunneld`, which the unit reads as its `EnvironmentFile`. If `/etc/default/pqtunneld` does not exist, the installer writes both settings as commented examples when creating it. If the file already exists, the installer preserves it and does not append these lines; add them manually in that case. To enable the panel, uncomment `PQTUNNEL_ADMIN_LISTEN` and set a strong random value for `PQTUNNEL_ADMIN_TOKEN`. Generate a random token in a secure terminal with `openssl rand -hex 32`, then place the output in the environment file (do not commit it or copy it into logs). Keep the file root-only readable with `sudo chmod 0600 /etc/default/pqtunneld`. Restarting the service is required after editing and will disconnect active tunnel peers, so plan a maintenance window. For remote access, keep the admin listener on loopback and create an SSH tunnel from your workstation:
+
+```sh
+ssh -N -L 9090:127.0.0.1:9090 USER@SERVER
+```
+
+Then open `http://127.0.0.1:9090/` locally. Replace `USER@SERVER` with your SSH account and host. Full setup notes are in [the panel guide](docs/WEB-ADMIN-PANEL.md).
+
+After login, it shows limited daemon and connected-peer status and allows disconnecting a selected peer. It does not start or stop systemd, or modify routes, sysctls, firewall, NAT, certificates, or keys. Sessions are in-memory and expire after 12 hours; state-changing requests have CSRF protection, and five failed logins from an IP trigger a 60-second lockout. This is an experimental admin surface, not a complete audit or user-management system.
 
 ## Important limitations
 
@@ -138,6 +160,7 @@ Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build L
 
 - [فارسی](README.fa.md)
 - [Security notes](SECURITY.md)
+- [Web management panel](docs/WEB-ADMIN-PANEL.md) (opt-in and loopback-only)
 - [Two-VPS deployment readiness and recovery runbook](docs/TWO-VPS-DEPLOYMENT.md)
 - [Protocol notes](docs/PROTOCOL.md)
 - [Experimental server-to-server guide (Persian)](docs/SITE-TO-SITE.fa.md)

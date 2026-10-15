@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0-rc2
+
+- Added an optional Persian-language web admin panel inside `pqtunneld`, disabled by default and restricted to literal loopback addresses.
+- Added token authentication requiring at least 32 bytes, expiring in-memory sessions, HttpOnly/SameSite cookies, Origin and CSRF checks, security headers, bounded request bodies, and login rate limiting.
+- Restricted the panel to operational status and authenticated peer disconnection; it does not control systemd, routes, firewall rules, NAT, sysctls, certificates, or keys.
+- Added regression tests for rate limiting, DNS-rebinding Host checks, session expiry, security headers, CSRF failures, and oversized forms.
+- Updated English/Persian setup documentation and clarified that the installer preserves an existing `/etc/default/pqtunneld` file rather than modifying it.
+- This remains an experimental release candidate. It has not undergone an independent security audit; Android provisioning and Windows route/DNS/kill-switch management remain incomplete.
+
 ## 0.3.0-dev
 
 - Added normal IPv6 packet framing/parsing alongside IPv4 (IPv6 jumbograms remain unsupported).

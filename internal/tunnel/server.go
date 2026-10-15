@@ -34,23 +34,23 @@ type Server struct {
 	PeerIdentity    string             // exact certificate Common Name required in single-peer site-to-site mode
 	AllowedDstPorts portpolicy.RuleSet // optional defense-in-depth TCP/UDP destination-port allowlist
 
-	mu      sync.RWMutex
-	clients map[string]*peer
+	mu        sync.RWMutex
+	clients   map[string]*peer
+	running   bool
+	startedAt time.Time
 }
 
 type peer struct {
-	identity string
-	prefixes []netip.Prefix
-	conn     net.Conn
-	writeMu  sync.Mutex
+	identity    string
+	prefixes    []netip.Prefix
+	conn        net.Conn
+	connectedAt time.Time
+	writeMu     sync.Mutex
 }
 
 func (s *Server) Serve(ctx context.Context) error {
 	if s.Device == nil || s.TLSConfig == nil || s.ListenAddress == "" {
 		return fmt.Errorf("device, TLS config and listen address are required")
-	}
-	if s.MaxClients <= 0 {
-		s.MaxClients = 128
 	}
 	siteToSite := len(s.PeerPrefixes) > 0 || len(s.LocalPrefixes) > 0
 	if siteToSite && (len(s.PeerPrefixes) == 0 || len(s.LocalPrefixes) == 0) {
@@ -72,7 +72,12 @@ func (s *Server) Serve(ctx context.Context) error {
 			return fmt.Errorf("site-to-site prefixes must be valid masked CIDR networks")
 		}
 	}
+	s.mu.Lock()
+	if s.MaxClients <= 0 {
+		s.MaxClients = 128
+	}
 	s.clients = make(map[string]*peer)
+	s.mu.Unlock()
 
 	addresses := strings.Split(s.ListenAddress, ",")
 	listeners := make([]net.Listener, 0, len(addresses))
@@ -107,6 +112,15 @@ func (s *Server) Serve(ctx context.Context) error {
 		for _, ln := range listeners {
 			_ = ln.Close()
 		}
+	}()
+	s.mu.Lock()
+	s.running = true
+	s.startedAt = time.Now()
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
 	}()
 
 	// A child context lets Serve tear down all background work even when it
@@ -205,7 +219,7 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 			return
 		}
 	}
-	p := &peer{identity: identity, prefixes: prefixes, conn: tc}
+	p := &peer{identity: identity, prefixes: prefixes, conn: tc, connectedAt: time.Now()}
 	s.mu.Lock()
 	if len(s.clients) >= s.MaxClients {
 		s.mu.Unlock()
