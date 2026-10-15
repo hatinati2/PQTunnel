@@ -38,6 +38,12 @@ func Listen(path string) (net.Listener, error) {
 		if fi.Mode()&os.ModeSocket == 0 {
 			return nil, errors.New("refusing to replace non-socket admin IPC path")
 		}
+		// Never unlink a live control socket: a second daemon must fail closed.
+		conn, dialErr := net.DialTimeout("unix", path, 150*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			return nil, errors.New("another tunnel daemon already owns the admin IPC socket")
+		}
 		if err := os.Remove(path); err != nil {
 			return nil, fmt.Errorf("remove stale admin IPC socket: %w", err)
 		}
