@@ -141,6 +141,20 @@ COMMIT
             ["other"],
         )
 
+    def test_overlap_checks_ignore_option_like_comment_values(self):
+        line = (
+            '-A OUTPUT -p tcp -m comment --comment "--dport" '
+            '--dport 8443 -j NOTRACK'
+        )
+        self.assertEqual(
+            audit.candidate_tcp_overlap_detail(line, 8443, "destination"),
+            ("match", "known_conditions_allow_port"),
+        )
+        status, reason, _, _ = audit.candidate_tcp_flow_overlap_detail(
+            line, 8443, (32768, 60999), "dialer", "OUTPUT"
+        )
+        self.assertEqual((status, reason), ("match", "known_conditions_allow_flow"))
+
     def test_iptables_feature_counts_ignore_fake_actions_inside_comments(self):
         fixture = """*raw
 :PREROUTING ACCEPT [0:0]
@@ -533,6 +547,14 @@ COMMIT
         self.assertNotIn("60999", rendered)
         self.assertNotIn("https", rendered)
         self.assertNotIn("203.0.113.", rendered)
+
+    def test_outer_tcp_rst_audit_ignores_flag_option_text_inside_comments(self):
+        status, reason = audit.candidate_tcp_rst_flow_overlap_detail(
+            '-A OUTPUT -p tcp -m comment --comment "--tcp-flags" '
+            '--sport 40000 --dport 8443 --tcp-flags RST RST -j DROP',
+            8443, (32768, 60999), "dialer",
+        )
+        self.assertEqual((status, reason), ("match", "known_conditions_allow_rst_flow"))
 
     def test_outer_tcp_rst_syn_shortcut_does_not_overlap_rst_packets(self):
         status, reason = audit.candidate_tcp_rst_flow_overlap_detail(
