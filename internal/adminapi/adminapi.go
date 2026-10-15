@@ -47,6 +47,17 @@ type TunnelConfiguration struct {
 // ManagerSnapshot contains local service-management metadata safe for the web UI.
 // It must never include private keys, CA material, admin tokens, raw environment
 // files, socket addresses of peers, or arbitrary systemd properties.
+type SpeedTestResult struct {
+	Peer            string
+	SizeMiB         int
+	RTTMillis       float64
+	UploadMbps      float64
+	DownloadMbps    float64
+	UploadSeconds   float64
+	DownloadSeconds float64
+	CompletedAt     string
+}
+
 type ManagerSnapshot struct {
 	Role          string
 	ServiceUnit   string
@@ -58,6 +69,8 @@ type ManagerSnapshot struct {
 	ConfigError   string
 	PeerDataReady bool
 	SpeedTestPeer string
+	SpeedTestReady bool
+	LastSpeedTest *SpeedTestResult
 }
 
 // ManagerController is implemented only by the standalone, explicitly installed
@@ -66,4 +79,5 @@ type ManagerController interface {
 	ManagementSnapshot() ManagerSnapshot
 	ServiceAction(ctx context.Context, action string) error
 	ApplyConfiguration(ctx context.Context, config TunnelConfiguration) error
+	RunSpeedTest(ctx context.Context, sizeMiB int) (SpeedTestResult, error)
 }
