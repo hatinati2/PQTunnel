@@ -22,6 +22,9 @@ const (
 	sessionCookieName = "pqtunnel_admin_session"
 	sessionLifetime   = 12 * time.Hour
 	maxSessions       = 128
+	loginFailureLimit = 5
+	loginWindow       = time.Minute
+	maxLoginEntries   = 128
 )
 
 var (
@@ -101,13 +104,20 @@ type session struct {
 	ExpiresAt time.Time
 }
 
+type loginAttempt struct {
+	Failures     int
+	WindowEnds   time.Time
+	BlockedUntil time.Time
+}
+
 // Handler serves a token-protected local management UI with short-lived,
-// in-memory sessions and CSRF protection for state-changing form posts.
+// in-memory sessions, login throttling, and CSRF protection for state changes.
 type Handler struct {
-	token      []byte
-	controller adminapi.Controller
-	mu         sync.Mutex
-	sessions   map[string]session
+	token         []byte
+	controller    adminapi.Controller
+	mu            sync.Mutex
+	sessions      map[string]session
+	loginAttempts map[string]loginAttempt
 }
 
 func New(token string, controller adminapi.Controller) (*Handler, error) {
@@ -119,6 +129,7 @@ func New(token string, controller adminapi.Controller) (*Handler, error) {
 	}
 	return &Handler{
 		token: []byte(token), controller: controller, sessions: make(map[string]session),
+		loginAttempts: make(map[string]loginAttempt),
 	}, nil
 }
 
@@ -231,15 +242,24 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "مبدأ درخواست پذیرفته نشد.", http.StatusForbidden)
 		return
 	}
+	if h.loginBlocked(r) {
+		replyLoginRateLimited(w)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "درخواست نامعتبر است.", http.StatusBadRequest)
 		return
 	}
 	if !secureEqual(r.PostForm.Get("token"), string(h.token)) {
+		if h.recordLoginFailure(r) {
+			replyLoginRateLimited(w)
+			return
+		}
 		h.renderLogin(w, "توکن نامعتبر است.")
 		return
 	}
+	h.clearLoginFailures(r)
 	id, err := randomToken()
 	if err != nil {
 		http.Error(w, "ایجاد نشست ممکن نشد.", http.StatusInternalServerError)
@@ -272,6 +292,81 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode, Expires: expires, MaxAge: int(sessionLifetime.Seconds()),
 	})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// loginClientKey groups attempts by the connecting IP. The panel only binds
+// loopback, so remote operators should use an encrypted tunnel.
+func loginClientKey(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return "unknown"
+	}
+	return ip.Unmap().String()
+}
+
+func (h *Handler) loginBlocked(r *http.Request) bool {
+	key := loginClientKey(r.RemoteAddr)
+	now := time.Now()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	attempt, ok := h.loginAttempts[key]
+	if !ok {
+		return false
+	}
+	if now.Before(attempt.BlockedUntil) {
+		return true
+	}
+	if !now.Before(attempt.WindowEnds) {
+		delete(h.loginAttempts, key)
+		return false
+	}
+	return false
+}
+
+// recordLoginFailure returns true once the per-IP failure budget is exhausted.
+// Entries and the number of tracked clients are bounded to avoid unbounded growth.
+func (h *Handler) recordLoginFailure(r *http.Request) bool {
+	key := loginClientKey(r.RemoteAddr)
+	now := time.Now()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for oldKey, attempt := range h.loginAttempts {
+		if !now.Before(attempt.WindowEnds) && !now.Before(attempt.BlockedUntil) {
+			delete(h.loginAttempts, oldKey)
+		}
+	}
+	attempt, exists := h.loginAttempts[key]
+	if !exists {
+		if len(h.loginAttempts) >= maxLoginEntries {
+			return true
+		}
+		attempt = loginAttempt{WindowEnds: now.Add(loginWindow)}
+	} else if !now.Before(attempt.WindowEnds) {
+		attempt = loginAttempt{WindowEnds: now.Add(loginWindow)}
+	}
+	attempt.Failures++
+	if attempt.Failures >= loginFailureLimit {
+		attempt.BlockedUntil = now.Add(loginWindow)
+		attempt.WindowEnds = attempt.BlockedUntil
+	}
+	h.loginAttempts[key] = attempt
+	return !attempt.BlockedUntil.IsZero() && now.Before(attempt.BlockedUntil)
+}
+
+func (h *Handler) clearLoginFailures(r *http.Request) {
+	h.mu.Lock()
+	delete(h.loginAttempts, loginClientKey(r.RemoteAddr))
+	h.mu.Unlock()
+}
+
+func replyLoginRateLimited(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(loginWindow.Seconds())))
+	http.Error(w, "تلاش‌های ورود بیش از حد مجاز است؛ یک دقیقه بعد دوباره تلاش کنید.", http.StatusTooManyRequests)
 }
 
 func (h *Handler) renderLogin(w http.ResponseWriter, errorText string) {
