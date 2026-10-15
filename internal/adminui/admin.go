@@ -116,8 +116,9 @@ type Handler struct {
 	token         []byte
 	controller    adminapi.Controller
 	mu            sync.Mutex
-	sessions      map[string]session
-	loginAttempts map[string]loginAttempt
+	sessions           map[string]session
+	loginAttempts      map[string]loginAttempt
+	loginOverflowUntil time.Time
 }
 
 func New(token string, controller adminapi.Controller) (*Handler, error) {
@@ -313,6 +314,9 @@ func (h *Handler) loginBlocked(r *http.Request) bool {
 	now := time.Now()
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if now.Before(h.loginOverflowUntil) {
+		return true
+	}
 	attempt, ok := h.loginAttempts[key]
 	if !ok {
 		return false
@@ -343,6 +347,8 @@ func (h *Handler) recordLoginFailure(r *http.Request) bool {
 	attempt, exists := h.loginAttempts[key]
 	if !exists {
 		if len(h.loginAttempts) >= maxLoginEntries {
+			// Fail closed if the bounded per-client table fills up.
+			h.loginOverflowUntil = now.Add(loginWindow)
 			return true
 		}
 		attempt = loginAttempt{WindowEnds: now.Add(loginWindow)}
