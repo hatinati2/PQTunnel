@@ -157,6 +157,18 @@ func (m *Controller) managementSnapshot(ctx context.Context) adminapi.ManagerSna
 	}
 	view.SpeedTestPeer = m.speedTestPeer
 	view.SpeedTestReady = m.speedTestReady(view.Config)
+
+	// Peer state is read from the fixed root-owned control socket, never guessed
+	// from systemd ActiveState. An active service can still be disconnected.
+	ipcCtx, ipcCancel := context.WithTimeout(ctx, 2*time.Second)
+	response, ipcErr := adminipc.Call(ipcCtx, m.ipcSocket, "snapshot", "")
+	ipcCancel()
+	if ipcErr == nil && response.Snapshot != nil {
+		view.PeerDataReady = true
+		view.TransportConnected = response.Snapshot.TransportConnected
+		view.Uptime = response.Snapshot.Uptime
+		view.Peers = append([]adminapi.Peer(nil), response.Snapshot.Peers...)
+	}
 	m.lastSpeedTestMu.Lock()
 	if m.lastSpeedTest != nil {
 		last := *m.lastSpeedTest
@@ -176,24 +188,24 @@ func (m *Controller) AdminSnapshot() adminapi.Snapshot {
 	view := m.ManagementSnapshot()
 	snapshot := adminapi.Snapshot{
 		Running: view.ActiveState == "active",
+		TransportConnected: view.TransportConnected,
+		Uptime: view.Uptime,
 		MaxClients: view.Config.MaxClients,
 		SiteToSite: true,
 		PeerIdentity: view.Config.PeerIdentity,
+		Peers: append([]adminapi.Peer(nil), view.Peers...),
 	}
 	if m.role == RoleGateway {
 		snapshot.ListenAddress = view.Config.ListenAddress
 	} else {
 		snapshot.ListenAddress = view.Config.ServerAddress
+		snapshot.PeerIdentity = view.Config.ServerName
 		if snapshot.MaxClients <= 0 {
 			snapshot.MaxClients = 1
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	response, err := adminipc.Call(ctx, m.ipcSocket, "snapshot", "")
-	if err == nil && response.Snapshot != nil {
-		snapshot.Uptime = response.Snapshot.Uptime
-		snapshot.Peers = response.Snapshot.Peers
+	if len(snapshot.Peers) > 0 && snapshot.Peers[0].Identity != "" {
+		snapshot.PeerIdentity = snapshot.Peers[0].Identity
 	}
 	return snapshot
 }
