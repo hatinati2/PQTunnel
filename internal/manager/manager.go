@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hatinati2/PQTunnel/internal/adminapi"
@@ -637,6 +639,14 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, ".pqtunnel-manager-*")
 	if err != nil {
+		// The manager systemd sandbox can grant write access to the one
+		// EnvironmentFile without making its parent directory writable. In
+		// that case temp-file + rename is forbidden by the sandbox. Fall back
+		// only for read-only/permission errors, preserving/restoring the prior
+		// bytes on any in-place write failure.
+		if errors.Is(err, syscall.EROFS) || errors.Is(err, os.ErrPermission) {
+			return writeExistingFileWithRollback(path, data, mode)
+		}
 		return err
 	}
 	tmp := f.Name()
@@ -663,6 +673,49 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	if err == nil {
 		_ = d.Sync()
 		_ = d.Close()
+	}
+	return nil
+}
+
+// writeExistingFileWithRollback is used only when a sandbox permits writing
+// the existing file but forbids creating a sibling temporary file. The original
+// contents are kept in memory and restored if truncate/write/fsync fails. Apply
+// Configuration writes a separate 0600 backup before reaching this function.
+func writeExistingFileWithRollback(path string, data []byte, mode os.FileMode) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
+		return errors.New("refusing in-place update of non-regular or group/world-writable config")
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	write := func(payload []byte) error {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, mode.Perm())
+		if err != nil {
+			return err
+		}
+		n, writeErr := f.Write(payload)
+		if writeErr == nil && n != len(payload) {
+			writeErr = io.ErrShortWrite
+		}
+		if writeErr == nil {
+			writeErr = f.Sync()
+		}
+		closeErr := f.Close()
+		if writeErr != nil {
+			return writeErr
+		}
+		return closeErr
+	}
+	if err := write(data); err != nil {
+		if restoreErr := write(old); restoreErr != nil {
+			return fmt.Errorf("in-place configuration write failed and in-memory rollback failed; protected backup retained: %w", err)
+		}
+		return fmt.Errorf("in-place configuration write failed; previous bytes restored from memory: %w", err)
 	}
 	return nil
 }
