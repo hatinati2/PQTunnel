@@ -20,6 +20,7 @@ The active project source tree and CI source of truth are at the **repository ro
 - Client transport can connect using a DNS name, IPv4 or bracketed IPv6 endpoint; `--network tcp4` and `--network tcp6` force the underlay address family.
 - Server systemd unit and separate, explicit Ubuntu IPv4 forwarding/NAT script.
 - Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
+- Privacy-preserving, read-only inventory of existing nftables/iptables firewall state. Unknown iptables options are treated conservatively as additional selectors; output excludes raw rules and selector values. See [firewall coexistence notes](docs/EXISTING-FIREWALL-COEXISTENCE.md).
 - Optional Persian-language web admin panel for limited daemon/peer status and disconnecting a selected peer; disabled by default and loopback-only. See [the web admin panel guide](docs/WEB-ADMIN-PANEL.md).
 - GitHub Actions tests/cross-builds, a loopback TLS integration test, and Linux network-namespace tests using real TUN interfaces, including inbound TCP/UDP port-forward round trips and selective-vs-direct egress checks over IPv4 and IPv6.
 - Android `VpnService` scaffold and Linux/Windows TUN adapters.
