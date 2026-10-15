@@ -46,10 +46,10 @@ TMPBIN=""
 cleanup() { [[ -z "$TMPBIN" ]] || rm -f "$TMPBIN"; }
 trap cleanup EXIT
 if [[ -f "$SOURCE/go.mod" ]]; then
-  command -v go >/dev/null || fail 'Go 1.24+ is required to build from source; use the matching Linux release bundle otherwise.'
+  command -v go >/dev/null || fail 'Go 1.26+ is required to build from source; use the matching Linux release bundle otherwise.'
   GV="$(go env GOVERSION | sed 's/^go//')"
   if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=24)) }'; then
-    fail "Go 1.24+ is required; found $GV."
+    fail "Go 1.26+ is required; found $GV."
   fi
   TMPBIN="$(mktemp)"
   (cd "$SOURCE" && GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$TMPBIN" ./cmd/pqtunnel-manager)
