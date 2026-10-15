@@ -138,7 +138,13 @@ func (m *Controller) managementSnapshot(ctx context.Context) adminapi.ManagerSna
 		view.ConfigError += "configuration unavailable: " + err.Error()
 	} else {
 		view.Config = cfg
-		view.ConfigReady = true
+		if _, validationErr := m.configurationChanges(cfg); validationErr != nil {
+			view.ConfigReady = false
+			if view.ConfigError != "" { view.ConfigError += "; " }
+			view.ConfigError += "configuration validation: " + validationErr.Error()
+		} else {
+			view.ConfigReady = true
+		}
 	}
 	if m.role == RoleGateway && view.Config.ListenAddress == "" {
 		view.ConfigReady = false
@@ -218,6 +224,28 @@ func (m *Controller) speedTestReady(cfg adminapi.TunnelConfiguration) bool {
 		return false
 	}
 	return true
+}
+
+func (m *Controller) ValidateSpeedTestListener(address, token string) error {
+	if err := speedtest.ValidatePrivateEndpoint(address); err != nil {
+		return err
+	}
+	if _, err := speedtest.NewHandler(token); err != nil {
+		return err
+	}
+	ip, port, err := speedtest.ParseEndpointAddress(address)
+	if err != nil { return err }
+	cfg, _, err := m.readConfiguration()
+	if err != nil { return fmt.Errorf("read tunnel configuration for speed-test bind: %w", err) }
+	local, err := prefixset.ParseCSV(cfg.LocalPrefixes)
+	if err != nil || !prefixset.Contains(local, ip) {
+		return errors.New("speed-test listen IP must be included in this server's local tunnel prefixes")
+	}
+	rules, err := portpolicy.ParseCSV(cfg.AllowedDstPorts)
+	if err != nil || !rules.AllowsPacket(tcpPortProbe(ip, port)) {
+		return errors.New("speed-test TCP port must be included in PQTUNNEL_ALLOWED_DST_PORTS on this server")
+	}
+	return nil
 }
 
 func (m *Controller) RunSpeedTest(ctx context.Context, sizeMiB int) (adminapi.SpeedTestResult, error) {
@@ -736,17 +764,29 @@ func parseCanonicalPrefixes(value string) ([]netip.Prefix, error) {
 	if value == "" || len(value) > 2048 {
 		return nil, errors.New("at least one CIDR prefix is required")
 	}
-	prefixes, err := prefixset.ParseCSV(value)
-	if err != nil {
-		return nil, err
-	}
-	if len(prefixes) > 128 {
+	parts := strings.Split(value, ",")
+	if len(parts) > 128 {
 		return nil, errors.New("at most 128 CIDR prefixes are allowed")
 	}
-	for _, p := range prefixes {
-		if !p.IsValid() || p != p.Masked() {
-			return nil, fmt.Errorf("prefix %q must be a canonical network CIDR", p)
+	prefixes := make([]netip.Prefix, 0, len(parts))
+	seen := make(map[netip.Prefix]bool, len(parts))
+	for _, raw := range parts {
+		raw = strings.TrimSpace(raw)
+		p, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CIDR prefix %q: %w", raw, err)
 		}
+		if p != p.Masked() {
+			return nil, fmt.Errorf("prefix %q must be a canonical network CIDR", raw)
+		}
+		if p.Bits() == 0 {
+			return nil, errors.New("default routes are not accepted by the web manager; configure them only through a separately reviewed recovery plan")
+		}
+		if seen[p] {
+			return nil, fmt.Errorf("duplicate CIDR prefix %q", p)
+		}
+		seen[p] = true
+		prefixes = append(prefixes, p)
 	}
 	for i := range prefixes {
 		for j := i + 1; j < len(prefixes); j++ {
