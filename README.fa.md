@@ -20,7 +20,7 @@ PQTunnel یک تونل آزمایشی لایهٔ ۳ با encapsulation بسته�
 - اسکریپت مستقل و قابل بازگردانی برای فعال‌سازی IPv4 forwarding و NAT در `scripts/server-network.sh`؛ فقط جدول اختصاصی nftables خودش را مدیریت می‌کند و UFW را تغییر نمی‌دهد.
 - اسکریپت شبکهٔ کلاینت لینوکس در `scripts/linux-client-network.sh`: route اختصاصی IP سرور، مسیر پیش‌فرض IPv4 از TUN، DNS با systemd-resolved و blackhole برای مسیر پیش‌فرض IPv6.
 - پنل وب مدیریت فارسی و اختیاری برای وضعیت daemon و همتاهای متصل؛ قطع اتصال همتا فقط پس از ورود و تأیید انجام می‌شود. پنل پیش‌فرض خاموش است، فقط IP حلقهٔ محلی را می‌پذیرد و به توکن حداقل ۳۲ بایتی نیاز دارد. نشست ۱۲ساعته، محافظت CSRF و محدودسازی تلاش ورود دارد؛ راهنمای [پنل مدیریت وب](docs/WEB-ADMIN-PANEL.md) را ببین.
-- محدودسازی تعداد نشست‌ها و handshakeهای هم‌زمان در سرور.
+- محدودسازی تعداد نشست‌ها و handshakeهای هم‌زمان در سرور، صف بسته‌های محدود و backoff برای اتصال مجدد.
 - گردش‌کار CI برای تست و cross-build لینوکس و ویندوز و ساخت فایل‌های Release از روی تگ نسخه.
 - اصلاح مسیر ماژول Go به `github.com/hatinati2/PQTunnel`.
 
@@ -64,7 +64,7 @@ go vet ./...
 go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
 ```
 
-CI تست‌ها و cross-build برای Linux amd64/arm64 و Windows amd64 انجام می‌دهد؛ همچنین روی Ubuntu 24.04 و 26.04 تونل TUN واقعی و پورت‌فوروارد ورودی TCP/UDP را آزمایش می‌کند. تست خروج انتخابی بررسی می‌کند که TCP/443 و TCP/8443 و نیز UDP/53 و UDP/5354 از تونل عبور کنند، درحالی‌که TCP/8080، TCP/9443، UDP/5353، UDP/5355 و پروتکل اشتباه روی پورت‌های TCP/53 یا UDP/443 مستقیم بمانند؛ این بررسی برای IPv4 و IPv6 در network namespaceهای ایزوله انجام می‌شود. این تست‌ها فایروال ارائه‌دهنده یا کارکرد روی دو VPS واقعی را تأیید نمی‌کنند. ساخت Android هنوز در CI تأیید نمی‌شود.
+CI تست‌ها، تحلیل ایستا، یک آزمون یکپارچه‌سازی TLS روی loopback و cross-build برای Linux amd64/arm64 و Windows amd64 انجام می‌دهد؛ همچنین روی Ubuntu 24.04 و 26.04 تونل TUN واقعی و پورت‌فوروارد ورودی TCP/UDP را آزمایش می‌کند. تست خروج انتخابی بررسی می‌کند که TCP/443 و TCP/8443 و نیز UDP/53 و UDP/5354 از تونل عبور کنند، درحالی‌که TCP/8080، TCP/9443، UDP/5353، UDP/5355 و پروتکل اشتباه روی پورت‌های TCP/53 یا UDP/443 مستقیم بمانند؛ این بررسی برای IPv4 و IPv6 در network namespaceهای ایزوله انجام می‌شود. این تست‌ها فایروال ارائه‌دهنده یا کارکرد روی دو VPS واقعی را تأیید نمی‌کنند. ساخت Android هنوز در CI تأیید نمی‌شود.
 
 ## ساخت گواهی‌ها
 
@@ -73,11 +73,15 @@ CI تست‌ها و cross-build برای Linux amd64/arm64 و Windows amd64 ان
 ```sh
 go run ./cmd/pqtunnel-pki init --out ./pki --server-name vpn.example.com
 go run ./cmd/pqtunnel-pki issue-client --out ./pki --ip 10.66.0.2
+# برای گواهی همتای نام‌دار server-to-server:
+go run ./cmd/pqtunnel-pki issue-peer --out ./pki --name iran
+# برای ساخت گواهی سرور دوم زیر همان CA:
+go run ./cmd/pqtunnel-pki issue-server --out ./pki --server-name iran.example.com --prefix iran
 ```
 
 برای هر دستگاه یک IP یکتا صادر کن. فایل `ca.key` باید آفلاین/خصوصی بماند و **نباید** به سرور یا کلاینت منتقل شود. سرور فقط به `server.crt`، `server.key` و `ca.crt` نیاز دارد. هر کلاینت باید `ca.crt` و گواهی/کلید خصوصی اختصاصی خودش را دریافت کند. کلید خصوصی را از کانال امن جداگانه انتقال بده.
 
-امضای گواهی‌ها فعلاً Ed25519 کلاسیک است؛ پس `X25519MLKEM768` به معنی پساکوانتومی‌بودن کامل احراز هویت نیست. در حالت server-to-server تک‌peer، هر دو مقدار `PQTUNNEL_PEER_PREFIXES` (CIDRهای مجاز مبدأ peer و مسیر برگشت) و `PQTUNNEL_LOCAL_PREFIXES` (CIDRهای مقصد مجاز سمت Listener) را در `/etc/default/pqtunneld` تنظیم کن، `PQTUNNEL_PEER_NAME` را مشخص کن و `PQTUNNEL_MAX_CLIENTS=1` قرار بده؛ نام peer باید دقیقاً با Common Name گواهی صادرشده برابر باشد. Listener certificate paths can be selected with `PQTUNNEL_TLS_CERT` and `PQTUNNEL_TLS_KEY` when reversing roles.
+امضای گواهی‌ها فعلاً Ed25519 کلاسیک است؛ پس `X25519MLKEM768` به معنی پساکوانتومی‌بودن کامل احراز هویت نیست. در حالت server-to-server تک‌peer، هر دو مقدار `PQTUNNEL_PEER_PREFIXES` (CIDRهای مجاز مبدأ peer و مسیر برگشت) و `PQTUNNEL_LOCAL_PREFIXES` (CIDRهای مقصد مجاز سمت Listener) را در `/etc/default/pqtunneld` تنظیم کن، `PQTUNNEL_PEER_NAME` را مشخص کن و `PQTUNNEL_MAX_CLIENTS=1` قرار بده؛ نام peer باید دقیقاً با Common Name گواهی صادرشده برابر باشد. هنگام جابه‌جایی نقش‌ها، مسیر گواهی و کلید Listener را می‌توان با `PQTUNNEL_TLS_CERT` و `PQTUNNEL_TLS_KEY` تعیین کرد.
 
 ## پیش‌بررسی VPS و راه‌انداز تک‌خطی
 
@@ -150,11 +154,11 @@ REF=REPLACE_WITH_REVIEWED_40_CHAR_SHA; curl -fsSL "https://raw.githubusercontent
 - [English README](README.md)
 - [راهنمای آمادگی استقرار و بازیابی دو VPS](docs/TWO-VPS-DEPLOYMENT.fa.md)
 - [یادداشت‌های امنیتی](SECURITY.md)
+- [راهنمای پنل مدیریت وب](docs/WEB-ADMIN-PANEL.md) (اختیاری و فقط روی loopback)
 - [جزئیات پروتکل](docs/PROTOCOL.md)
 - [چک‌لیست پیش از انتشار](docs/RELEASE-CHECKLIST.md)
 - [راهنمای آزمایشی تونل سرور‌به‌سرور](docs/SITE-TO-SITE.fa.md)
 - [راهنمای تونل انتخابی بر اساس پورت](docs/SELECTIVE-TUNNEL.fa.md)
-- [راهنمای پنل مدیریت وب](docs/WEB-ADMIN-PANEL.md)
 
 ## مجوز
 
