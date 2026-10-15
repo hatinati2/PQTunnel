@@ -25,7 +25,6 @@ const (
 )
 
 var (
-	errSessionLimit = errors.New("admin session limit reached")
 	loginTemplate   = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
@@ -43,7 +42,7 @@ button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:11px;backg
 <form method="post" action="/login" autocomplete="on">
 <label for="token">توکن مدیریت</label><input id="token" name="token" type="password" autocomplete="current-password" required autofocus>
 <button type="submit">ورود امن</button></form>
-</main></body></html>`)),
+</main></body></html>`))
 	dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
@@ -91,7 +90,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 </tbody></table>{{else}}<div class="empty">در حال حاضر هیچ همتای احراز هویت‌شده‌ای متصل نیست.</div>{{end}}
 </section>
 <footer>این پنل فقط وضعیت را نمایش می‌دهد و اتصال همتا را قطع می‌کند؛ مسیرها، فایروال، NAT، گواهی‌ها و کلیدها را تغییر نمی‌دهد. پنل باید فقط روی loopback در دسترس باشد.</footer>
-</main></body></html>`)),
+</main></body></html>`))
 )
 
 type session struct {
