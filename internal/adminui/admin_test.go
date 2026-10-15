@@ -680,3 +680,93 @@ func TestStandaloneManagerActionsRequireCSRFAndConfirmation(t *testing.T) {
 		t.Fatalf("missing explicit confirmation should reject action: status=%d calls=%v", resp.Code, manager.actions)
 	}
 }
+
+func TestLanguageSelectionPersistsAcrossLoginDashboardAndLogs(t *testing.T) {
+	const token = "language-selection-test-token-0123456789"
+	base := &fakeController{snapshot: adminapi.Snapshot{Running: true, ListenAddress: "127.0.0.1:8443"}}
+	manager := &fakeManagerController{
+		fakeController: base,
+		logs: "pqtunnel-client.service started",
+		view: adminapi.ManagerSnapshot{Role: "dialer", ServiceUnit: "pqtunnel-client.service", ActiveState: "active", SubState: "running"},
+	}
+	h, err := New(token, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Persian is the default and both language choices are available before login.
+	faReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/login", nil)
+	faResp := httptest.NewRecorder()
+	h.ServeHTTP(faResp, faReq)
+	if faResp.Code != http.StatusOK ||
+		!strings.Contains(faResp.Body.String(), `<html lang="fa" dir="rtl">`) ||
+		!strings.Contains(faResp.Body.String(), "ورود امن") ||
+		!strings.Contains(faResp.Body.String(), "English") {
+		t.Fatalf("Persian login page or language selector missing: status=%d", faResp.Code)
+	}
+
+	// Choose English; the preference is stored in a same-site cookie.
+	selectReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/language?lang=en&next=/login", nil)
+	selectResp := httptest.NewRecorder()
+	h.ServeHTTP(selectResp, selectReq)
+	if selectResp.Code != http.StatusSeeOther || selectResp.Header().Get("Location") != "/login" {
+		t.Fatalf("language selection status=%d location=%q", selectResp.Code, selectResp.Header().Get("Location"))
+	}
+	var languageCookie *http.Cookie
+	for _, cookie := range selectResp.Result().Cookies() {
+		if cookie.Name == languageCookieName {
+			languageCookie = cookie
+		}
+	}
+	if languageCookie == nil || languageCookie.Value != "en" || !languageCookie.HttpOnly || languageCookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("English preference cookie not hardened or missing: %#v", languageCookie)
+	}
+
+	// Login using that preference, then reuse both cookies for later pages.
+	values := url.Values{"token": {token}}
+	loginReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/login", strings.NewReader(values.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginReq.Header.Set("Origin", "http://127.0.0.1")
+	loginReq.AddCookie(languageCookie)
+	loginResp := httptest.NewRecorder()
+	h.ServeHTTP(loginResp, loginReq)
+	if loginResp.Code != http.StatusSeeOther {
+		t.Fatalf("English login status=%d", loginResp.Code)
+	}
+	cookies := loginResp.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != sessionCookieName {
+		t.Fatalf("expected one session cookie, got %#v", cookies)
+	}
+	sessionCookie := cookies[0]
+
+	dashboardReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+	dashboardReq.AddCookie(languageCookie)
+	dashboardReq.AddCookie(sessionCookie)
+	dashboardResp := httptest.NewRecorder()
+	h.ServeHTTP(dashboardResp, dashboardReq)
+	for _, expected := range []string{`<html lang="en" dir="ltr">`, "PQTunnel Management Panel", "Tunnel connection", "Effective configuration", "Connected peers"} {
+		if dashboardResp.Code != http.StatusOK || !strings.Contains(dashboardResp.Body.String(), expected) {
+			t.Errorf("English dashboard missing %q: status=%d", expected, dashboardResp.Code)
+		}
+	}
+
+	logsReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/logs", nil)
+	logsReq.AddCookie(languageCookie)
+	logsReq.AddCookie(sessionCookie)
+	logsResp := httptest.NewRecorder()
+	h.ServeHTTP(logsResp, logsReq)
+	for _, expected := range []string{`<html lang="en" dir="ltr">`, "Latest service logs:", "Back to dashboard", "Log out"} {
+		if logsResp.Code != http.StatusOK || !strings.Contains(logsResp.Body.String(), expected) {
+			t.Errorf("English logs page missing %q: status=%d", expected, logsResp.Code)
+		}
+	}
+
+	// The language endpoint must not become an open redirect.
+	badNextReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/language?lang=en&next=https://attacker.invalid", nil)
+	badNextResp := httptest.NewRecorder()
+	h.ServeHTTP(badNextResp, badNextReq)
+	if badNextResp.Code != http.StatusSeeOther || badNextResp.Header().Get("Location") != "/login" {
+		t.Fatalf("unexpected redirect for untrusted next parameter: status=%d location=%q", badNextResp.Code, badNextResp.Header().Get("Location"))
+	}
+}
+
