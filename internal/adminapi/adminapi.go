@@ -80,4 +80,5 @@ type ManagerController interface {
 	ServiceAction(ctx context.Context, action string) error
 	ApplyConfiguration(ctx context.Context, config TunnelConfiguration) error
 	RunSpeedTest(ctx context.Context, sizeMiB int) (SpeedTestResult, error)
+	RecentLogs(ctx context.Context) (string, error)
 }
