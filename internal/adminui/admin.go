@@ -35,7 +35,7 @@ var (
 <html lang="{{.Lang}}" dir="{{dir .Lang}}">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{tr .Lang "ورود {{tr .Lang "مدیریت PQTunnel" "PQTunnel Management"}}" "PQTunnel Manager Login"}}</title>
+<title>{{tr .Lang "ورود مدیریت PQTunnel" "PQTunnel Manager Login"}}</title>
 <style>
 :root{color-scheme:dark;--bg:#0b1020;--panel:#141c2f;--line:#26334d;--text:#edf2ff;--muted:#9eacc7;--accent:#7dd3fc;--danger:#fecaca}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#172742,#0b1020 65%);color:var(--text);font:16px/1.7 system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh;display:grid;place-items:center;padding:24px}
@@ -43,7 +43,7 @@ main{width:min(100%,430px);background:#141c2fee;border:1px solid var(--line);bor
 h1{font-size:1.5rem;margin:0 0 8px}.muted{color:var(--muted)}label{display:block;margin:18px 0 7px;font-weight:650}input{width:100%;padding:13px 14px;border-radius:11px;border:1px solid #394966;background:#0c1425;color:var(--text);font:inherit}
 button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:11px;background:var(--accent);color:#092033;font:inherit;font-weight:750;cursor:pointer}.error{color:var(--danger);margin:12px 0 0}.language-picker{display:flex;justify-content:flex-end;gap:14px;margin-bottom:14px}.language-picker a{color:var(--accent);text-decoration:none}
 </style></head>
-<body><main><nav class="language-picker"><a href="/language?lang=fa&amp;next=/login">فارسی</a><a href="/language?lang=en&amp;next=/login">English</a></nav><h1>{{tr .Lang "مدیریت PQTunnel" "PQTunnel Management"}}</h1><p class="muted">{{tr .Lang "برای ورود، {{tr .Lang "توکن مدیریت" "Management token"}}ی تنظیم‌شده روی سرویس را وارد کنید." "Enter the management token configured for this service."}}</p>
+<body><main><nav class="language-picker"><a href="/language?lang=fa&amp;next=/login">فارسی</a><a href="/language?lang=en&amp;next=/login">English</a></nav><h1>{{tr .Lang "مدیریت PQTunnel" "PQTunnel Management"}}</h1><p class="muted">{{tr .Lang "برای ورود، توکن مدیریتی تنظیم‌شده روی سرویس را وارد کنید." "Enter the management token configured for this service."}}</p>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
 <form method="post" action="/login" autocomplete="on">
 <label for="token">{{tr .Lang "توکن مدیریت" "Management token"}}</label><input id="token" name="token" type="password" autocomplete="current-password" required autofocus>
@@ -53,7 +53,7 @@ button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:11px;backg
 <html lang="{{.Lang}}" dir="{{dir .Lang}}">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{tr .Lang "پنل {{tr .Lang "مدیریت PQTunnel" "PQTunnel Management"}}" "PQTunnel Management Panel"}}</title>
+<title>{{tr .Lang "پنل مدیریت PQTunnel" "PQTunnel Management Panel"}}</title>
 <style>
 :root{color-scheme:dark;--bg:#0b1020;--panel:#141c2f;--panel2:#10182a;--line:#26334d;--text:#edf2ff;--muted:#9eacc7;--accent:#7dd3fc;--good:#86efac;--bad:#fca5a5;--warn:#fcd34d}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top right,#162641,#0b1020 55%);color:var(--text);font:15px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -79,20 +79,20 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
  .configform{display:grid;gap:12px}.configform label{display:block;font-weight:650;margin:5px 0}.configform input:not([type=hidden]){display:block;width:100%;margin-top:6px;padding:11px 12px;border:1px solid #394966;border-radius:10px;background:#0c1425;color:var(--text);font:inherit}.configform input[type=number]{max-width:220px}.configform details{width:max-content;max-width:100%}.configform details p{max-width:700px}
 </style></head>
 <body><main class="wrap">
-<header><div><h1>{{tr .Lang "پنل {{tr .Lang "مدیریت PQTunnel" "PQTunnel Management"}}" "PQTunnel Management Panel"}}</h1><p class="sub">{{tr .Lang "{{tr .Lang "وضعیت سرویس" "Service status"}} و {{tr .Lang "همتایان متصل" "Connected peers"}} · کنترل محدود و امن" "Service and connected peers · limited, secure controls"}}</p></div>
+<header><div><h1>{{tr .Lang "پنل مدیریت PQTunnel" "PQTunnel Management Panel"}}</h1><p class="sub">{{tr .Lang "وضعیت سرویس و همتایان متصل · کنترل محدود و امن" "Service and connected peers · limited, secure controls"}}</p></div>
 <div class="header-actions"><nav class="language-picker"><a class="refresh" href="/language?lang=fa&amp;next=/">فارسی</a><a class="refresh" href="/language?lang=en&amp;next=/">English</a></nav>{{if .Manager}}<a class="refresh" href="/logs">{{tr .Lang "لاگ سرویس" "Service logs"}}</a>{{end}}<a class="refresh" href="/">{{tr .Lang "به‌روزرسانی وضعیت" "Refresh status"}}</a>
-<form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">{{tr .Lang "{{tr .Lang "خروج" "Log out"}} از پنل" "Log out of the panel"}}</button></form></div></header>
+<form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">{{tr .Lang "خروج از پنل" "Log out of the panel"}}</button></form></div></header>
 {{if .Notice}}<div class="notice" role="status">{{.Notice}}{{if .Detail}} — {{.Detail}}{{end}}</div>{{end}}
 <section class="grid" aria-label="{{tr .Lang "خلاصه وضعیت" "Status summary"}}">
 <div class="card"><div class="kicker">{{tr .Lang "وضعیت سرویس" "Service status"}}</div><div class="metric status"><span class="dot {{if .Snapshot.Running}}up{{end}}"></span>{{if .Snapshot.Running}}{{tr .Lang "فعال" "Running"}}{{else}}{{tr .Lang "متوقف / در حال راه‌اندازی" "Stopped / starting"}}{{end}}</div></div>
-<div class="card"><div class="kicker">وضعیت اتصال تونل</div><div class="metric status"><span class="dot {{if .Snapshot.TransportConnected}}up{{end}}"></span>{{if not .Snapshot.Running}}{{tr .Lang "سرویس متوقف" "Service stopped"}}{{else if .Manager}}{{if .Manager.PeerDataReady}}{{if .Manager.TransportConnected}}{{tr .Lang "متصل" "Connected"}}{{else}}{{tr .Lang "قطع / در انتظار اتصال" "Disconnected / waiting for connection"}}{{end}}{{else}}{{tr .Lang "{{tr .Lang "نامشخص" "Unknown"}}؛ control socket در دسترس نیست" "Unknown; control socket unavailable"}}{{end}}{{else}}{{if .Snapshot.TransportConnected}}{{tr .Lang "متصل" "Connected"}}{{else}}{{tr .Lang "قطع / در انتظار اتصال" "Disconnected / waiting for connection"}}{{end}}{{end}}</div></div>
+<div class="card"><div class="kicker">وضعیت اتصال تونل</div><div class="metric status"><span class="dot {{if .Snapshot.TransportConnected}}up{{end}}"></span>{{if not .Snapshot.Running}}{{tr .Lang "سرویس متوقف" "Service stopped"}}{{else if .Manager}}{{if .Manager.PeerDataReady}}{{if .Manager.TransportConnected}}{{tr .Lang "متصل" "Connected"}}{{else}}{{tr .Lang "قطع / در انتظار اتصال" "Disconnected / waiting for connection"}}{{end}}{{else}}{{tr .Lang "نامشخص؛ control socket در دسترس نیست" "Unknown; control socket unavailable"}}{{end}}{{else}}{{if .Snapshot.TransportConnected}}{{tr .Lang "متصل" "Connected"}}{{else}}{{tr .Lang "قطع / در انتظار اتصال" "Disconnected / waiting for connection"}}{{end}}{{end}}</div></div>
 <div class="card"><div class="kicker">{{tr .Lang "همتایان متصل" "Connected peers"}}</div><div class="metric">{{if .Manager}}{{if .Manager.PeerDataReady}}{{len .Snapshot.Peers}} / {{.Snapshot.MaxClients}}{{else}}{{tr .Lang "نامشخص" "Unknown"}}{{end}}{{else}}{{len .Snapshot.Peers}} / {{.Snapshot.MaxClients}}{{end}}</div></div>
 <div class="card"><div class="kicker">{{tr .Lang "مدت اجرای جاری" "Current uptime"}}</div><div class="metric">{{if .Snapshot.Uptime}}{{.Snapshot.Uptime}}{{else}}—{{end}}</div></div>
 <div class="card"><div class="kicker">{{tr .Lang "حالت تونل" "Tunnel mode"}}</div><div class="metric">{{if .Snapshot.SiteToSite}}{{tr .Lang "سایت‌به‌سایت" "Site-to-site"}}{{else}}{{tr .Lang "میزبان / کلاینت" "Host / client"}}{{end}}</div></div>
 </section>
 <section class="section"><h2>{{tr .Lang "پیکربندی مؤثر" "Effective configuration"}}</h2><div class="details">
 <div class="detail"><span class="kicker">{{tr .Lang "نشانی شنونده" "Listen address"}}</span><b>{{.Snapshot.ListenAddress}}</b></div>
-<div class="detail"><span class="kicker">{{tr .Lang "{{tr .Lang "هویت" "Identity"}} همتای مورد انتظار" "Expected peer identity"}}</span><b>{{if .Snapshot.PeerIdentity}}{{.Snapshot.PeerIdentity}}{{else}}{{tr .Lang "تنظیم نشده" "Not configured"}}{{end}}</b></div>
+<div class="detail"><span class="kicker">{{tr .Lang "هویت همتای مورد انتظار" "Expected peer identity"}}</span><b>{{if .Snapshot.PeerIdentity}}{{.Snapshot.PeerIdentity}}{{else}}{{tr .Lang "تنظیم نشده" "Not configured"}}{{end}}</b></div>
 <div class="detail"><span class="kicker">{{tr .Lang "محدوده‌های مجاز" "Allowed prefixes"}}</span><b>{{tr .Lang "محلی: " "Local: "}}{{.Snapshot.LocalPrefixCount}}{{tr .Lang " · همتا: " " · peer: "}}{{.Snapshot.PeerPrefixCount}}</b></div>
 </div></section>
 {{if .Manager}}
@@ -102,11 +102,11 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 <div class="detail"><span class="kicker">{{tr .Lang "واحد systemd" "systemd unit"}}</span><b>{{.Manager.ServiceUnit}}</b></div>
 <div class="detail"><span class="kicker">{{tr .Lang "وضعیت systemd" "systemd status"}}</span><b>{{.Manager.ActiveState}} / {{.Manager.SubState}} · PID {{if .Manager.MainPID}}{{.Manager.MainPID}}{{else}}—{{end}}</b></div>
 </div>
-<p class="sub">{{tr .Lang "استارت/استاپ/ری‌استارت اتصال فعال را قطع می‌کند. این {{tr .Lang "عملیات" "Actions"}} فقط واحد ثابتِ نقش انتخاب‌شده را کنترل می‌کند؛ برای اعمال تغییر روی سرور {{tr .Lang "عملیات" "Actions"}}ی، ابتدا مسیر بازیابی خارج از تونل را آماده کن." "Start/stop/restart interrupts active connections. This controls only the fixed unit for the selected role. Ensure you have an out-of-band recovery path before using it on a live server."}}</p>
+<p class="sub">{{tr .Lang "استارت/استاپ/ری‌استارت اتصال فعال را قطع می‌کند. این عملیات فقط واحد ثابتِ نقش انتخاب‌شده را کنترل می‌کند؛ برای اعمال تغییر روی سرور عملیاتی، ابتدا مسیر بازیابی خارج از تونل را آماده کن." "Start/stop/restart interrupts active connections. This controls only the fixed unit for the selected role. Ensure you have an out-of-band recovery path before using it on a live server."}}</p>
 <div class="header-actions">
 <details class="disconnect"><summary>Start</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="start"><input type="hidden" name="confirm" value="yes"><button type="submit">{{tr .Lang "تأیید راه‌اندازی" "Confirm start"}}</button></form></details>
 <details class="disconnect"><summary>Stop</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="stop"><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">{{tr .Lang "تأیید توقف" "Confirm stop"}}</button></form></details>
-<details class="disconnect"><summary>Restart</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="restart"><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">{{tr .Lang "{{tr .Lang "تأیید راه‌اندازی" "Confirm start"}} مجدد" "Confirm restart"}}</button></form></details>
+<details class="disconnect"><summary>Restart</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="restart"><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">{{tr .Lang "تأیید راه‌اندازی مجدد" "Confirm restart"}}</button></form></details>
 </div>
 </section>
 <section class="section"><h2>{{tr .Lang "ویرایش تنظیمات تونل" "Edit tunnel settings"}}</h2>
@@ -115,7 +115,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 <form method="post" action="/config/apply" class="configform">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 {{if eq .Manager.Role "gateway"}}
-<label>{{tr .Lang "{{tr .Lang "نشانی شنونده" "Listen address"}} (IP:port؛ برای چند نشانی با کاما جدا کن)" "Listen address (IP:port; separate multiple addresses with commas)"}}<input name="listen_address" maxlength="512" required value="{{.Manager.Config.ListenAddress}}"></label>
+<label>{{tr .Lang "نشانی شنونده (IP:port؛ برای چند نشانی با کاما جدا کن)" "Listen address (IP:port; separate multiple addresses with commas)"}}<input name="listen_address" maxlength="512" required value="{{.Manager.Config.ListenAddress}}"></label>
 <label>{{tr .Lang "CIDRهای شبکهٔ سمت Dialer" "Dialer-side network CIDRs"}}<input name="peer_prefixes" maxlength="2048" required value="{{.Manager.Config.PeerPrefixes}}"></label>
 <label>{{tr .Lang "CIDRهای مجاز سمت Gateway (از جمله IP تونل خود Gateway برای تست)" "Allowed Gateway-side CIDRs (including the Gateway tunnel IP for testing)"}}<input name="local_prefixes" maxlength="2048" required value="{{.Manager.Config.LocalPrefixes}}"></label>
 <label>{{tr .Lang "Common Name گواهی peer" "Peer certificate Common Name"}}<input name="peer_identity" maxlength="128" required value="{{.Manager.Config.PeerIdentity}}"></label>
@@ -157,9 +157,9 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 </section>
 {{end}}
 <section class="section"><h2>{{tr .Lang "همتایان متصل" "Connected peers"}}</h2>
-{{if .Snapshot.Peers}}<table><thead><tr><th>{{tr .Lang "{{tr .Lang "هویت" "Identity"}} گواهی" "Certificate identity"}}</th><th>{{tr .Lang "مدت اتصال" "Connection duration"}}</th><th>{{tr .Lang "عملیات" "Actions"}}</th></tr></thead><tbody>
-{{range .Snapshot.Peers}}<tr><td class="identity" data-label="{{tr $.Lang "هویت" "Identity"}}">{{.Identity}}</td><td data-label="{{tr $.Lang "مدت اتصال" "Connection duration"}}">{{.ConnectedFor}}</td><td><details class="disconnect"><summary>{{tr $.Lang "قطع اتصال" "Disconnect"}}</summary><form method="post" action="/peers/disconnect" class="peerform"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="identity" value="{{.Identity}}"><button class="danger" type="submit">{{tr $.Lang "تأیید {{tr $.Lang "قطع اتصال" "Disconnect"}}" "Confirm disconnect"}}</button></form></details></td></tr>{{end}}
-</tbody></table>{{else}}<div class="empty">{{tr .Lang "در حال حاضر هیچ همتای احراز {{tr .Lang "هویت" "Identity"}}‌شده‌ای متصل نیست." "No authenticated peers are currently connected."}}</div>{{end}}
+{{if .Snapshot.Peers}}<table><thead><tr><th>{{tr .Lang "هویت گواهی" "Certificate identity"}}</th><th>{{tr .Lang "مدت اتصال" "Connection duration"}}</th><th>{{tr .Lang "عملیات" "Actions"}}</th></tr></thead><tbody>
+{{range .Snapshot.Peers}}<tr><td class="identity" data-label="{{tr $.Lang "هویت" "Identity"}}">{{.Identity}}</td><td data-label="{{tr $.Lang "مدت اتصال" "Connection duration"}}">{{.ConnectedFor}}</td><td><details class="disconnect"><summary>{{tr $.Lang "قطع اتصال" "Disconnect"}}</summary><form method="post" action="/peers/disconnect" class="peerform"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="identity" value="{{.Identity}}"><button class="danger" type="submit">{{tr $.Lang "تأیید قطع اتصال" "Confirm disconnect"}}</button></form></details></td></tr>{{end}}
+</tbody></table>{{else}}<div class="empty">{{tr .Lang "در حال حاضر هیچ همتای احراز هویت‌شده‌ای متصل نیست." "No authenticated peers are currently connected."}}</div>{{end}}
 </section>
 <footer>{{if .Manager}}{{tr .Lang "این پنل کنترل محدود سرویس، تنظیمات site-to-site و اتصال همتا را فراهم می‌کند. فایل‌های PKI، کلیدها، فایروال و قوانین NAT از این فرم تغییر نمی‌کنند. پنل باید فقط روی loopback در دسترس باشد." "This panel provides limited service, site-to-site configuration, and peer controls. PKI files, keys, firewall, and NAT rules cannot be changed here. The panel should only be accessible on loopback."}}{{else}}{{tr .Lang "این پنل فقط وضعیت را نمایش می‌دهد و اتصال همتا را قطع می‌کند؛ مسیرها، فایروال، NAT، گواهی‌ها و کلیدها را تغییر نمی‌دهد. پنل باید فقط روی loopback در دسترس باشد." "This panel only shows status and can disconnect peers; it does not change routes, firewall, NAT, certificates, or keys. The panel should only be accessible on loopback."}}{{end}}</footer>
 </main></body></html>`))
@@ -167,7 +167,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 <html lang="{{.Lang}}" dir="{{dir .Lang}}">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{tr .Lang "{{tr .Lang "لاگ سرویس" "Service logs"}} PQTunnel" "PQTunnel Service Logs"}}</title>
+<title>{{tr .Lang "لاگ سرویس PQTunnel" "PQTunnel Service Logs"}}</title>
 <style>
 :root{color-scheme:dark;--bg:#0b1020;--line:#26334d;--text:#edf2ff;--muted:#9eacc7;--accent:#7dd3fc}
 *{box-sizing:border-box}body{margin:0;background:#0b1020;color:var(--text);font:14px/1.65 ui-monospace,monospace}.wrap{width:min(1200px,calc(100% - 28px));margin:24px auto}
@@ -175,7 +175,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;fl
 button{font:inherit;padding:8px 12px;background:#1b2940;color:var(--text);border:1px solid var(--line);border-radius:8px}
 </style></head>
 <body><main class="wrap"><header><div><h1>{{tr .Lang "آخرین لاگ‌های سرویس " "Latest service logs: "}}{{.Unit}}</h1><p>{{tr .Lang "حداکثر ۱۰۰ خط؛ مقادیر حساس شناخته‌شده حذف یا ماسک شده‌اند." "Latest 100 lines; recognized sensitive values are removed or masked."}}</p></div>
-<div><a href="/">{{tr .Lang "بازگشت به پنل" "Back to dashboard"}}</a>
+<div class="language-picker"><a href="/language?lang=fa&amp;next=/logs">فارسی</a><a href="/language?lang=en&amp;next=/logs">English</a><a href="/">{{tr .Lang "بازگشت به پنل" "Back to dashboard"}}</a>
 <form method="post" action="/logout" style="display:inline"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">{{tr .Lang "خروج" "Log out"}}</button></form></div></header>
 <pre>{{.Logs}}</pre></main></body></html>`))
 )
@@ -263,7 +263,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/language":
 		if r.Method != http.MethodGet {
-			methodNotAllowed(w, "GET")
+			methodNotAllowed(w, r, "GET")
 			return
 		}
 		lang := r.URL.Query().Get("lang")
@@ -292,11 +292,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case http.MethodPost:
 			h.login(w, r)
 		default:
-			methodNotAllowed(w, "GET, POST")
+			methodNotAllowed(w, r, "GET, POST")
 		}
 	case "/":
 		if r.Method != http.MethodGet {
-			methodNotAllowed(w, "GET")
+			methodNotAllowed(w, r, "GET")
 			return
 		}
 		_, current, ok := h.sessionFor(r)
@@ -331,7 +331,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case "/logs":
 		if r.Method != http.MethodGet {
-			methodNotAllowed(w, "GET")
+			methodNotAllowed(w, r, "GET")
 			return
 		}
 		_, current, ok := h.sessionFor(r)
@@ -362,7 +362,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case "/speedtest/run":
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, "POST")
+			methodNotAllowed(w, r, "POST")
 			return
 		}
 		_, current, ok := h.requirePostSession(w, r)
@@ -394,7 +394,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?notice=speedtest-completed", http.StatusSeeOther)
 	case "/service/action":
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, "POST")
+			methodNotAllowed(w, r, "POST")
 			return
 		}
 		_, current, ok := h.requirePostSession(w, r)
@@ -422,7 +422,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?notice=service-"+action, http.StatusSeeOther)
 	case "/config/apply":
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, "POST")
+			methodNotAllowed(w, r, "POST")
 			return
 		}
 		_, current, ok := h.requirePostSession(w, r)
@@ -460,7 +460,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?notice=config-applied", http.StatusSeeOther)
 	case "/peers/disconnect":
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, "POST")
+			methodNotAllowed(w, r, "POST")
 			return
 		}
 		_, current, ok := h.requirePostSession(w, r)
@@ -484,7 +484,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?notice="+notice, http.StatusSeeOther)
 	case "/logout":
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, "POST")
+			methodNotAllowed(w, r, "POST")
 			return
 		}
 		id, current, ok := h.requirePostSession(w, r)
@@ -821,7 +821,7 @@ func (h *Handler) redirectWithDetail(w http.ResponseWriter, r *http.Request, not
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
-func methodNotAllowed(w http.ResponseWriter, allow string) {
+func methodNotAllowed(w http.ResponseWriter, r *http.Request, allow string) {
 	w.Header().Set("Allow", allow)
 	http.Error(w, translateText(requestLanguage(r), "روش درخواست پشتیبانی نمی‌شود.", "Request method is not supported."), http.StatusMethodNotAllowed)
 }
