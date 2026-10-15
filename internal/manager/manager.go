@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -193,6 +194,86 @@ func (m *Controller) DisconnectPeer(identity string) bool {
 	defer cancel()
 	_, err := adminipc.Call(ctx, m.ipcSocket, "disconnect", identity)
 	return err == nil
+}
+
+func (m *Controller) speedTestReady(cfg adminapi.TunnelConfiguration) bool {
+	if m.speedTestToken == "" || len([]byte(m.speedTestToken)) < 32 {
+		return false
+	}
+	ip, port, err := speedtest.ParseEndpointAddress(m.speedTestPeer)
+	if err != nil || speedtest.ValidatePrivateEndpoint(m.speedTestPeer) != nil {
+		return false
+	}
+	var targetPrefixes []netip.Prefix
+	if m.role == RoleGateway {
+		targetPrefixes, err = prefixset.ParseCSV(cfg.PeerPrefixes)
+	} else {
+		targetPrefixes, err = prefixset.ParseCSV(cfg.RemotePrefixes)
+	}
+	if err != nil || !prefixset.Contains(targetPrefixes, ip) {
+		return false
+	}
+	rules, err := portpolicy.ParseCSV(cfg.AllowedDstPorts)
+	if err != nil || !rules.AllowsPacket(tcpPortProbe(ip, port)) {
+		return false
+	}
+	return true
+}
+
+func (m *Controller) RunSpeedTest(ctx context.Context, sizeMiB int) (adminapi.SpeedTestResult, error) {
+	m.speedMu.Lock()
+	defer m.speedMu.Unlock()
+
+	cfg, _, err := m.readConfiguration()
+	if err != nil {
+		return adminapi.SpeedTestResult{}, fmt.Errorf("cannot read tunnel config: %w", err)
+	}
+	if !m.speedTestReady(cfg) {
+		return adminapi.SpeedTestResult{}, errors.New("speed test is not ready: configure a private peer tunnel IP, shared speed-test token, matching route prefix and tcp port allowlist on both servers")
+	}
+	result, err := speedtest.Run(ctx, m.speedTestPeer, m.speedTestToken, sizeMiB)
+	if err != nil {
+		return adminapi.SpeedTestResult{}, err
+	}
+	stored := adminapi.SpeedTestResult{
+		Peer: result.Peer, SizeMiB: result.SizeMiB, RTTMillis: result.RTTMillis,
+		UploadMbps: result.UploadMbps, DownloadMbps: result.DownloadMbps,
+		UploadSeconds: result.UploadSeconds, DownloadSeconds: result.DownloadSeconds,
+		CompletedAt: result.CompletedAt.Format(time.RFC3339),
+	}
+	m.lastSpeedTest = &stored
+	return stored, nil
+}
+
+func tcpPortProbe(dst netip.Addr, port uint16) []byte {
+	if dst.Is4() {
+		p := make([]byte, 40)
+		p[0] = 0x45
+		binary.BigEndian.PutUint16(p[2:4], uint16(len(p)))
+		p[8] = 64
+		p[9] = 6
+		src := netip.MustParseAddr("192.0.2.1").As4()
+		target := dst.As4()
+		copy(p[12:16], src[:])
+		copy(p[16:20], target[:])
+		binary.BigEndian.PutUint16(p[20:22], 40000)
+		binary.BigEndian.PutUint16(p[22:24], port)
+		p[32] = 0x50
+		return p
+	}
+	p := make([]byte, 60)
+	p[0] = 0x60
+	binary.BigEndian.PutUint16(p[4:6], 20)
+	p[6] = 6
+	p[7] = 64
+	src := netip.MustParseAddr("fd00::1").As16()
+	target := dst.As16()
+	copy(p[8:24], src[:])
+	copy(p[24:40], target[:])
+	binary.BigEndian.PutUint16(p[40:42], 40000)
+	binary.BigEndian.PutUint16(p[42:44], port)
+	p[52] = 0x50
+	return p
 }
 
 func (m *Controller) ServiceAction(ctx context.Context, action string) error {
