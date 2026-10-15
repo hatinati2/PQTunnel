@@ -178,7 +178,7 @@ button{font:inherit;padding:8px 12px;background:#1b2940;color:var(--text);border
 <pre>{{.Logs}}</pre></main></body></html>`))
 )
 
-type session {
+type session struct {
 	CSRF      string
 	ExpiresAt time.Time
 }
