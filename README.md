@@ -33,7 +33,7 @@ PQTUNNEL_ADMIN_LISTEN=127.0.0.1:9090
 PQTUNNEL_ADMIN_TOKEN=REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_BYTES
 ```
 
-Replace the example token with a strong random secret of at least 32 bytes. Do not commit the real token or place it in command-line arguments. The listener accepts only a literal loopback IP (for example, `127.0.0.1:9090` or `[::1]:9090`); wildcard and public addresses are rejected. The panel uses plain HTTP because it is loopback-only. For access from another machine, use an encrypted SSH tunnel and never expose the panel port directly to the internet.
+Replace the example token with a strong random secret of at least 32 bytes. Do not commit the real token or place it in command-line arguments. The listener accepts only a literal loopback IP (for example, `127.0.0.1:9090` or `[::1]:9090`); wildcard and public addresses are rejected. The panel uses plain HTTP because it is loopback-only. Open it in the browser using a numeric loopback URL such as `http://127.0.0.1:9090/`, not `localhost` or a domain name; Origin validation rejects hostnames to reduce DNS-rebinding risk. For access from another machine, use an encrypted SSH tunnel and never expose the panel port directly to the internet.
 
 After login, it shows limited daemon and connected-peer status and allows disconnecting a selected peer. It does not start or stop systemd, or modify routes, sysctls, firewall, NAT, certificates, or keys. Sessions are in-memory and expire after 12 hours; state-changing requests have CSRF protection, and five failed logins from an IP trigger a 60-second lockout. This is an experimental admin surface, not a complete audit or user-management system.
 
