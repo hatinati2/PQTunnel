@@ -7,11 +7,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
+	"github.com/hatinati2/PQTunnel/internal/adminui"
 	"github.com/hatinati2/PQTunnel/internal/portpolicy"
 	"github.com/hatinati2/PQTunnel/internal/prefixset"
 	"github.com/hatinati2/PQTunnel/internal/tun"
@@ -20,6 +24,7 @@ import (
 
 func main() {
 	listen := flag.String("listen", envString("PQTUNNEL_LISTEN", ":8443"), "TCP listen address; comma-separated addresses can bind IPv4 and IPv6, e.g. 0.0.0.0:8443,[::]:8443")
+	adminListen := flag.String("admin-listen", envString("PQTUNNEL_ADMIN_LISTEN", ""), "optional local web admin address; only a literal loopback IP is allowed, disabled by default")
 	tlsCert := flag.String("tls-cert", envString("PQTUNNEL_TLS_CERT", "/etc/pqtunnel/pki/server.crt"), "server certificate PEM")
 	tlsKey := flag.String("tls-key", envString("PQTUNNEL_TLS_KEY", "/etc/pqtunnel/pki/server.key"), "server private key PEM")
 	clientCA := flag.String("client-ca", envString("PQTUNNEL_CLIENT_CA", "/etc/pqtunnel/pki/ca.crt"), "CA that signed client certificates")
@@ -30,6 +35,18 @@ func main() {
 	peerName := flag.String("peer-name", os.Getenv("PQTUNNEL_PEER_NAME"), "exact client certificate Common Name required in site-to-site mode")
 	allowedDstPortsText := flag.String("allowed-dst-ports", os.Getenv("PQTUNNEL_ALLOWED_DST_PORTS"), "optional destination-port allowlist, e.g. tcp:443,udp:53,tcp:8000-8010; empty disables this filter")
 	flag.Parse()
+
+	adminToken := os.Getenv("PQTUNNEL_ADMIN_TOKEN")
+	var adminListener net.Listener
+	if *adminListen != "" {
+		fatalIf(adminui.ValidateLoopbackAddress(*adminListen))
+		if len([]byte(adminToken)) < 32 {
+			fatalIf(fmt.Errorf("PQTUNNEL_ADMIN_TOKEN must contain at least 32 bytes when the admin panel is enabled"))
+		}
+		var listenErr error
+		adminListener, listenErr = net.Listen("tcp", *adminListen)
+		fatalIf(listenErr)
+	}
 
 	peerPrefixes, err := prefixset.ParseCSV(*peerPrefixesText)
 	fatalIf(err)
@@ -60,6 +77,28 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	s := &tunnel.Server{ListenAddress: *listen, TLSConfig: tunnel.ServerTLSConfig(cert, pool), Device: dev, MaxClients: *maxClients, PeerPrefixes: peerPrefixes, LocalPrefixes: localPrefixes, PeerIdentity: *peerName, AllowedDstPorts: allowedDstPorts}
+	if adminListener != nil {
+		adminHandler, err := adminui.New(adminToken, s)
+		fatalIf(err)
+		adminHTTP := &http.Server{
+			Addr: *adminListen, Handler: adminHandler,
+			ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
+			MaxHeaderBytes: 8 << 10,
+		}
+		go func() {
+			if err := adminHTTP.Serve(adminListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintln(os.Stderr, "pqtunneld: admin panel:", err)
+				stop()
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = adminHTTP.Shutdown(shutdownCtx)
+		}()
+		fmt.Printf("PQTunnel admin panel available at http://%s/ (loopback-only; token protected)\\n", *adminListen)
+	}
 	fmt.Printf("PQTunnel listening on %s; TLS 1.3 strict X25519MLKEM768; IPv4/IPv6 packets; route policy configured separately\n", *listen)
 	if err := s.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		fatalIf(err)
