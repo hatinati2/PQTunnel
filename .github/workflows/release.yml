@@ -94,6 +94,9 @@ jobs:
               if [[ "$goos" == windows ]]; then ext='.exe'; fi
               GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags='-s -w' -o "dist/$pkg/${cmd}${ext}" "./cmd/$cmd"
             done
+            if [[ "$goos" == linux ]]; then
+              GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags='-s -w' -o "dist/$pkg/pqtunnel-manager" ./cmd/pqtunnel-manager
+            fi
             cp README.md README.fa.md SECURITY.md LICENSE CHANGELOG.md "dist/$pkg/"
             cp -R scripts deploy docs "dist/$pkg/"
             tar -C dist -czf "dist/${pkg}.tar.gz" "$pkg"

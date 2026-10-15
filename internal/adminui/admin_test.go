@@ -1,6 +1,7 @@
 package adminui
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +18,62 @@ type fakeController struct {
 	snapshot     adminapi.Snapshot
 	disconnected []string
 }
+
+type fakeManagerController struct {
+	*fakeController
+	view adminapi.ManagerSnapshot
+	actions []string
+	applied []adminapi.TunnelConfiguration
+	speedSizes []int
+	speedResult adminapi.SpeedTestResult
+	serviceErr error
+	configErr error
+	speedErr error
+	logs string
+	logsErr error
+}
+
+func (f *fakeManagerController) ManagementSnapshot() adminapi.ManagerSnapshot { return f.view }
+func (f *fakeManagerController) ServiceAction(_ context.Context, action string) error {
+	f.actions = append(f.actions, action)
+	return f.serviceErr
+}
+func (f *fakeManagerController) ApplyConfiguration(_ context.Context, cfg adminapi.TunnelConfiguration) error {
+	f.applied = append(f.applied, cfg)
+	return f.configErr
+}
+func (f *fakeManagerController) RunSpeedTest(_ context.Context, sizeMiB int) (adminapi.SpeedTestResult, error) {
+	f.speedSizes = append(f.speedSizes, sizeMiB)
+	return f.speedResult, f.speedErr
+}
+func (f *fakeManagerController) RecentLogs(_ context.Context) (string, error) {
+	return f.logs, f.logsErr
+}
+
+func managerSession(t *testing.T, h *Handler, token string) (*http.Cookie, string) {
+	t.Helper()
+	loginValues := url.Values{"token": {token}}
+	loginReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/login", strings.NewReader(loginValues.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginReq.Header.Set("Origin", "http://127.0.0.1")
+	loginResp := httptest.NewRecorder()
+	h.ServeHTTP(loginResp, loginReq)
+	if loginResp.Code != http.StatusSeeOther {
+		t.Fatalf("manager test login status=%d", loginResp.Code)
+	}
+	cookies := loginResp.Result().Cookies()
+	if len(cookies) == 0 { t.Fatal("manager login cookie missing") }
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+	req.AddCookie(cookies[0])
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	matches := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(resp.Body.String())
+	if resp.Code != http.StatusOK || len(matches) != 2 {
+		t.Fatalf("manager dashboard unavailable: status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	return cookies[0], matches[1]
+}
+
 
 func (f *fakeController) AdminSnapshot() adminapi.Snapshot { return f.snapshot }
 func (f *fakeController) DisconnectPeer(identity string) bool {
@@ -372,5 +429,132 @@ func TestDisconnectRejectsInvalidCSRFAndOversizedBody(t *testing.T) {
 	h.ServeHTTP(largeResp, largeReq)
 	if largeResp.Code != http.StatusBadRequest || len(controller.disconnected) != 0 {
 		t.Fatalf("oversized form status=%d disconnected=%v, want 400 and no action", largeResp.Code, controller.disconnected)
+	}
+}
+
+
+func TestStandaloneManagerDashboardAndLifecycleActions(t *testing.T) {
+	const token = "standalone-manager-test-token-012345"
+	base := &fakeController{snapshot: adminapi.Snapshot{
+		Running: true, ListenAddress: "0.0.0.0:8443", MaxClients: 1,
+	}}
+	manager := &fakeManagerController{
+		fakeController: base,
+		logs: "Oct 15 pqtunneld[123]: tunnel started\nOct 15 pqtunneld[123]: peer connected",
+		view: adminapi.ManagerSnapshot{
+			Role: "gateway", ServiceUnit: "pqtunneld.service", ActiveState: "active",
+			SubState: "running", MainPID: "123", ConfigReady: true,
+			Config: adminapi.TunnelConfiguration{
+				ListenAddress: "0.0.0.0:8443", MaxClients: 1,
+				PeerPrefixes: "10.66.0.2/32", LocalPrefixes: "10.66.0.1/32",
+				PeerIdentity: "dialer-1", AllowedDstPorts: "tcp:443,tcp:9109",
+			},
+			SpeedTestPeer: "10.66.0.2:9109", SpeedTestReady: true,
+			LastSpeedTest: &adminapi.SpeedTestResult{
+				Peer: "10.66.0.2:9109", SizeMiB: 4, RTTMillis: 9.5,
+				UploadMbps: 80, DownloadMbps: 75, UploadSeconds: .4, DownloadSeconds: .45,
+				CompletedAt: "2026-10-15T12:00:00Z",
+			},
+		},
+		speedResult: adminapi.SpeedTestResult{Peer: "10.66.0.2:9109", SizeMiB: 2, RTTMillis: 10, UploadMbps: 50, DownloadMbps: 45},
+	}
+	h, err := New(token, manager)
+	if err != nil { t.Fatal(err) }
+	cookie, csrf := managerSession(t, h, token)
+
+	dashboardReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+	dashboardReq.AddCookie(cookie)
+	dashboardResp := httptest.NewRecorder()
+	h.ServeHTTP(dashboardResp, dashboardReq)
+	for _, expected := range []string{
+		"pqtunneld.service", "/service/action", "/config/apply", "/speedtest/run", "/logs",
+		"10.66.0.2:9109", "80.00 Mbps", "75.00 Mbps",
+	} {
+		if !strings.Contains(dashboardResp.Body.String(), expected) {
+			t.Errorf("manager dashboard lacks %q", expected)
+		}
+	}
+
+	post := func(path string, values url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1"+path, strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "http://127.0.0.1")
+		req.AddCookie(cookie)
+		resp := httptest.NewRecorder()
+		h.ServeHTTP(resp, req)
+		return resp
+	}
+
+	serviceValues := url.Values{"csrf": {csrf}, "action": {"restart"}, "confirm": {"yes"}}
+	serviceResp := post("/service/action", serviceValues)
+	if serviceResp.Code != http.StatusSeeOther || serviceResp.Header().Get("Location") != "/?notice=service-restart" {
+		t.Fatalf("restart response status=%d location=%q", serviceResp.Code, serviceResp.Header().Get("Location"))
+	}
+	if len(manager.actions) != 1 || manager.actions[0] != "restart" {
+		t.Fatalf("unexpected service actions: %v", manager.actions)
+	}
+
+	configValues := url.Values{
+		"csrf": {csrf}, "confirm": {"yes"},
+		"listen_address": {"0.0.0.0:8443"}, "peer_prefixes": {"10.66.0.2/32"},
+		"local_prefixes": {"10.66.0.1/32"}, "peer_identity": {"dialer-1"},
+		"allowed_dst_ports": {"tcp:443,tcp:9109"},
+	}
+	configResp := post("/config/apply", configValues)
+	if configResp.Code != http.StatusSeeOther || len(manager.applied) != 1 {
+		t.Fatalf("config apply status=%d applied=%d", configResp.Code, len(manager.applied))
+	}
+	if manager.applied[0].ListenAddress != "0.0.0.0:8443" || manager.applied[0].MaxClients != 1 {
+		t.Fatalf("unexpected config forwarded to controller: %#v", manager.applied[0])
+	}
+
+	speedValues := url.Values{"csrf": {csrf}, "confirm": {"yes"}, "megabytes": {"2"}}
+	speedResp := post("/speedtest/run", speedValues)
+	if speedResp.Code != http.StatusSeeOther || speedResp.Header().Get("Location") != "/?notice=speedtest-completed" {
+		t.Fatalf("speed test status=%d location=%q", speedResp.Code, speedResp.Header().Get("Location"))
+	}
+	if len(manager.speedSizes) != 1 || manager.speedSizes[0] != 2 {
+		t.Fatalf("unexpected speed-test sizes: %v", manager.speedSizes)
+	}
+
+	logsReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/logs", nil)
+	logsReq.AddCookie(cookie)
+	logsResp := httptest.NewRecorder()
+	h.ServeHTTP(logsResp, logsReq)
+	if logsResp.Code != http.StatusOK || !strings.Contains(logsResp.Body.String(), "tunnel started") || !strings.Contains(logsResp.Body.String(), "pqtunneld.service") {
+		t.Fatalf("manager logs page failed: status=%d body=%s", logsResp.Code, logsResp.Body.String())
+	}
+}
+
+func TestStandaloneManagerActionsRequireCSRFAndConfirmation(t *testing.T) {
+	const token = "standalone-manager-test-token-012345"
+	manager := &fakeManagerController{fakeController: &fakeController{}, view: adminapi.ManagerSnapshot{Role: "dialer"}}
+	h, err := New(token, manager)
+	if err != nil { t.Fatal(err) }
+	cookie, csrf := managerSession(t, h, token)
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/service/action", strings.NewReader(url.Values{
+		"csrf": {"wrong"}, "action": {"stop"}, "confirm": {"yes"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://127.0.0.1")
+	req.AddCookie(cookie)
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusBadRequest || len(manager.actions) != 0 {
+		t.Fatalf("bad CSRF should reject action: status=%d calls=%v", resp.Code, manager.actions)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "http://127.0.0.1/service/action", strings.NewReader(url.Values{
+		"csrf": {csrf}, "action": {"stop"}, "confirm": {"no"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://127.0.0.1")
+	req.AddCookie(cookie)
+	resp = httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusBadRequest || len(manager.actions) != 0 {
+		t.Fatalf("missing explicit confirmation should reject action: status=%d calls=%v", resp.Code, manager.actions)
 	}
 }

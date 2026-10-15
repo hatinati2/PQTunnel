@@ -1,0 +1,32 @@
+[Unit]
+Description=PQTunnel local web management service (experimental)
+Wants=network-online.target
+After=network-online.target
+Documentation=https://github.com/hatinati2/PQTunnel/docs/WEB-ADMIN-PANEL.md
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/pqtunnel-manager
+ExecStart=/usr/local/sbin/pqtunnel-manager
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+UMask=0077
+StateDirectory=pqtunnel-manager
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=-/etc/default/pqtunneld -/etc/default/pqtunnel-client /var/lib/pqtunnel-manager
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

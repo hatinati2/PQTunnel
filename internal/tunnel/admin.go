@@ -15,8 +15,9 @@ func (s *Server) AdminSnapshot() adminapi.Snapshot {
 	defer s.mu.RUnlock()
 
 	snapshot := adminapi.Snapshot{
-		Running:          s.running,
-		ListenAddress:    s.ListenAddress,
+		Running:            s.running,
+		TransportConnected: len(s.clients) > 0,
+		ListenAddress:      s.ListenAddress,
 		MaxClients:       s.MaxClients,
 		SiteToSite:       len(s.PeerPrefixes) > 0 || len(s.LocalPrefixes) > 0,
 		PeerIdentity:     s.PeerIdentity,

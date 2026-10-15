@@ -72,11 +72,23 @@ func main() {
 	fatalIf(err)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	adminLocalPrefixes := localPrefixes
+	if len(adminLocalPrefixes) == 0 {
+		bits := ip.BitLen()
+		adminLocalPrefixes = []netip.Prefix{netip.PrefixFrom(ip, bits)}
+	}
+	adminController := newClientAdminController(*server, *serverName, adminLocalPrefixes, remotePrefixes)
+	cleanupAdminIPC, err := startClientAdminIPC(ctx, adminController)
+	fatalIf(err)
+	defer cleanupAdminIPC()
+
 	go func() { <-ctx.Done(); _ = dev.Close() }()
 	fmt.Printf("PQTunnel dialer: %s via %s; TLS 1.3 strict hybrid X25519MLKEM768; IPv4/IPv6 packet support\n", *server, *network)
 	err = tunnel.RunClient(ctx, dev, tunnel.ClientConfig{
 		ServerAddress: *server, ServerName: *serverName, Network: *network,
 		LocalIP: ip, LocalPrefixes: localPrefixes, RemotePrefixes: remotePrefixes, AllowedDstPorts: allowedDstPorts, SocketMark: uint32(*socketMark), TLSConfig: tlsCfg,
+		OnConnected: adminController.OnConnected, OnDisconnected: adminController.OnDisconnected,
 	})
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, os.ErrClosed) {
 		fatalIf(err)

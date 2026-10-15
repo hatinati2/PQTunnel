@@ -32,6 +32,8 @@ type ClientConfig struct {
 	SocketMark      uint32             // optional Linux SO_MARK to exempt the tunnel transport from policy routing
 	TLSConfig       *tls.Config
 	ProtectSocket   SocketProtector
+	OnConnected     func(net.Conn)
+	OnDisconnected  func(net.Conn)
 }
 
 // RunClient carries IPv4 and IPv6 layer-3 packets over a TLS connection.
@@ -128,6 +130,9 @@ func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) er
 			continue
 		}
 		backoff = time.Second
+		if cfg.OnConnected != nil {
+			cfg.OnConnected(conn)
+		}
 		sessionCtx, cancel := context.WithCancel(ctx)
 		stopConnClose := context.AfterFunc(ctx, func() { _ = conn.Close() })
 		writeErr := make(chan error, 1)
@@ -145,6 +150,9 @@ func RunClient(ctx context.Context, dev io.ReadWriteCloser, cfg ClientConfig) er
 		stopConnClose()
 		cancel()
 		_ = conn.Close()
+		if cfg.OnDisconnected != nil {
+			cfg.OnDisconnected(conn)
+		}
 		drain(out)
 		select {
 		case <-ctx.Done():

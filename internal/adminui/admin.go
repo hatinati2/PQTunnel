@@ -1,6 +1,7 @@
 package adminui
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hatinati2/PQTunnel/internal/adminapi"
+	"github.com/hatinati2/PQTunnel/internal/speedtest"
 )
 
 const (
@@ -73,15 +75,17 @@ table{width:100%;border-collapse:collapse}th,td{text-align:right;padding:13px 10
 footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 @media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.details{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:540px){.wrap{margin-top:22px}.grid,.details{grid-template-columns:1fr}.section{padding:14px}table,tbody,tr,td{display:block}thead{display:none}tr{border-bottom:1px solid #26334d;padding:9px 0}td{border:0;padding:5px 2px}td:before{content:attr(data-label) ": ";color:var(--muted)}td:last-child:before{content:""}}
+ .configform{display:grid;gap:12px}.configform label{display:block;font-weight:650;margin:5px 0}.configform input:not([type=hidden]){display:block;width:100%;margin-top:6px;padding:11px 12px;border:1px solid #394966;border-radius:10px;background:#0c1425;color:var(--text);font:inherit}.configform input[type=number]{max-width:220px}.configform details{width:max-content;max-width:100%}.configform details p{max-width:700px}
 </style></head>
 <body><main class="wrap">
 <header><div><h1>پنل مدیریت PQTunnel</h1><p class="sub">وضعیت سرویس و همتایان متصل · کنترل محدود و امن</p></div>
-<div class="header-actions"><a class="refresh" href="/">به‌روزرسانی وضعیت</a>
+<div class="header-actions">{{if .Manager}}<a class="refresh" href="/logs">لاگ سرویس</a>{{end}}<a class="refresh" href="/">به‌روزرسانی وضعیت</a>
 <form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">خروج از پنل</button></form></div></header>
-{{if .Notice}}<div class="notice" role="status">{{.Notice}}</div>{{end}}
+{{if .Notice}}<div class="notice" role="status">{{.Notice}}{{if .Detail}} — {{.Detail}}{{end}}</div>{{end}}
 <section class="grid" aria-label="خلاصه وضعیت">
-<div class="card"><div class="kicker">وضعیت تونل</div><div class="metric status"><span class="dot {{if .Snapshot.Running}}up{{end}}"></span>{{if .Snapshot.Running}}فعال{{else}}متوقف / در حال راه‌اندازی{{end}}</div></div>
-<div class="card"><div class="kicker">همتایان متصل</div><div class="metric">{{len .Snapshot.Peers}} / {{.Snapshot.MaxClients}}</div></div>
+<div class="card"><div class="kicker">وضعیت سرویس</div><div class="metric status"><span class="dot {{if .Snapshot.Running}}up{{end}}"></span>{{if .Snapshot.Running}}فعال{{else}}متوقف / در حال راه‌اندازی{{end}}</div></div>
+<div class="card"><div class="kicker">وضعیت اتصال تونل</div><div class="metric status"><span class="dot {{if .Snapshot.TransportConnected}}up{{end}}"></span>{{if not .Snapshot.Running}}سرویس متوقف{{else if .Manager}}{{if .Manager.PeerDataReady}}{{if .Manager.TransportConnected}}متصل{{else}}قطع / در انتظار اتصال{{end}}{{else}}نامشخص؛ control socket در دسترس نیست{{end}}{{else}}{{if .Snapshot.TransportConnected}}متصل{{else}}قطع / در انتظار اتصال{{end}}{{end}}</div></div>
+<div class="card"><div class="kicker">همتایان متصل</div><div class="metric">{{if .Manager}}{{if .Manager.PeerDataReady}}{{len .Snapshot.Peers}} / {{.Snapshot.MaxClients}}{{else}}نامشخص{{end}}{{else}}{{len .Snapshot.Peers}} / {{.Snapshot.MaxClients}}{{end}}</div></div>
 <div class="card"><div class="kicker">مدت اجرای جاری</div><div class="metric">{{if .Snapshot.Uptime}}{{.Snapshot.Uptime}}{{else}}—{{end}}</div></div>
 <div class="card"><div class="kicker">حالت تونل</div><div class="metric">{{if .Snapshot.SiteToSite}}سایت‌به‌سایت{{else}}میزبان / کلاینت{{end}}</div></div>
 </section>
@@ -90,13 +94,89 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}
 <div class="detail"><span class="kicker">هویت همتای مورد انتظار</span><b>{{if .Snapshot.PeerIdentity}}{{.Snapshot.PeerIdentity}}{{else}}تنظیم نشده{{end}}</b></div>
 <div class="detail"><span class="kicker">محدوده‌های مجاز</span><b>محلی: {{.Snapshot.LocalPrefixCount}} · همتا: {{.Snapshot.PeerPrefixCount}}</b></div>
 </div></section>
+{{if .Manager}}
+<section class="section"><h2>کنترل سرویس تونل</h2>
+<div class="details">
+<div class="detail"><span class="kicker">نقش این سرور</span><b>{{if eq .Manager.Role "gateway"}}Gateway / Listener{{else}}Dialer{{end}}</b></div>
+<div class="detail"><span class="kicker">واحد systemd</span><b>{{.Manager.ServiceUnit}}</b></div>
+<div class="detail"><span class="kicker">وضعیت systemd</span><b>{{.Manager.ActiveState}} / {{.Manager.SubState}} · PID {{if .Manager.MainPID}}{{.Manager.MainPID}}{{else}}—{{end}}</b></div>
+</div>
+<p class="sub">استارت/استاپ/ری‌استارت اتصال فعال را قطع می‌کند. این عملیات فقط واحد ثابتِ نقش انتخاب‌شده را کنترل می‌کند؛ برای اعمال تغییر روی سرور عملیاتی، ابتدا مسیر بازیابی خارج از تونل را آماده کن.</p>
+<div class="header-actions">
+<details class="disconnect"><summary>Start</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="start"><input type="hidden" name="confirm" value="yes"><button type="submit">تأیید راه‌اندازی</button></form></details>
+<details class="disconnect"><summary>Stop</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="stop"><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">تأیید توقف</button></form></details>
+<details class="disconnect"><summary>Restart</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="restart"><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">تأیید راه‌اندازی مجدد</button></form></details>
+</div>
+</section>
+<section class="section"><h2>ویرایش تنظیمات تونل</h2>
+{{if .Manager.ConfigError}}<div class="notice">{{.Manager.ConfigError}}</div>{{end}}
+{{if .Manager.ConfigReady}}<p class="sub">آخرین تنظیمات خوانده‌شده از فایل سرویس. مسیر گواهی‌ها، کلیدها، توکن‌ها و متغیرهای مدیریتی از این فرم قابل تغییر نیستند.</p>{{else}}<p class="sub">فایل تنظیمات قابل خواندن نیست یا هنوز برای site-to-site کامل نشده است. مقادیر معتبر وارد کن؛ قبل از اعمال، اعتبارسنجی انجام می‌شود.</p>{{end}}
+<form method="post" action="/config/apply" class="configform">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+{{if eq .Manager.Role "gateway"}}
+<label>نشانی شنونده (IP:port؛ برای چند نشانی با کاما جدا کن)<input name="listen_address" maxlength="512" required value="{{.Manager.Config.ListenAddress}}"></label>
+<label>CIDRهای شبکهٔ سمت Dialer<input name="peer_prefixes" maxlength="2048" required value="{{.Manager.Config.PeerPrefixes}}"></label>
+<label>CIDRهای مجاز سمت Gateway (از جمله IP تونل خود Gateway برای تست)<input name="local_prefixes" maxlength="2048" required value="{{.Manager.Config.LocalPrefixes}}"></label>
+<label>Common Name گواهی peer<input name="peer_identity" maxlength="128" required value="{{.Manager.Config.PeerIdentity}}"></label>
+{{else}}
+<label>آدرس Listener با پورت (دامنه، IPv4 یا [IPv6])<input name="server_address" maxlength="512" required value="{{.Manager.Config.ServerAddress}}"></label>
+<label>نام TLS که باید با SAN گواهی تطبیق داشته باشد<input name="server_name" maxlength="253" required value="{{.Manager.Config.ServerName}}"></label>
+<label>CIDRهای محلی سمت Dialer<input name="local_prefixes" maxlength="2048" required value="{{.Manager.Config.LocalPrefixes}}"></label>
+<label>CIDRهای سمت Gateway قابل‌دسترسی برای Dialer<input name="remote_prefixes" maxlength="2048" required value="{{.Manager.Config.RemotePrefixes}}"></label>
+{{end}}
+<label>Allowlist پورت‌های مقصد TCP/UDP<input name="allowed_dst_ports" maxlength="1024" required value="{{.Manager.Config.AllowedDstPorts}}"></label>
+<p class="sub">تغییرات با اعتبارسنجی و تهیهٔ نسخهٔ پشتیبان ذخیره می‌شود. اگر سرویس فعال باشد، پنل آن را restart می‌کند؛ در صورت ناموفق‌بودن، تنظیم قبلی بازگردانده می‌شود. انتخاب default route یا CIDR هم‌پوشان رد می‌شود یا نیازمند بازبینی جداگانه است.</p>
+<details class="disconnect"><summary>بررسی و اعمال تنظیمات</summary><p>اعمال ممکن است تونل را برای چند لحظه قطع کند. فقط وقتی دسترسی کنسول/SSH مستقل داری تأیید کن.</p><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">تأیید اعتبارسنجی و اعمال</button></details>
+</form>
+</section>
+<section class="section"><h2>تست سرعت داخل تونل</h2>
+{{if .Manager.SpeedTestReady}}
+<p class="sub">مقصد ثابت و خصوصی: <b>{{.Manager.SpeedTestPeer}}</b>. اندازه‌گیری با RTT میانهٔ ۵ نمونه و انتقال داده در هر دو جهت از همین مسیر تونل انجام می‌شود. تست تا ۳۲ MiB داده تولید می‌کند و ممکن است پهنای باند را موقتاً اشغال کند.</p>
+<form method="post" action="/speedtest/run" class="configform">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>حجم داده برای هر جهت (MiB)
+<input type="number" name="megabytes" min="1" max="32" value="8" required>
+</label>
+<details class="disconnect"><summary>اجرای تست سرعت</summary><p>فقط یک تست هم‌زمان اجرا می‌شود؛ برای نتیجهٔ دقیق‌تر، انتقال‌های حجیم دیگر را متوقف کن.</p><input type="hidden" name="confirm" value="yes"><button type="submit">شروع تست دوطرفه</button></details></form>
+{{else}}
+<div class="empty">تست سرعت فعلاً غیرفعال است. روی هر دو سرور یک عامل speed test با IP خصوصی TUN و توکن مشترک تنظیم کن؛ نشانی مقصد این فرم قابل‌تغییر نیست و باید داخل prefixهای مجاز و allowlist پورت TCP باشد.</div>
+{{end}}
+{{if .Manager.LastSpeedTest}}
+<h3>آخرین نتیجه</h3>
+<div class="details">
+<div class="detail"><span class="kicker">RTT میانه</span><b>{{printf "%.2f" .Manager.LastSpeedTest.RTTMillis}} ms</b></div>
+<div class="detail"><span class="kicker">ارسال به سمت peer</span><b>{{printf "%.2f" .Manager.LastSpeedTest.UploadMbps}} Mbps</b></div>
+<div class="detail"><span class="kicker">دریافت از peer</span><b>{{printf "%.2f" .Manager.LastSpeedTest.DownloadMbps}} Mbps</b></div>
+<div class="detail"><span class="kicker">حجم هر جهت</span><b>{{.Manager.LastSpeedTest.SizeMiB}} MiB</b></div>
+<div class="detail"><span class="kicker">زمان ارسال</span><b>{{printf "%.2f" .Manager.LastSpeedTest.UploadSeconds}} s</b></div>
+<div class="detail"><span class="kicker">زمان دریافت</span><b>{{printf "%.2f" .Manager.LastSpeedTest.DownloadSeconds}} s</b></div>
+</div>
+<p class="sub">مقصد: {{.Manager.LastSpeedTest.Peer}} · زمان پایان: {{.Manager.LastSpeedTest.CompletedAt}}</p>
+{{end}}
+</section>
+{{end}}
 <section class="section"><h2>همتایان متصل</h2>
 {{if .Snapshot.Peers}}<table><thead><tr><th>هویت گواهی</th><th>مدت اتصال</th><th>عملیات</th></tr></thead><tbody>
 {{range .Snapshot.Peers}}<tr><td class="identity" data-label="هویت">{{.Identity}}</td><td data-label="مدت اتصال">{{.ConnectedFor}}</td><td><details class="disconnect"><summary>قطع اتصال</summary><form method="post" action="/peers/disconnect" class="peerform"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="identity" value="{{.Identity}}"><button class="danger" type="submit">تأیید قطع اتصال</button></form></details></td></tr>{{end}}
 </tbody></table>{{else}}<div class="empty">در حال حاضر هیچ همتای احراز هویت‌شده‌ای متصل نیست.</div>{{end}}
 </section>
-<footer>این پنل فقط وضعیت را نمایش می‌دهد و اتصال همتا را قطع می‌کند؛ مسیرها، فایروال، NAT، گواهی‌ها و کلیدها را تغییر نمی‌دهد. پنل باید فقط روی loopback در دسترس باشد.</footer>
+<footer>{{if .Manager}}این پنل کنترل محدود سرویس، تنظیمات site-to-site و اتصال همتا را فراهم می‌کند. فایل‌های PKI، کلیدها، فایروال و قوانین NAT از این فرم تغییر نمی‌کنند. پنل باید فقط روی loopback در دسترس باشد.{{else}}این پنل فقط وضعیت را نمایش می‌دهد و اتصال همتا را قطع می‌کند؛ مسیرها، فایروال، NAT، گواهی‌ها و کلیدها را تغییر نمی‌دهد. پنل باید فقط روی loopback در دسترس باشد.{{end}}</footer>
 </main></body></html>`))
+	logsTemplate = template.Must(template.New("logs").Parse(`<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>لاگ سرویس PQTunnel</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--line:#26334d;--text:#edf2ff;--muted:#9eacc7;--accent:#7dd3fc}
+*{box-sizing:border-box}body{margin:0;background:#0b1020;color:var(--text);font:14px/1.65 ui-monospace,monospace}.wrap{width:min(1200px,calc(100% - 28px));margin:24px auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}a{color:var(--accent)}pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;background:#10182a;border:1px solid var(--line);border-radius:12px;padding:16px;max-height:75vh;overflow:auto}
+button{font:inherit;padding:8px 12px;background:#1b2940;color:var(--text);border:1px solid var(--line);border-radius:8px}
+</style></head>
+<body><main class="wrap"><header><div><h1>آخرین لاگ‌های سرویس {{.Unit}}</h1><p>حداکثر ۱۰۰ خط؛ مقادیر حساس شناخته‌شده حذف یا ماسک شده‌اند.</p></div>
+<div><a href="/">بازگشت به پنل</a>
+<form method="post" action="/logout" style="display:inline"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">خروج</button></form></div></header>
+<pre>{{.Logs}}</pre></main></body></html>`))
 )
 
 type session struct {
@@ -115,6 +195,7 @@ type loginAttempt struct {
 type Handler struct {
 	token         []byte
 	controller    adminapi.Controller
+	manager       adminapi.ManagerController
 	mu            sync.Mutex
 	sessions           map[string]session
 	loginAttempts      map[string]loginAttempt
@@ -128,10 +209,14 @@ func New(token string, controller adminapi.Controller) (*Handler, error) {
 	if controller == nil {
 		return nil, errors.New("admin controller is required")
 	}
-	return &Handler{
+	handler := &Handler{
 		token: []byte(token), controller: controller, sessions: make(map[string]session),
 		loginAttempts: make(map[string]loginAttempt),
-	}, nil
+	}
+	if manager, ok := controller.(adminapi.ManagerController); ok {
+		handler.manager = manager
+	}
+	return handler, nil
 }
 
 // ValidateLoopbackAddress forbids exposing the unencrypted admin HTTP server on
@@ -174,19 +259,156 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
+		var managerView *adminapi.ManagerSnapshot
+		if h.manager != nil {
+			view := h.manager.ManagementSnapshot()
+			managerView = &view
+		}
 		data := struct {
 			Snapshot adminapi.Snapshot
 			CSRF     string
 			Notice   string
+			Detail   string
+			Manager  *adminapi.ManagerSnapshot
 		}{
 			Snapshot: h.controller.AdminSnapshot(),
 			CSRF:     current.CSRF,
 			Notice:   noticeMessage(r.URL.Query().Get("notice")),
+			Detail:   safeNoticeDetail(r.URL.Query().Get("detail")),
+			Manager:  managerView,
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := dashboardTemplate.Execute(w, data); err != nil {
 			return
 		}
+	case "/logs":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, "GET")
+			return
+		}
+		_, current, ok := h.sessionFor(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if h.manager == nil {
+			http.Error(w, "لاگ سرویس از این پنل در دسترس نیست.", http.StatusNotFound)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		logs, err := h.manager.RecentLogs(ctx)
+		if err != nil {
+			h.redirectWithDetail(w, r, "logs-failed", err.Error())
+			return
+		}
+		view := h.manager.ManagementSnapshot()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := logsTemplate.Execute(w, struct {
+			Unit string
+			Logs string
+			CSRF string
+		}{Unit: view.ServiceUnit, Logs: logs, CSRF: current.CSRF}); err != nil {
+			return
+		}
+	case "/speedtest/run":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, "POST")
+			return
+		}
+		_, current, ok := h.requirePostSession(w, r)
+		if !ok { return }
+		if h.manager == nil {
+			http.Error(w, "تست سرعت از این پنل در دسترس نیست.", http.StatusNotFound)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		if err := r.ParseForm(); err != nil || !secureEqual(r.PostForm.Get("csrf"), current.CSRF) {
+			http.Error(w, "درخواست نامعتبر است.", http.StatusBadRequest)
+			return
+		}
+		if r.PostForm.Get("confirm") != "yes" {
+			http.Error(w, "تأیید اجرای تست سرعت الزامی است.", http.StatusBadRequest)
+			return
+		}
+		sizeMiB, err := strconv.Atoi(r.PostForm.Get("megabytes"))
+		if err != nil || sizeMiB < 1 || sizeMiB > speedtest.MaxMiB {
+			http.Error(w, "حجم تست باید بین ۱ تا ۳۲ مگابایت باشد.", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 305*time.Second)
+		defer cancel()
+		if _, err := h.manager.RunSpeedTest(ctx, sizeMiB); err != nil {
+			h.redirectWithDetail(w, r, "speedtest-failed", err.Error())
+			return
+		}
+		http.Redirect(w, r, "/?notice=speedtest-completed", http.StatusSeeOther)
+	case "/service/action":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, "POST")
+			return
+		}
+		_, current, ok := h.requirePostSession(w, r)
+		if !ok { return }
+		if h.manager == nil {
+			http.Error(w, "مدیریت سرویس از این پنل در دسترس نیست.", http.StatusNotFound)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		if err := r.ParseForm(); err != nil || !secureEqual(r.PostForm.Get("csrf"), current.CSRF) {
+			http.Error(w, "درخواست نامعتبر است.", http.StatusBadRequest)
+			return
+		}
+		action := r.PostForm.Get("action")
+		if r.PostForm.Get("confirm") != "yes" || (action != "start" && action != "stop" && action != "restart") {
+			http.Error(w, "عملیات یا تأیید آن معتبر نیست.", http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+		defer cancel()
+		if err := h.manager.ServiceAction(ctx, action); err != nil {
+			h.redirectWithDetail(w, r, "operation-failed", err.Error())
+			return
+		}
+		http.Redirect(w, r, "/?notice=service-"+action, http.StatusSeeOther)
+	case "/config/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, "POST")
+			return
+		}
+		_, current, ok := h.requirePostSession(w, r)
+		if !ok { return }
+		if h.manager == nil {
+			http.Error(w, "ویرایش تنظیمات از این پنل در دسترس نیست.", http.StatusNotFound)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 16384)
+		if err := r.ParseForm(); err != nil || !secureEqual(r.PostForm.Get("csrf"), current.CSRF) {
+			http.Error(w, "درخواست نامعتبر است.", http.StatusBadRequest)
+			return
+		}
+		if r.PostForm.Get("confirm") != "yes" {
+			http.Error(w, "تأیید اعمال تنظیمات الزامی است.", http.StatusBadRequest)
+			return
+		}
+		cfg := adminapi.TunnelConfiguration{
+			ListenAddress: r.PostForm.Get("listen_address"),
+			MaxClients: 1,
+			PeerPrefixes: r.PostForm.Get("peer_prefixes"),
+			LocalPrefixes: r.PostForm.Get("local_prefixes"),
+			PeerIdentity: r.PostForm.Get("peer_identity"),
+			ServerAddress: r.PostForm.Get("server_address"),
+			ServerName: r.PostForm.Get("server_name"),
+			RemotePrefixes: r.PostForm.Get("remote_prefixes"),
+			AllowedDstPorts: r.PostForm.Get("allowed_dst_ports"),
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		if err := h.manager.ApplyConfiguration(ctx, cfg); err != nil {
+			h.redirectWithDetail(w, r, "config-failed", err.Error())
+			return
+		}
+		http.Redirect(w, r, "/?notice=config-applied", http.StatusSeeOther)
 	case "/peers/disconnect":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, "POST")
@@ -459,9 +681,36 @@ func noticeMessage(notice string) string {
 		return "درخواست قطع اتصال ارسال شد."
 	case "peer-not-found":
 		return "این همتا دیگر متصل نیست."
+	case "service-start":
+		return "سرویس راه‌اندازی شد."
+	case "service-stop":
+		return "سرویس متوقف شد."
+	case "service-restart":
+		return "سرویس مجدداً راه‌اندازی شد."
+	case "config-applied":
+		return "تنظیمات ذخیره شد؛ در صورت فعال‌بودن سرویس، راه‌اندازی مجدد هم موفق بود."
+	case "speedtest-completed":
+		return "تست سرعت تونل کامل شد؛ نتایج در پایین صفحه نمایش داده می‌شود."
+	case "speedtest-failed":
+		return "تست سرعت کامل نشد."
+	case "logs-failed":
+		return "خواندن لاگ سرویس ناموفق بود."
+	case "operation-failed", "config-failed":
+		return "عملیات انجام نشد."
 	default:
 		return ""
 	}
+}
+
+func safeNoticeDetail(detail string) string {
+	if len(detail) > 400 { detail = detail[:400] }
+	return strings.ReplaceAll(strings.TrimSpace(detail), "\x00", "")
+}
+
+func (h *Handler) redirectWithDetail(w http.ResponseWriter, r *http.Request, notice, detail string) {
+	if len(detail) > 400 { detail = detail[:400] }
+	target := "/?notice=" + url.QueryEscape(notice) + "&detail=" + url.QueryEscape(detail)
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 func methodNotAllowed(w http.ResponseWriter, allow string) {
