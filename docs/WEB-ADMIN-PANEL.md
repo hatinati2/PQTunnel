@@ -20,7 +20,7 @@
 
 ```ini
 PQTUNNEL_ADMIN_LISTEN=127.0.0.1:9090
-PQTUNNEL_ADMIN_TOKEN=replace-with-a-long-random-secret
+PQTUNNEL_ADMIN_TOKEN=replace-me
 ```
 
 مقدار نمونهٔ توکن عمداً معتبر نیست و باید با یک راز تصادفی حداقل ۳۲ بایتی جایگزین شود. در صورت نبودن توکن کافی، daemon از فعال‌سازی پنل خودداری می‌کند. با حذف `PQTUNNEL_ADMIN_LISTEN` پنل کاملاً خاموش می‌شود؛ قرار دادن صرفِ توکن، شنونده‌ای باز نمی‌کند.
