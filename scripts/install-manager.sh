@@ -70,6 +70,14 @@ PQTUNNEL_MANAGER_ROLE=$ROLE
 PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091
 # Set this to a random secret of at least 32 bytes; never commit or share it.
 PQTUNNEL_MANAGER_TOKEN=
+# Optional tunnel-only speed test. Set the actual private TUN addresses.
+# Gateway example: listen=10.66.0.1:9109, peer=10.66.0.2:9109
+# Dialer example:  listen=10.66.0.2:9109, peer=10.66.0.1:9109
+# Configure matching local/peer prefixes and allow tcp:9109 on BOTH tunnel configs.
+# Use the SAME separate random token on both servers; do not reuse the web token.
+# PQTUNNEL_MANAGER_SPEEDTEST_LISTEN=
+# PQTUNNEL_MANAGER_SPEEDTEST_PEER=
+# PQTUNNEL_MANAGER_SPEEDTEST_TOKEN=
 ENV
 chown root:root /etc/default/pqtunnel-manager
 chmod 0600 /etc/default/pqtunnel-manager
