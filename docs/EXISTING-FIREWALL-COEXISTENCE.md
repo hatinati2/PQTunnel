@@ -75,7 +75,7 @@ Action and selector classification is derived from parsed option tokens, not raw
 
 When `iptables -V` reports `nf_tables`, the `iptables-save` output is another view of the nftables-backed ruleset. Its rule totals overlap with the `nft -j list ruleset` total; do not add them together. Some compatibility expressions may be classified differently by the nft JSON summary, so review both views.
 
-The audit prints per-rule NOTRACK selector *types* (interface, protocol, address, port, connection, mark, or other) without their values. `selectors=none-detected` means no selector from the audit's recognized set was identified; it is not proof that a rule matches all traffic. The output is a privacy-preserving clue for lab design, not enough by itself to prove whether a specific PQTunnel flow overlaps a NOTRACK rule.
+The audit prints per-rule NOTRACK selector *types* (interface, protocol, address, port, connection, mark, or other) without their values. Unrecognized iptables options are conservatively classified as `other`, so an unfamiliar predicate is not silently omitted. `selectors=none-detected` means no selector option was detected by the parser; it is not proof that a rule matches all traffic or that every extension-specific predicate was understood. The output is a privacy-preserving clue for lab design, not enough by itself to prove whether a specific PQTunnel flow overlaps a NOTRACK rule.
 
 
 ### Opaque xtables-compat fallback in nft JSON
