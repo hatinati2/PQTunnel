@@ -11,8 +11,9 @@ type Peer struct {
 
 // Snapshot describes operational state safe to display in the local admin UI.
 type Snapshot struct {
-	Running          bool
-	Uptime           string
+	Running             bool
+	TransportConnected  bool
+	Uptime              string
 	ListenAddress    string
 	MaxClients       int
 	SiteToSite       bool
@@ -59,16 +60,19 @@ type SpeedTestResult struct {
 }
 
 type ManagerSnapshot struct {
-	Role          string
-	ServiceUnit   string
-	ActiveState   string
-	SubState      string
-	MainPID       string
-	Config        TunnelConfiguration
-	ConfigReady   bool
-	ConfigError   string
-	PeerDataReady bool
-	SpeedTestPeer string
+	Role                string
+	ServiceUnit         string
+	ActiveState         string
+	SubState             string
+	MainPID              string
+	Config               TunnelConfiguration
+	ConfigReady          bool
+	ConfigError          string
+	PeerDataReady        bool
+	TransportConnected   bool
+	Uptime               string
+	Peers                []Peer
+	SpeedTestPeer        string
 	SpeedTestReady bool
 	LastSpeedTest *SpeedTestResult
 }
