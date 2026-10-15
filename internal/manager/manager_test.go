@@ -19,12 +19,19 @@ type fakeRunner struct {
 	calls [][]string
 	restartCount int
 	failFirstRestart bool
+	logs string
 }
 
 func (f *fakeRunner) Run(_ context.Context, args ...string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, append([]string(nil), args...))
+	if len(args) > 0 && args[0] == "journalctl" {
+		if len(args) < 7 || args[1] != "-u" {
+			return "", errors.New("journalctl must be scoped to a fixed unit")
+		}
+		return f.logs, nil
+	}
 	if len(args) >= 2 && args[0] == "systemctl" && args[1] == "show" {
 		return "LoadState=loaded\nActiveState=" + f.state + "\nSubState=running\nMainPID=1234", nil
 	}
@@ -290,4 +297,22 @@ func TestWebManagerRejectsDefaultRoutes(t *testing.T) {
 	if _, err := m.configurationChanges(cfg); err == nil {
 		t.Fatal("web manager must reject default-route changes without an out-of-band recovery review")
 	}
+}
+
+
+func TestRecentLogsUsesFixedUnitAndRedactsSecrets(t *testing.T) {
+	runner := &fakeRunner{state: "active", logs: "Oct 15 hello\nPQTUNNEL_MANAGER_TOKEN=abc123\n-----BEGIN PRIVATE KEY----- secret"}
+	m, err := New(Options{Role: RoleGateway, ConfigPath: "/tmp/g", BackupDir: "/tmp/b", IPCSocket: "/tmp/sock", Runner: runner})
+	if err != nil { t.Fatal(err) }
+	logs, err := m.RecentLogs(context.Background())
+	if err != nil { t.Fatal(err) }
+	if !strings.Contains(logs, "Oct 15 hello") || !strings.Contains(logs, "PQTUNNEL_MANAGER_TOKEN=[REDACTED]") || strings.Contains(logs, "abc123") || strings.Contains(logs, "secret") {
+		t.Fatalf("log output was not correctly filtered: %q", logs)
+	}
+	calls := runner.recorded()
+	found := false
+	for _, call := range calls {
+		if strings.Join(call, " ") == "journalctl -u pqtunneld.service -n 100 --no-pager -o short-iso" { found = true }
+	}
+	if !found { t.Fatalf("recent logs did not use fixed gateway unit: %#v", calls) }
 }
