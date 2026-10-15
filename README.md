@@ -1,6 +1,6 @@
 # PQTunnel
 
-**Version:** 0.3.0-dev · **Status:** experimental prototype, not production-ready.
+**Version:** 0.3.0-rc2 · **Status:** experimental release candidate, not production-ready.
 
 PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
 
