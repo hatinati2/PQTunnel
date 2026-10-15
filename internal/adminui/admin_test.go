@@ -158,6 +158,66 @@ func TestRejectsCrossOriginLoginAndDisconnect(t *testing.T) {
 	}
 }
 
+func postLogin(t *testing.T, h *Handler, token, remoteAddr string) *httptest.ResponseRecorder {
+	t.Helper()
+	values := url.Values{"token": {token}}
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/login", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://127.0.0.1")
+	req.RemoteAddr = remoteAddr
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	return resp
+}
+
+func TestLoginRateLimitsRepeatedInvalidTokensPerClient(t *testing.T) {
+	const token = "a-very-long-test-token-value-123456"
+	h, err := New(token, &fakeController{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const clientA = "127.0.0.1:12000"
+	for i := 1; i <= loginFailureLimit; i++ {
+		resp := postLogin(t, h, "incorrect-token", clientA)
+		if i < loginFailureLimit && resp.Code != http.StatusOK {
+			t.Fatalf("attempt %d status=%d, want %d", i, resp.Code, http.StatusOK)
+		}
+		if i == loginFailureLimit {
+			if resp.Code != http.StatusTooManyRequests || resp.Header().Get("Retry-After") != "60" {
+				t.Fatalf("limit attempt status=%d retry-after=%q", resp.Code, resp.Header().Get("Retry-After"))
+			}
+		}
+	}
+	if resp := postLogin(t, h, token, clientA); resp.Code != http.StatusTooManyRequests {
+		t.Fatalf("correct token must remain blocked during cooldown, got %d", resp.Code)
+	}
+	if resp := postLogin(t, h, token, "127.0.0.1:12001"); resp.Code != http.StatusSeeOther || resp.Header().Get("Location") != "/" {
+		t.Fatalf("separate client login status=%d location=%q", resp.Code, resp.Header().Get("Location"))
+	}
+}
+
+func TestSuccessfulLoginResetsFailedAttempts(t *testing.T) {
+	const token = "another-long-token-for-unit-test-456"
+	h, err := New(token, &fakeController{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const client = "127.0.0.1:13000"
+	for i := 0; i < loginFailureLimit-1; i++ {
+		if resp := postLogin(t, h, "wrong", client); resp.Code != http.StatusOK {
+			t.Fatalf("pre-login invalid attempt status=%d", resp.Code)
+		}
+	}
+	if resp := postLogin(t, h, token, client); resp.Code != http.StatusSeeOther {
+		t.Fatalf("correct login status=%d, want redirect", resp.Code)
+	}
+	for i := 0; i < loginFailureLimit-1; i++ {
+		if resp := postLogin(t, h, "wrong-again", client); resp.Code != http.StatusOK {
+			t.Fatalf("failed attempts were not reset after login; attempt %d status=%d", i+1, resp.Code)
+		}
+	}
+}
+
 func TestDashboardRedirectsUnauthenticatedRequests(t *testing.T) {
 	h, err := New(strings.Repeat("z", 32), &fakeController{})
 	if err != nil {
