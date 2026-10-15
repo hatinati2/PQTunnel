@@ -191,7 +191,7 @@ func TestLoginRateLimitsRepeatedInvalidTokensPerClient(t *testing.T) {
 	if resp := postLogin(t, h, token, clientA); resp.Code != http.StatusTooManyRequests {
 		t.Fatalf("correct token must remain blocked during cooldown, got %d", resp.Code)
 	}
-	if resp := postLogin(t, h, token, "127.0.0.1:12001"); resp.Code != http.StatusSeeOther || resp.Header().Get("Location") != "/" {
+	if resp := postLogin(t, h, token, "127.0.0.2:12001"); resp.Code != http.StatusSeeOther || resp.Header().Get("Location") != "/" {
 		t.Fatalf("separate client login status=%d location=%q", resp.Code, resp.Header().Get("Location"))
 	}
 }
