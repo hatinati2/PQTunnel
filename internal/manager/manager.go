@@ -203,7 +203,7 @@ func (m *Controller) DisconnectPeer(identity string) bool {
 	return err == nil
 }
 
-var logSecretPattern = regexp.MustCompile(`(?i)((?:PQTUNNEL_)?[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY)[A-Z0-9_]*=)[^\\s]+`)
+var logSecretPattern = regexp.MustCompile(`(?i)((?:PQTUNNEL_)?[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY)[A-Z0-9_]*=)[^[:space:]]+`)
 
 // RecentLogs returns a bounded, redacted tail for this role's fixed systemd unit.
 // It does not accept a unit name or journalctl arguments from the HTTP request.
