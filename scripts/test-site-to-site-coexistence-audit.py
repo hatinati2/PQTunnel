@@ -141,6 +141,28 @@ COMMIT
             ["other"],
         )
 
+    def test_unrecognized_selector_option_is_classified_as_other(self):
+        line = "-A OUTPUT -p tcp -m tcp --tcp-option 2 -j DROP"
+        self.assertEqual(
+            audit.iptables_selector_categories(line),
+            ["other", "protocol"],
+        )
+        status, reason, _, _ = audit.candidate_tcp_flow_overlap_detail(
+            line, 8443, (32768, 60999), "dialer", "OUTPUT"
+        )
+        self.assertEqual((status, reason), ("unknown", "additional_selector_present"))
+
+    def test_unknown_option_like_text_inside_comment_is_not_a_selector(self):
+        line = (
+            '-A OUTPUT -p tcp -m comment '
+            '--comment "--tcp-option 2 --custom-match value" -j NOTRACK'
+        )
+        self.assertEqual(
+            audit.iptables_selector_categories(line),
+            ["protocol"],
+        )
+
+
     def test_overlap_checks_ignore_option_like_comment_values(self):
         line = (
             '-A OUTPUT -p tcp -m comment --comment "--dport" '
