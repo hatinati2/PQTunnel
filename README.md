@@ -20,8 +20,22 @@ The active project source tree and CI source of truth are at the **repository ro
 - Client transport can connect using a DNS name, IPv4 or bracketed IPv6 endpoint; `--network tcp4` and `--network tcp6` force the underlay address family.
 - Server systemd unit and separate, explicit Ubuntu IPv4 forwarding/NAT script.
 - Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
+- Optional Persian-language web admin panel for limited daemon/peer status and disconnecting a selected peer; disabled by default and loopback-only. See [the web admin panel guide](docs/WEB-ADMIN-PANEL.md).
 - GitHub Actions tests/cross-builds, a loopback TLS integration test, and Linux network-namespace tests using real TUN interfaces, including inbound TCP/UDP port-forward round trips and selective-vs-direct egress checks over IPv4 and IPv6.
 - Android `VpnService` scaffold and Linux/Windows TUN adapters.
+
+## Local web admin panel (experimental)
+
+The panel runs inside `pqtunneld` and is disabled unless explicitly configured in the daemon environment:
+
+```ini
+PQTUNNEL_ADMIN_LISTEN=127.0.0.1:9090
+PQTUNNEL_ADMIN_TOKEN=REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_BYTES
+```
+
+Replace the example token with a strong random secret of at least 32 bytes. Do not commit the real token or place it in command-line arguments. The listener accepts only a literal loopback IP (for example, `127.0.0.1:9090` or `[::1]:9090`); wildcard and public addresses are rejected. The panel uses plain HTTP because it is loopback-only. For access from another machine, use an encrypted SSH tunnel and never expose the panel port directly to the internet.
+
+After login, it shows limited daemon and connected-peer status and allows disconnecting a selected peer. It does not start or stop systemd, or modify routes, sysctls, firewall, NAT, certificates, or keys. Sessions are in-memory and expire after 12 hours; state-changing requests have CSRF protection, and five failed logins from an IP trigger a 60-second lockout. This is an experimental admin surface, not a complete audit or user-management system.
 
 ## Important limitations
 
@@ -143,6 +157,7 @@ Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build L
 - [Protocol notes](docs/PROTOCOL.md)
 - [Experimental server-to-server guide (Persian)](docs/SITE-TO-SITE.fa.md)
 - [Pre-release checklist](docs/RELEASE-CHECKLIST.md)
+- [Web admin panel guide (Persian)](docs/WEB-ADMIN-PANEL.md)
 
 ## License
 
