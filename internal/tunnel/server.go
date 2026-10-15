@@ -52,9 +52,6 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.Device == nil || s.TLSConfig == nil || s.ListenAddress == "" {
 		return fmt.Errorf("device, TLS config and listen address are required")
 	}
-	if s.MaxClients <= 0 {
-		s.MaxClients = 128
-	}
 	siteToSite := len(s.PeerPrefixes) > 0 || len(s.LocalPrefixes) > 0
 	if siteToSite && (len(s.PeerPrefixes) == 0 || len(s.LocalPrefixes) == 0) {
 		return fmt.Errorf("site-to-site mode requires both peer source/route prefixes and local destination prefixes")
@@ -76,6 +73,9 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}
 	s.mu.Lock()
+	if s.MaxClients <= 0 {
+		s.MaxClients = 128
+	}
 	s.clients = make(map[string]*peer)
 	s.mu.Unlock()
 
