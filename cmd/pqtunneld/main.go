@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hatinati2/PQTunnel/internal/adminipc"
 	"github.com/hatinati2/PQTunnel/internal/adminui"
 	"github.com/hatinati2/PQTunnel/internal/portpolicy"
 	"github.com/hatinati2/PQTunnel/internal/prefixset"
@@ -77,6 +78,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	s := &tunnel.Server{ListenAddress: *listen, TLSConfig: tunnel.ServerTLSConfig(cert, pool), Device: dev, MaxClients: *maxClients, PeerPrefixes: peerPrefixes, LocalPrefixes: localPrefixes, PeerIdentity: *peerName, AllowedDstPorts: allowedDstPorts}
+	// The manager process remains available when this tunnel service is stopped.
+	// This root-owned Unix socket exposes only status and authenticated-peer disconnect.
+	ipcListener, err := adminipc.Listen("/run/pqtunnel/control.sock")
+	fatalIf(err)
+	defer ipcListener.Close()
+	go adminipc.Serve(ctx, ipcListener, s)
 	if adminListener != nil {
 		adminHandler, err := adminui.New(adminToken, s)
 		fatalIf(err)

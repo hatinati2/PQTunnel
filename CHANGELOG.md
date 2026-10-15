@@ -27,6 +27,14 @@
 
 This is still a development build, not a production VPN release. Windows routing, a persistent cross-platform kill-switch, and verified Android build/provisioning remain incomplete.
 
+## Unreleased — standalone server manager
+
+- Added an optional standalone, loopback-only web manager that remains available when the tunnel daemon is stopped; it can start/stop/restart only the role's fixed systemd unit.
+- Added a restricted editor for site-to-site endpoint, CIDR, peer identity and TCP/UDP destination-port settings, with validation, protected backups and attempted rollback if a restart fails. Default routes, credentials, PKI files and firewall/NAT changes remain outside the web editor.
+- Added an authenticated, bounded recent-journal view for the fixed tunnel service.
+- Added a private-TUN-IP speed-test agent and UI results for median RTT and upload/download throughput. Targets must belong to configured peer prefixes, speed tests need a separate shared token and allowed TCP port, and transfers are capped at 32 MiB per direction.
+- The manager installer is opt-in and does not enable/start the manager or change live tunnel/network state. These features still require review and integration tests before any production VPS use.
+
 ## Unreleased — selective site-to-site prototype
 
 - Hardened listener TUN-to-peer forwarding: packets must have a source inside configured local prefixes as well as a unique matching peer destination route; added IPv4/IPv6 regression coverage.
