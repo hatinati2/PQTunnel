@@ -423,7 +423,22 @@ func sameOrigin(r *http.Request) bool {
 	if u.Scheme != "http" || !strings.EqualFold(u.Host, r.Host) {
 		return false
 	}
-	return u.Path == "" || u.Path == "/"
+	if u.Path != "" && u.Path != "/" {
+		return false
+	}
+	// Match against a literal loopback IP as well as Host. Comparing only
+	// Origin and Host would accept an attacker-controlled DNS-rebinding name
+	// when the browser resolves it to this loopback listener.
+	return isLoopbackHost(u.Host) && isLoopbackHost(r.Host)
+}
+
+func isLoopbackHost(hostport string) bool {
+	host := strings.Trim(hostport, "[]")
+	if parsedHost, _, err := net.SplitHostPort(hostport); err == nil {
+		host = parsedHost
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }
 
 func secureEqual(given, expected string) bool {
