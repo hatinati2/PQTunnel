@@ -1,6 +1,17 @@
 # Changelog
 
+## 0.3.0-rc3
+
+- Added the standalone Linux server manager with role-scoped systemd lifecycle controls, a validated editor for selected non-secret tunnel settings, protected configuration backups and attempted rollback after failed restarts.
+- Added authenticated, bounded recent-journal viewing with secret redaction and a peer-to-peer tunnel-path speed test reporting median RTT plus upload/download throughput. Speed-test targets are constrained to private tunnel peer addresses and transfers are bounded.
+- Included the manager binary in Linux amd64/arm64 release bundles and documented opt-in installation; the manager is not automatically enabled or started.
+- Enforced listener-side local source-prefix checks to reject spoofed packet sources and added regression coverage for dialer reconnect and peer disconnect/re-registration behavior.
+- Corrected the manager installer's Go-version guard to match the module's Go 1.26 requirement.
+- This remains an experimental release candidate, not production-ready. No independent security audit or real two-physical-VPS end-to-end validation has been completed.
+
 ## 0.3.0-rc2
+
+
 
 - Added an optional Persian-language web admin panel inside `pqtunneld`, disabled by default and restricted to literal loopback addresses.
 - Added token authentication requiring at least 32 bytes, expiring in-memory sessions, HttpOnly/SameSite cookies, Origin and CSRF checks, security headers, bounded request bodies, and login rate limiting.
