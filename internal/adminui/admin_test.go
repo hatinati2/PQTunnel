@@ -294,3 +294,83 @@ func TestDashboardRedirectsUnauthenticatedRequests(t *testing.T) {
 		t.Fatalf("status=%d location=%q", resp.Code, resp.Header().Get("Location"))
 	}
 }
+
+
+func TestSecurityHeadersPresentOnLoginAndUnknownPath(t *testing.T) {
+	h, err := New(strings.Repeat("h", 32), &fakeController{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/login", "/missing"} {
+		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+path, nil)
+		resp := httptest.NewRecorder()
+		h.ServeHTTP(resp, req)
+		headers := map[string]string{
+			"Cache-Control":             "no-store",
+			"X-Content-Type-Options":    "nosniff",
+			"X-Frame-Options":           "DENY",
+			"Referrer-Policy":           "no-referrer",
+			"Content-Security-Policy":   "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+		}
+		for name, want := range headers {
+			if got := resp.Header().Get(name); got != want {
+				t.Errorf("%s %s header=%q, want %q", path, name, got, want)
+			}
+		}
+	}
+}
+
+func TestDisconnectRejectsInvalidCSRFAndOversizedBody(t *testing.T) {
+	const token = "token-for-csrf-and-body-limit-regression-test"
+	controller := &fakeController{snapshot: adminapi.Snapshot{
+		Running: true, MaxClients: 1,
+		Peers: []adminapi.Peer{{Identity: "peer-1", ConnectedFor: "5s"}},
+	}}
+	h, err := New(token, controller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginResp := postLogin(t, h, token, "127.0.0.1:14000")
+	if loginResp.Code != http.StatusSeeOther {
+		t.Fatalf("login status=%d, want redirect", loginResp.Code)
+	}
+	cookies := loginResp.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("login cookies=%v, want one session cookie", cookies)
+	}
+
+	dashboardReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+	dashboardReq.AddCookie(cookies[0])
+	dashboardResp := httptest.NewRecorder()
+	h.ServeHTTP(dashboardResp, dashboardReq)
+	match := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(dashboardResp.Body.String())
+	if len(match) != 2 {
+		t.Fatal("dashboard did not include CSRF token")
+	}
+
+	badCSRF := url.Values{"identity": {"peer-1"}, "csrf": {"invalid"}}
+	badReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/peers/disconnect", strings.NewReader(badCSRF.Encode()))
+	badReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	badReq.Header.Set("Origin", "http://127.0.0.1")
+	badReq.AddCookie(cookies[0])
+	badResp := httptest.NewRecorder()
+	h.ServeHTTP(badResp, badReq)
+	if badResp.Code != http.StatusBadRequest || len(controller.disconnected) != 0 {
+		t.Fatalf("invalid CSRF status=%d disconnected=%v, want 400 and no action", badResp.Code, controller.disconnected)
+	}
+
+	oversized := url.Values{
+		"identity": {"peer-1"},
+		"csrf":     {match[1]},
+		"padding":  {strings.Repeat("x", 5000)},
+	}
+	largeReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/peers/disconnect", strings.NewReader(oversized.Encode()))
+	largeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	largeReq.Header.Set("Origin", "http://127.0.0.1")
+	largeReq.AddCookie(cookies[0])
+	largeResp := httptest.NewRecorder()
+	h.ServeHTTP(largeResp, largeReq)
+	if largeResp.Code != http.StatusBadRequest || len(controller.disconnected) != 0 {
+		t.Fatalf("oversized form status=%d disconnected=%v, want 400 and no action", largeResp.Code, controller.disconnected)
+	}
+}
