@@ -126,9 +126,13 @@ PQTUNNEL_PEER_NAME=
 # Optional destination-port allowlist, e.g. tcp:443,udp:53,tcp:8000-8010.
 # Keep it identical to the dialer allowlist; include every remote target port used by port-forward rules.
 PQTUNNEL_ALLOWED_DST_PORTS=
+# Optional local web admin panel. Leave both variables commented to keep it disabled.
+# Generate a strong token with: openssl rand -hex 32
+# PQTUNNEL_ADMIN_LISTEN=127.0.0.1:9090
+# PQTUNNEL_ADMIN_TOKEN=
 ENV
   chown root:root /etc/default/pqtunneld
-  chmod 0640 /etc/default/pqtunneld
+  chmod 0600 /etc/default/pqtunneld
 fi
 systemctl daemon-reload
 
