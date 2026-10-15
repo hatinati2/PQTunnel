@@ -69,6 +69,8 @@ This is a rule-ordering contract test, not a general production coexistence impl
 The optional `scripts/site-to-site-coexistence-audit.py` inventory summarizes nftables hook priorities and policies plus per-chain counts for NOTRACK, packet marks, NAT and verdicts. It deliberately omits raw rule text, IP addresses, ports and counters. It helps design a backend against the owning firewall manager; it is not permission to apply changes.
 
 
+Action and selector classification is derived from parsed option tokens, not raw-line regex matching. Quoted comment text therefore does not masquerade as an active target or option.
+
 ### Interpreting compatibility-backend counts and NOTRACK scope
 
 When `iptables -V` reports `nf_tables`, the `iptables-save` output is another view of the nftables-backed ruleset. Its rule totals overlap with the `nft -j list ruleset` total; do not add them together. Some compatibility expressions may be classified differently by the nft JSON summary, so review both views.
