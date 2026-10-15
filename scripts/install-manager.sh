@@ -7,8 +7,8 @@ Install the optional standalone PQTunnel web manager. This installer does not
 start the manager or change tunnel, route, firewall, NAT, or forwarding state.
 
 Usage:
-  sudo ./scripts/install-manager.sh --source /path/to/source-or-Linux-bundle --role gateway
-  sudo ./scripts/install-manager.sh --source /path/to/source-or-Linux-bundle --role dialer
+  sudo bash ./scripts/install-manager.sh --source /path/to/source-or-Linux-bundle --role gateway
+  sudo bash ./scripts/install-manager.sh --source /path/to/source-or-Linux-bundle --role dialer
 
 The role is fixed in /etc/default/pqtunnel-manager:
   gateway -> pqtunneld.service and /etc/default/pqtunneld
