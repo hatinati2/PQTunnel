@@ -28,7 +28,7 @@ jobs:
       - name: Static analysis
         run: go vet ./...
       - name: Build Linux binaries
-        run: go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki
+        run: go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki ./cmd/pqtunnel-manager
 
   cross-build:
     runs-on: ubuntu-24.04
