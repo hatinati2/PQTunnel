@@ -21,6 +21,7 @@ import (
 	"github.com/hatinati2/PQTunnel/internal/adminipc"
 	"github.com/hatinati2/PQTunnel/internal/portpolicy"
 	"github.com/hatinati2/PQTunnel/internal/prefixset"
+	"github.com/hatinati2/PQTunnel/internal/speedtest"
 )
 
 type Role string
@@ -51,6 +52,8 @@ type Options struct {
 	ConfigPath string
 	BackupDir  string
 	IPCSocket  string
+	SpeedTestPeer string
+	SpeedTestToken string
 	Runner     Runner
 }
 
@@ -62,6 +65,10 @@ type Controller struct {
 	ipcSocket  string
 	runner     Runner
 	mu         sync.Mutex
+	speedMu    sync.Mutex
+	speedTestPeer string
+	speedTestToken string
+	lastSpeedTest *adminapi.SpeedTestResult
 	now        func() time.Time
 }
 
@@ -104,7 +111,8 @@ func New(opts Options) (*Controller, error) {
 	}
 	return &Controller{
 		role: opts.Role, unit: unit, configPath: opts.ConfigPath, backupDir: opts.BackupDir,
-		ipcSocket: opts.IPCSocket, runner: opts.Runner, now: time.Now,
+		ipcSocket: opts.IPCSocket, speedTestPeer: strings.TrimSpace(opts.SpeedTestPeer),
+		speedTestToken: opts.SpeedTestToken, runner: opts.Runner, now: time.Now,
 	}, nil
 }
 
@@ -137,12 +145,14 @@ func (m *Controller) managementSnapshot(ctx context.Context) adminapi.ManagerSna
 	if m.role == RoleDialer && view.Config.ServerAddress == "" {
 		view.ConfigReady = false
 	}
-	if m.role == RoleGateway {
-		view.SpeedTestPeer = "" // populated by the optional speed-test feature when configured
+	view.SpeedTestPeer = m.speedTestPeer
+	view.SpeedTestReady = m.speedTestReady(view.Config)
+	m.speedMu.Lock()
+	if m.lastSpeedTest != nil {
+		last := *m.lastSpeedTest
+		view.LastSpeedTest = &last
 	}
-	if m.role == RoleDialer {
-		view.SpeedTestPeer = ""
-	}
+	m.speedMu.Unlock()
 	return view
 }
 
