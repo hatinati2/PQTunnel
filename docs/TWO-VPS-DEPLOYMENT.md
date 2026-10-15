@@ -73,6 +73,8 @@ Use these files as templates only:
 
 Replace every documentation-only IP/CIDR, interface name, server endpoint/name, peer Common Name and port allowlist. Validate each pair of environment files on a trusted workstation with the bootstrap's `check-config` mode before staging it. Do not copy `ca.key` to either VPS.
 
+In site-to-site mode, the listener checks both the destination peer route and the packet source against `PQTUNNEL_LOCAL_PREFIXES` before forwarding a packet from its TUN into the tunnel. The dialer applies corresponding local-source and remote-destination checks. Keep these CIDRs as narrow as the actual routed sites require; widening them to silence drops weakens isolation.
+
 For now, the safe action is only to prepare the files and collect the two preflight reports. Do **not** run `install-server --start --apply-network` or `install-client --start` on the live hosts. The one-line installer/start entry points are documented in the main README, but installation is not approved for these VPSes yet.
 
 ## Stage 3 — rollout gates still unmet

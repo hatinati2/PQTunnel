@@ -23,7 +23,7 @@ Listener می‌تواند با یک آدرس یا فهرست comma-separated م
 
 ## Prefixها و سیاست بسته
 
-در حالت server-to-server، Listener در حالت site-to-site دو allowlist مجزا می‌گیرد: `--peer-prefixes` برای sourceهای مجاز و route برگشتی به سمت Dialer؛ `--local-prefixes` برای مقصدهای مجاز در سمت Listener. هر دو باید CIDRهای دقیق باشند. برای جلوگیری از route مبهم، این حالت فعلاً با **یک peer فعال** و `--max-clients=1` پشتیبانی می‌شود. `--peer-name` نیز باید دقیقاً با Common Name گواهی Peer برابر باشد تا گواهی دیگری از همان CA نتواند prefixها را تصاحب کند.
+در حالت server-to-server، Listener در حالت site-to-site دو allowlist مجزا می‌گیرد: `--peer-prefixes` برای sourceهای مجاز و route برگشتی به سمت Dialer؛ `--local-prefixes` برای مقصدهای مجاز در سمت Listener. هر دو باید CIDRهای دقیق باشند. در مسیر خروجی از TUN سرور به سمت تونل، مبدأ بسته هم باید عضو `--local-prefixes` باشد؛ صرفاً داشتن مقصد در routeهای peer کافی نیست. Dialer نیز مبدأ محلی و مقصد سمت مقابل را کنترل می‌کند، پس CIDRها را فقط به‌اندازهٔ شبکه‌های واقعی باز کن. برای جلوگیری از route مبهم، این حالت فعلاً با **یک peer فعال** و `--max-clients=1` پشتیبانی می‌شود. `--peer-name` نیز باید دقیقاً با Common Name گواهی Peer برابر باشد تا گواهی دیگری از همان CA نتواند prefixها را تصاحب کند.
 
 Dialer باید هم `--local-prefixes` و هم `--remote-prefixes` را تعیین کند:
 

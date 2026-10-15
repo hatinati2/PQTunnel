@@ -305,6 +305,13 @@ func (s *Server) routePackets(ctx context.Context) error {
 			tracePacketFlow("server tun->peer drop=malformed bytes=%d err=%v", n, err)
 			continue
 		}
+		// In site-to-site mode, only packets sourced from the listener-side
+		// prefixes may cross the tunnel. Without this check, a spoofed source
+		// injected into the TUN could be sent to an otherwise valid peer route.
+		if len(s.LocalPrefixes) > 0 && !prefixset.Contains(s.LocalPrefixes, src) {
+			tracePacketFlow("server tun->peer drop=source-outside-local-prefixes src=%s dst=%s bytes=%d", src, dst, len(pkt))
+			continue
+		}
 		s.mu.RLock()
 		target := peerForDestination(s.clients, dst)
 		s.mu.RUnlock()
