@@ -49,3 +49,60 @@ func TestSessionBrokerOpenHonorsCancellationWithoutSession(t *testing.T) {
 		t.Fatalf("Broker.Open() error = %v, want context.DeadlineExceeded", err)
 	}
 }
+
+
+// An in-flight broker Open must retry on the replacement session when the
+// previous session shuts down before its remote OPEN handler responds.
+func TestSessionBrokerOpenRetriesAfterReplacementDuringRemoteOpen(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	oldHandler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}
+	oldLocal, oldPeer := newSessionPairWithHandlers(t, 4, nil, oldHandler)
+	newLocal, _, newAccepted := newTestSessionPair(t, 4)
+
+	broker := NewSessionBroker()
+	broker.Set(oldLocal)
+
+	type openResult struct {
+		stream *Stream
+		err    error
+	}
+	result := make(chan openResult, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	go func() {
+		stream, err := broker.Open(ctx, TypeOpenDirect, []byte("after-replacement"))
+		result <- openResult{stream: stream, err: err}
+	}()
+
+	waitForSignal(t, started, "old session remote open handler")
+	broker.Set(newLocal)
+
+	var opened *Stream
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatalf("broker Open did not retry on replacement session: %v", got.err)
+		}
+		opened = got.stream
+	case <-time.After(3 * time.Second):
+		t.Fatal("broker Open remained blocked after session replacement")
+	}
+	if opened == nil || opened.session != newLocal {
+		t.Fatal("broker Open returned a stream from the replaced session")
+	}
+
+	target := awaitTarget(t, newAccepted, "after-replacement")
+	exchangeOnStream(t, opened, target, "replacement-request", "replacement-response")
+	waitForSignal(t, cancelled, "old session handler cancellation")
+	waitForStreamCount(t, oldLocal, 0)
+	waitForStreamCount(t, oldPeer, 0)
+	if newLocal.isDone() {
+		t.Fatal("replacement session was terminated by the old open attempt")
+	}
+}
