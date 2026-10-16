@@ -59,13 +59,13 @@ After login, it shows limited daemon and connected-peer status and allows discon
 
 ## Quick install entry point (experimental)
 
-A one-line entry point is available for the optional standalone manager and read-only preflight:
+A one-line entry point is available for read-only preflight, manager-only setup, or a paired first-time install on two VPSes.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
 ```
 
-The menu offers read-only host checks or installation of the standalone manager from the matching Linux release bundle. To install only the manager directly on the Iran/Dialer host:
+The menu offers read-only checks, manager-only setup, or the paired setup. To install only the manager directly on the Iran/Dialer host:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
@@ -73,7 +73,15 @@ curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh 
 
 The installer verifies the v0.3.0-rc4 Linux archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go. On first setup it generates a random 256-bit `PQTUNNEL_MANAGER_TOKEN`, stores it in root-only `/etc/default/pqtunnel-manager`, validates the unit, enables and starts the manager, then displays the newly created token once in the terminal. Save it securely; rerunning the installer preserves an existing token and does not print it again. The manager listens on loopback (`127.0.0.1:9091`); use SSH forwarding for remote access. This command installs the **web manager only**, not the tunnel endpoint.
 
-This is not a one-command tunnel configuration: Gateway/Dialer setup still requires reviewed certificates and role-specific environment files. Use [the first-time installation flow](docs/INSTALLATION-FLOW.md) to prepare role-specific PKI and distinguish endpoint installation from the optional manager. The tunnel install/start commands are separate because they can change services or network state. The current release remains experimental and is not independently security-audited.
+For a first-time two-VPS setup, run the paired installer on the **Iran/Dialer** VPS (with SSH key-based, non-interactive access to the overseas VPS):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --pair
+```
+
+It asks for the overseas SSH target, TLS name, listener port, WAN interfaces, and egress-port allowlist; downloads a checksum-verified Linux bundle, prepares mutual-TLS certificates, installs Gateway and Dialer endpoints plus both loopback-only manager panels, and configures the private in-tunnel speed test. New manager tokens are printed once at exit. It refuses to overwrite existing tunnel endpoint files and asks for the exact `APPLY-NETWORK` confirmation before starting services or applying the selective nftables/policy-routing rules. By default, only TCP 80/443 and UDP 53/123/443 are selected through the overseas Gateway; this is **not** a full-tunnel/default-route VPN. Provider firewalls/security groups are not edited, so the chosen listener port must be opened separately for the Iran VPS. Manager panels remain on `127.0.0.1:9091`; access them via SSH forwarding.
+
+This installer is experimental and has not been validated on your specific VPS pair. Do not use it on production servers without independent console/recovery access and reviewed firewall/routing state. Existing firewall rules or active UFW intentionally cause the network helper to refuse activation; do not bypass those guardrails. Read [the first-time installation flow](docs/INSTALLATION-FLOW.md) for boundaries and recovery notes. The release remains not independently security-audited.
 
 ## Requirements
 
