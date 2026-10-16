@@ -26,6 +26,15 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertIn('"$RELEASE_BASE/SHA256SUMS"', self.script)
         self.assertIn('sha256sum --check -', self.script)
 
+    def test_installer_helper_sources_are_immutable_and_coherent(self) -> None:
+        pin = 'ce5e8df485f14cf039a441a4607bc1e8737a25ef'
+        self.assertIn('SOURCE_REF="' + pin + '"', self.script)
+        self.assertIn('https://raw.githubusercontent.com/${REPO}/${SOURCE_REF}', self.script)
+        self.assertNotIn('SOURCE_RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"', self.script)
+        self.assertIn('SOURCE_REF="' + pin + '"', self.setup)
+        self.assertIn('https://raw.githubusercontent.com/$REPO/$SOURCE_REF', self.setup)
+        self.assertNotIn('RAW="https://raw.githubusercontent.com/$REPO/main"', self.setup)
+
     def test_new_token_is_saved_root_only_and_shown_once(self) -> None:
         self.assertIn("TOKEN_GENERATED=0", self.script)
         self.assertIn("TOKEN_GENERATED=1", self.script)
