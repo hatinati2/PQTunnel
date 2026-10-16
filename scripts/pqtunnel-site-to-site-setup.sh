@@ -66,4 +66,12 @@ network_guard(){
   rules="$(nft list ruleset 2>/dev/null)" || fail "$role firewall state unreadable; refusing changes."
   ! grep -Eq '^[[:space:]]*table[[:space:]]' <<< "$rules" || fail "$role has existing nftables tables; refusing to overwrite firewall."
   if command -v iptables-save >/dev/null 2>&1 && iptables-save 2>/dev/null | grep -qE '^-A[[:space:]]'; then fail "$role has existing iptables rules; refusing changes."; fi
-  [[ "$(sysctl -n net.ipv4.ip_forward)" == 0 && "$(sysctl -n net.ipv6.conf.all.
+  [[ "$(sysctl -n net.ipv4.ip_forward)" == 0 && "$(sysctl -n net.ipv6.conf.all.forwarding)" == 0 ]] || fail "$role already has IP forwarding enabled; manual review required."
+  ! ip -4 rule show | grep -Eq '^(10518|10519):' || fail "$role route priority is already used."
+  ! ip -6 rule show | grep -Eq '^(10518|10519):' || fail "$role IPv6 route priority is already used."
+  [[ -z "$(ip -4 route show table 518 2>/dev/null)$(ip -6 route show table 518 2>/dev/null)$(ip -4 route show table 519 2>/dev/null)$(ip -6 route show table 519 2>/dev/null)" ]] || fail "$role route table 518/519 already used."
+  ! ip link show dev pqtun0 >/dev/null 2>&1 || fail "$role already has pqtun0; refusing unmanaged TUN interface."
+}
+write_manager(){
+  local role="$1" token="$2" localip="$3" peerip="$4" speed="$5" temp line
+  manager_state "$r
