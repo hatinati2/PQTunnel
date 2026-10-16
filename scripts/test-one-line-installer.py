@@ -146,6 +146,11 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertIn("chmod 0600", self.remote_setup)
 
 
+    def test_helper_scripts_follow_the_immutable_release_bundle(self) -> None:
+        self.assertIn('SOURCE_RAW_BASE="$RAW_BASE"', self.script)
+        self.assertIn('RAW="https://raw.githubusercontent.com/$REPO/$VERSION"', self.setup)
+        self.assertNotIn('SOURCE_RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"', self.script)
+        self.assertNotIn('RAW="https://raw.githubusercontent.com/$REPO/main"', self.setup)
     def test_manager_upgrade_installs_wizard_and_preserves_loopback_tokens(self) -> None:
         self.assertIn("--manager-upgrade", self.script)
         self.assertIn("--upgrade", self.manager_installer)
