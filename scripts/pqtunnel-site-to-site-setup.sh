@@ -185,7 +185,9 @@ ENV
  PQTUNNEL_SITE_CONFIG="$WORK/dialer-network.env" bash "$BUNDLE/scripts/site-to-site-selective.sh" validate
  STAGE="$(ssh -p "$SSH_PORT" "$REMOTE" 'umask 077; mktemp -d /tmp/pqtunnel-site-to-site.XXXXXXXX')"
  [[ "$STAGE" =~ ^/tmp/pqtunnel-site-to-site\.[A-Za-z0-9]+$ ]] || fail 'Unsafe remote staging path.'
- scp -P "$SSH_PORT" "$WORK/PQTunnel-$VERSION-linux-$REMOTE_ARCH.tar.gz" "$WORK/SHA256SUMS" "$WORK/remote-setup.sh" "$WORK/gateway-app.env" "$WORK/gateway-network.env" "$WORK/tokens/gateway" "$WORK/tokens/speed" "$REMOTE:$STAGE/"
+ scp -P "$SSH_PORT" "$WORK/PQTunnel-$VERSION-linux-$REMOTE_ARCH.tar.gz" "$WORK/SHA256SUMS" "$WORK/remote-setup.sh" "$WORK/gateway-app.env" "$WORK/gateway-network.env" "$REMOTE:$STAGE/"
+ scp -P "$SSH_PORT" "$WORK/tokens/gateway" "$REMOTE:$STAGE/gateway-manager-token"
+ scp -P "$SSH_PORT" "$WORK/tokens/speed" "$REMOTE:$STAGE/speedtest-token"
  scp -P "$SSH_PORT" -r "$WORK/gateway-pki" "$REMOTE:$STAGE/"
  ssh -p "$SSH_PORT" "$REMOTE" "bash '$STAGE/remote-setup.sh' preflight '$STAGE' '$VERSION' '$TLS_PORT'"
  ssh -p "$SSH_PORT" "$REMOTE" "bash '$STAGE/remote-setup.sh' install '$STAGE' '$VERSION' '$TLS_PORT'"
