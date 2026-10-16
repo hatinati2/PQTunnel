@@ -131,6 +131,18 @@ The same bootstrap also has guarded `install-server` and `install-client` modes.
 
 These commands are intentionally separate from the default read-only bootstrap. Before using them, stage the named PKI/config files on the destination host, replace the example paths, review every setting, and complete a disposable-lab test. They are **not approved for your live VPS yet**. The gateway command starts the service and applies its network helper; the dialer command starts a service that changes route state. Keep out-of-band console access available. The installer does not install OS packages, open provider firewall ports, or overwrite detected existing artifacts.
 
+### Guided two-VPS setup from one command
+
+Run this on the **Iran/Dialer** VPS from an interactive root-capable terminal. The wizard connects to the Germany/Gateway VPS through root SSH key authentication, prepares role-specific certificates and configuration, installs the endpoint services and both management panels, then prints the three generated tokens once.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --site-to-site
+```
+
+The wizard requires Ubuntu/Debian on both hosts, root SSH access to Germany, and the provider firewall to permit the selected Gateway TCP listener port (default `8443`). The provider firewall is not changed by the script. Type `INSTALL` only after reviewing the displayed plan. Managers bind to `127.0.0.1:9091`; use separate SSH local-forwarding sessions to access each panel remotely. Store both manager tokens and the separate speed-test token privately.
+
+**Scope and safety:** this creates a **selective destination-port tunnel**, not a full-device VPN. Defaults are TCP/443 and UDP/53,123; the wizard allows changing those lists and includes TCP/9109 for the private speed-test agent. Other destination ports remain direct. It is for a fresh, dedicated test setup only: it refuses existing endpoint files, UFW, non-empty nftables/iptables rules, already-enabled IP forwarding, occupied policy-routing tables/priorities, or an existing `pqtun0`. Do not bypass these guards. The CA private key is held temporarily in a root-only workspace on the Iran host while certificates are issued; it is not transferred to Germany and the workspace is removed on exit. For stronger CA-key isolation, generate the PKI on a separate trusted workstation instead of using this convenience wizard. A failed run can leave a partial installation; the wizard prints generated tokens on failure, but inspect both hosts and restore through out-of-band console access before retrying. PQTunnel remains experimental and is not independently audited.
+
 Germany gateway (requires server.crt, server.key, ca.crt, a reviewed server env file, and a reviewed gateway network env file):
 
 ```sh
