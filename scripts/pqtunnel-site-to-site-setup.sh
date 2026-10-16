@@ -199,18 +199,40 @@ main(){
  ask "Germany WAN interface [$GW_WAN]: " tmp; GW_WAN="${tmp:-$GW_WAN}"; ifname "$GW_WAN" || fail 'Invalid Gateway interface.'
  ssh -p "$SSH_PORT" "$REMOTE" "ip link show dev '$GW_WAN' >/dev/null" || fail 'Gateway WAN interface not found.'
  network_guard dialer
- ssh -p "$SSH_PORT" "$REMOTE" 'bash -s' <<'GUARD'
+ ssh -p "$SSH_PORT" "$REMOTE" "bash -s -- '$TLS_PORT'" <<'GUARD'
 set -Eeuo pipefail
-command -v ip >/dev/null && command -v nft >/dev/null && command -v sysctl >/dev/null
-if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then exit 1; fi
-rules="$(nft list ruleset 2>/dev/null)"; ! grep -Eq '^[[:space:]]*table[[:space:]]' <<< "$rules"
-if command -v iptables-save >/dev/null 2>&1 && iptables-save 2>/dev/null | grep -qE '^-A[[:space:]]'; then exit 1; fi
-[[ "$(sysctl -n net.ipv4.ip_forward)" == 0 && "$(sysctl -n net.ipv6.conf.all.forwarding)" == 0 ]]
-! ip link show dev pqtun0 >/dev/null 2>&1
-! ip -4 rule show | grep -Eq '^(10518|10519):'
-! ip -6 rule show | grep -Eq '^(10518|10519):'
-[[ -z "$(ip -4 route show table 518)$(ip -6 route show table 518)$(ip -4 route show table 519)$(ip -6 route show table 519)" ]]
-for p in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/default/pqtunneld /etc/pqtunnel/pki/server.crt /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/ca.crt /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do [[ ! -e "$p" ]] || { echo "Existing Gateway artifact: $p" >&2; exit 1; }; done
+TLS_PORT="${1:-}"
+for cmd in ip nft sysctl ss; do
+ command -v "$cmd" >/dev/null 2>&1 || { echo "Gateway prerequisite missing: $cmd" >&2; exit 1; }
+done
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+ echo 'Gateway has active UFW; refusing automatic firewall integration.' >&2; exit 1
+fi
+rules="$(nft list ruleset 2>/dev/null)" || { echo 'Gateway nftables state cannot be read; refusing changes.' >&2; exit 1; }
+if grep -Eq '^[[:space:]]*table[[:space:]]' <<< "$rules"; then
+ echo 'Gateway has existing nftables tables/rules; refusing to overwrite them.' >&2; exit 1
+fi
+if command -v iptables-save >/dev/null 2>&1 && iptables-save 2>/dev/null | grep -qE '^-A[[:space:]]'; then
+ echo 'Gateway has existing iptables rules; refusing to overwrite them.' >&2; exit 1
+fi
+if [[ "$(sysctl -n net.ipv4.ip_forward)" != 0 || "$(sysctl -n net.ipv6.conf.all.forwarding)" != 0 ]]; then
+ echo 'Gateway forwarding is already enabled; manual network review is required.' >&2; exit 1
+fi
+if ip link show dev pqtun0 >/dev/null 2>&1; then
+ echo 'Gateway already has pqtun0; refusing to take over an unmanaged TUN.' >&2; exit 1
+fi
+if ip -4 rule show | grep -Eq '^(10518|10519):' || ip -6 rule show | grep -Eq '^(10518|10519):'; then
+ echo 'Gateway policy-routing priority 10518/10519 is occupied.' >&2; exit 1
+fi
+if [[ -n "$(ip -4 route show table 518)$(ip -6 route show table 518)$(ip -4 route show table 519)$(ip -6 route show table 519)" ]]; then
+ echo 'Gateway policy-routing table 518/519 is already used.' >&2; exit 1
+fi
+for p in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/default/pqtunneld /etc/pqtunnel/pki/server.crt /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/ca.crt /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do
+ [[ ! -e "$p" ]] || { echo "Existing Gateway artifact: $p" >&2; exit 1; }
+done
+if ss -ltnH 2>/dev/null | awk -v p=":$TLS_PORT" '$4 ~ (p "$") {found=1} END {exit !found}'; then
+ echo "Gateway TCP port $TLS_PORT is already in use." >&2; exit 1
+fi
 GUARD
  printf '\nPreflight plan: Iran/Dialer -> %s:%s; Iran WAN=%s; Germany WAN=%s; TCP destinations=%s; UDP destinations=%s.\n' "$NAME" "$TLS_PORT" "$WAN" "$GW_WAN" "$TCP" "${UDP:-none}"
  printf 'Both hosts passed local network guards and endpoint-artifact checks. Missing OS packages may already have been installed. No tunnel network rules have been applied yet.\n'
