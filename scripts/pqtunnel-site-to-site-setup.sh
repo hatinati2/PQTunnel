@@ -157,6 +157,13 @@ main(){
  WORK="$(mktemp -d -t pqtunnel-site-to-site.XXXXXX)"; chmod 0700 "$WORK"
  # Secure any existing public-HTTP panel before SSH checks, package setup, or network preflight.
  secure_existing_local_manager
+ . /etc/os-release
+ [[ "${ID:-}" == ubuntu || "${ID:-}" == debian ]] || fail 'Automatic dependency installation supports Ubuntu/Debian only.'
+ if ! command -v python3 >/dev/null 2>&1; then
+  command -v apt-get >/dev/null 2>&1 || fail 'python3 and apt-get are required on this host; no tunnel/network changes made.'
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y python3
+ fi
  if [[ "${PQTUNNEL_SETUP_PRESERVE_DIALER_MANAGER_TOKEN:-0}" == 1 && "$DIALER_TOKEN_WAS_ROTATED" == 0 && -f /etc/default/pqtunnel-manager ]]; then
   existing_token="$(sed -n 's/^PQTUNNEL_MANAGER_TOKEN=//p' /etc/default/pqtunnel-manager | head -n1)"
   if [[ "$existing_token" =~ ^[0-9a-f]{64}$ ]]; then
