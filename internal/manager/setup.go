@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"regexp"
+		"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/hatinati2/PQTunnel/internal/adminapi"
 )
@@ -23,6 +21,7 @@ const (
 	setupLogPath = setupDir + "/setup.log"
 	setupRawLogPath = setupDir + "/setup-raw.log"
 	setupTokensPath = setupDir + "/setup-tokens"
+	setupApprovalPath = setupDir + "/setup-approval"
 	setupWorkerPath = "/usr/local/lib/pqtunnel/pqtunnel-setup-worker.sh"
 	setupScriptPath = "/usr/local/lib/pqtunnel/pqtunnel-site-to-site-setup.sh"
 	setupServicePath = "/etc/systemd/system/pqtunnel-setup.service"
@@ -37,8 +36,8 @@ var (
 // ValidateSiteToSiteSetupRequest validates all operator-provided values before
 // they reach the fixed worker. No input is ever interpreted as a shell command.
 func ValidateSiteToSiteSetupRequest(req adminapi.SiteToSiteSetupRequest) error {
-	if req.Confirm != "INSTALL" {
-		return errors.New("type INSTALL in the confirmation field before starting setup")
+	if req.Confirm != "CHECK" {
+		return errors.New("setup request must be explicitly started from the authenticated wizard")
 	}
 	if !strings.HasPrefix(req.GatewaySSHTarget, "root@") || strings.Count(req.GatewaySSHTarget, "@") != 1 {
 		return errors.New("Gateway SSH target must use root@IPv4-or-DNS")
@@ -162,7 +161,6 @@ func (m *Controller) StartSiteToSiteSetup(ctx context.Context, req adminapi.Site
 		strconv.Itoa(req.TLSPort),
 		req.TCPPorts,
 		req.UDPPorts,
-		"INSTALL",
 		req.DialerWAN,
 		req.GatewayWAN,
 	}
@@ -171,7 +169,7 @@ func (m *Controller) StartSiteToSiteSetup(ctx context.Context, req adminapi.Site
 	if err := atomicWrite(setupEnvPath, env, 0600); err != nil {
 		return errors.New("could not securely stage the setup request")
 	}
-	for _, path := range []string{setupLogPath, setupRawLogPath, setupTokensPath} {
+	for _, path := range []string{setupLogPath, setupRawLogPath, setupTokensPath, setupApprovalPath} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			_ = os.Remove(setupEnvPath)
 			return errors.New("could not clear protected state from the previous setup")
@@ -191,27 +189,40 @@ func (m *Controller) StartSiteToSiteSetup(ctx context.Context, req adminapi.Site
 
 // SiteToSiteSetupStatus exposes only bounded, redacted setup output.
 func (m *Controller) SiteToSiteSetupStatus(ctx context.Context) (adminapi.SiteToSiteSetupStatus, error) {
-	out := adminapi.SiteToSiteSetupStatus{Available: m.role == RoleDialer, State: "idle"}
+	out := adminapi.SiteToSiteSetupStatus{State: "idle"}
 	if m.role != RoleDialer {
 		return out, nil
 	}
-	active, err := m.runner.Run(ctx, "systemctl", "show", "--property=ActiveState", "--value", setupUnit)
-	if err != nil {
-		return out, nil // older releases do not ship the optional worker unit
+	for _, path := range []string{setupWorkerPath, setupScriptPath, setupServicePath} {
+		info, statErr := os.Lstat(path)
+		if statErr != nil || !info.Mode().IsRegular() {
+			return out, nil
+		}
 	}
-	if strings.TrimSpace(active) == "active" || strings.TrimSpace(active) == "activating" {
-		out.State, out.Running = "running", true
-	} else if data, readErr := os.ReadFile(setupStatePath); readErr == nil {
+	out.Available = true
+	active, err := m.runner.Run(ctx, "systemctl", "show", "--property=ActiveState", "--value", setupUnit)
+	if err == nil {
+		stateText := strings.TrimSpace(active)
+		if stateText == "active" || stateText == "activating" {
+			out.Running = true
+		}
+	}
+	if data, readErr := os.ReadFile(setupStatePath); readErr == nil {
 		switch strings.TrimSpace(string(data)) {
 		case "queued":
 			out.State = "queued"
 		case "running":
-			out.State, out.Running = "running", true
+			out.State = "running"
+		case "awaiting-confirmation":
+			out.State = "awaiting-confirmation"
 		case "succeeded":
 			out.State, out.Success = "succeeded", true
 		case "failed":
 			out.State = "failed"
 		}
+	}
+	if out.Running && (out.State == "idle" || out.State == "queued") {
+		out.State = "running"
 	}
 	tokenInfo, tokenErr := os.Lstat(setupTokensPath)
 	out.TokensAvailable = tokenErr == nil && tokenInfo.Mode().IsRegular() && tokenInfo.Mode().Perm() == 0600
@@ -298,10 +309,28 @@ func (m *Controller) ConsumeSiteToSiteSetupTokens(ctx context.Context) (adminapi
 	return tokens, nil
 }
 
-// Keep setup request deadlines bounded even if a caller forgets to add one.
-func setupContext(parent context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, 10*time.Second)
+
+// ApproveSiteToSiteSetup authorizes only the running, preflight-complete setup
+// worker. Approval is a separate authenticated and CSRF-protected web action.
+func (m *Controller) ApproveSiteToSiteSetup(ctx context.Context) error {
+	if m.role != RoleDialer {
+		return errors.New("setup approval is available only from the Dialer manager")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.speedRunMu.TryLock() {
+		return errors.New("another management operation is in progress")
+	}
+	defer m.speedRunMu.Unlock()
+	stateData, err := os.ReadFile(setupStatePath)
+	if err != nil || strings.TrimSpace(string(stateData)) != "awaiting-confirmation" {
+		return errors.New("setup has not completed its preflight review; approval is unavailable")
+	}
+	active, err := m.runner.Run(ctx, "systemctl", "show", "--property=ActiveState", "--value", setupUnit)
+	if err != nil || strings.TrimSpace(active) != "active" {
+		return errors.New("setup worker is not waiting for approval")
+	}
+	return atomicWrite(setupApprovalPath, []byte("INSTALL\n"), 0600)
 }
 
 var _ adminapi.SetupWizardController = (*Controller)(nil)
-var _ = filepath.Separator
