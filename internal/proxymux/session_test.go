@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -703,4 +704,176 @@ func TestSessionDataBeforeOpenOKReleasesOpenCaller(t *testing.T) {
 		t.Fatal("premature DATA on one stream terminated the shared session")
 	}
 	waitForStreamCount(t, session, 0)
+}
+
+
+// CLOSE before OPEN_OK must reset only the pending stream and release the
+// OpenContext caller immediately, rather than leaving it until OpenTimeout.
+func TestSessionCloseBeforeOpenOKReleasesOpenCaller(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true, MaxStreams: 4,
+		OpenTimeout: 4 * time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	result := make(chan error, 1)
+	go func() {
+		_, openErr := session.OpenContext(context.Background(), TypeOpenDirect, []byte("early-close"))
+		result <- openErr
+	}()
+	_ = peerConn.SetDeadline(time.Now().Add(2 * time.Second))
+	request, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if err := WriteFrame(peerConn, Frame{
+		Type: TypeClose, StreamID: request.StreamID, Payload: []byte{closeFlagWrite},
+	}); err != nil {
+		t.Fatalf("write CLOSE before OPEN_OK: %v", err)
+	}
+	reset, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read stream reset: %v", err)
+	}
+	if reset.Type != TypeClose || reset.StreamID != request.StreamID ||
+		len(reset.Payload) != 1 || reset.Payload[0] != closeFlagReset {
+		t.Fatalf("unexpected response to premature CLOSE: %#v", reset)
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("OpenContext unexpectedly succeeded after premature CLOSE")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("OpenContext remained blocked after premature CLOSE")
+	}
+	if session.isDone() {
+		t.Fatal("premature CLOSE on one stream terminated the shared session")
+	}
+	waitForStreamCount(t, session, 0)
+}
+
+// OPEN_ERROR is only valid while the stream is pending. A late OPEN_ERROR
+// after OPEN_OK is a protocol-order violation and must terminate the session.
+func TestSessionRejectsOpenErrorAfterOpenOK(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true, MaxStreams: 4,
+		OpenTimeout: time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	result := make(chan error, 1)
+	go func() {
+		_, openErr := session.OpenContext(context.Background(), TypeOpenDirect, []byte("open-error-order"))
+		result <- openErr
+	}()
+	_ = peerConn.SetDeadline(time.Now().Add(2 * time.Second))
+	request, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if err := WriteFrame(peerConn, Frame{Type: TypeOpenOK, StreamID: request.StreamID}); err != nil {
+		t.Fatalf("write OPEN_OK: %v", err)
+	}
+	if err := <-result; err != nil {
+		t.Fatalf("OpenContext before late OPEN_ERROR: %v", err)
+	}
+	if err := WriteFrame(peerConn, Frame{
+		Type: TypeOpenError, StreamID: request.StreamID, Payload: []byte("late error"),
+	}); err != nil {
+		t.Fatalf("write delayed OPEN_ERROR: %v", err)
+	}
+
+	select {
+	case <-session.Done():
+	case <-time.After(time.Second):
+		t.Fatal("out-of-order OPEN_ERROR did not terminate the session")
+	}
+	if session.Err() == nil {
+		t.Fatal("session ended without recording a protocol error")
+	}
+}
+
+// A full outbound queue must respect the stream write deadline without
+// terminating the shared session. The peer intentionally stops reading after
+// OPEN_OK so the transport writer blocks on net.Pipe.
+func TestStreamWriteDeadlineWhenOutboundQueueSaturates(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true, MaxStreams: 4,
+		OpenTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	result := make(chan *Stream, 1)
+	openErr := make(chan error, 1)
+	go func() {
+		stream, err := session.OpenContext(context.Background(), TypeOpenDirect, []byte("write-deadline"))
+		if err != nil {
+			openErr <- err
+			return
+		}
+		result <- stream
+	}()
+	_ = peerConn.SetDeadline(time.Now().Add(2 * time.Second))
+	request, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if err := WriteFrame(peerConn, Frame{Type: TypeOpenOK, StreamID: request.StreamID}); err != nil {
+		t.Fatalf("write OPEN_OK: %v", err)
+	}
+
+	var stream *Stream
+	select {
+	case stream = <-result:
+	case err := <-openErr:
+		t.Fatalf("OpenContext: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for OPEN_OK")
+	}
+	if err := stream.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatalf("SetWriteDeadline: %v", err)
+	}
+
+	payload := bytes.Repeat([]byte("w"), maxDataSize*258)
+	n, err := stream.Write(payload)
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("Write error = %v, want os.ErrDeadlineExceeded (wrote %d bytes)", err, n)
+	}
+	if n <= 0 || n >= len(payload) {
+		t.Fatalf("Write returned partial count %d for payload length %d", n, len(payload))
+	}
+	if session.isDone() {
+		t.Fatal("a single stream write deadline terminated the shared session")
+	}
 }
