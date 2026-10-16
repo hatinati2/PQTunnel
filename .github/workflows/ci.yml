@@ -30,7 +30,7 @@ jobs:
       - name: Static analysis
         run: go vet ./...
       - name: Build Linux binaries
-        run: go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki ./cmd/pqtunnel-manager
+        run: go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki ./cmd/pqtunnel-manager ./cmd/pqtunnel-proxy
 
   cross-build:
     runs-on: ubuntu-24.04
@@ -58,7 +58,7 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           mkdir -p dist
-          for pkg in pqtunneld pqtunnel-client pqtunnel-pki; do
+          for pkg in pqtunneld pqtunnel-client pqtunnel-pki pqtunnel-proxy; do
             ext=''
             if [[ "$GOOS" == windows ]]; then ext='.exe'; fi
             go build -trimpath -o "dist/${pkg}-${GOOS}-${GOARCH}${ext}" "./cmd/${pkg}"
