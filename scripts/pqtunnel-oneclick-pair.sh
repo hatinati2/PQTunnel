@@ -306,7 +306,7 @@ if ! ip link show dev "$DIALER_IF" >/dev/null 2>&1; then fail "Iran interface '$
 if ! printf '%s\n' "$GATEWAY_IF" | grep -Eq '^[A-Za-z0-9_.:-]{1,15}$'; then fail 'invalid Gateway interface name.'; fi
 ssh "${SSH_OPTS[@]}" "$REMOTE_TARGET" "ip link show dev '$GATEWAY_IF' >/dev/null"
 
-mkdir -m 0700 "$WORK_DIR/pki-bundle"
+# The PKI helper creates its output directory itself and refuses to overwrite it.
 PQTUNNEL_PKI_BIN="$SOURCE_DIR/pqtunnel-pki" bash "$SOURCE_DIR/scripts/prepare-site-to-site-pki.sh" \
   --server-name "$SERVER_NAME" --client-ip 10.66.0.2 --out "$WORK_DIR/pki-bundle"
 
