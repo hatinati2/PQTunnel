@@ -20,6 +20,7 @@ GW_PID=""
 DL_PID=""
 DIRECT_SERVER_PID=""
 REVERSE_SERVER_PID=""
+HOLD_PID=""
 HOST_BASE="$LAB_DIR/host.before"
 HOST_AFTER="$LAB_DIR/host.after"
 GW_BASE="$LAB_DIR/gateway.before"
@@ -92,7 +93,7 @@ cleanup() {
   local rc=$? ns now pair pid
   trap - EXIT INT TERM
   set +e
-  for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID"; do
+  for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID" "$HOLD_PID"; do
     [[ -z "$pid" ]] || kill -TERM "$pid" >/dev/null 2>&1
   done
   for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID"; do
@@ -122,7 +123,7 @@ cleanup() {
     fi
   fi
   if (( rc != 0 )); then
-    for log in gateway.log dialer.log direct-server.log reverse-server.log; do
+    for log in gateway.log dialer.log direct-server.log reverse-server.log hold.log; do
       if [[ -f "$LAB_DIR/$log" ]]; then echo "--- $log ---" >&2; cat "$LAB_DIR/$log" >&2; fi
     done
   fi
@@ -225,7 +226,7 @@ class Handler(socketserver.BaseRequestHandler):
             data.extend(chunk)
             if b"\n" in data:
                 break
-        if data:
+        if data and b"\n" in data:
             self.request.sendall(prefix + bytes(data))
         try:
             self.request.shutdown(1)
@@ -251,7 +252,8 @@ def recv_all(sock):
         if not data:
             return bytes(out)
         out.extend(data)
-def direct():
+def direct(index):
+    message = ("lab-direct-%02d\n" % index).encode()
     with socket.create_connection(("127.0.0.1", socks_port), timeout=4) as s:
         s.settimeout(4)
         s.sendall(b"\x05\x01\x00")
@@ -266,23 +268,72 @@ def direct():
             reply += part
         if reply[1] != 0:
             raise RuntimeError("SOCKS5 CONNECT rejected with REP=%d" % reply[1])
-        s.sendall(b"lab-direct\n")
+        s.sendall(message)
         got = recv_all(s)
-    if got != b"direct-ok:lab-direct\n":
-        raise RuntimeError("Direct response mismatch: %r" % got)
-    return "Direct passed"
-def reverse():
+    want = b"direct-ok:" + message
+    if got != want:
+        raise RuntimeError("Direct response mismatch: %r != %r" % (got, want))
+    return "Direct %02d passed" % index
+def reverse(index):
+    message = ("lab-reverse-%02d\n" % index).encode()
     with socket.create_connection((gateway_ip, reverse_port), timeout=4) as s:
         s.settimeout(4)
-        s.sendall(b"lab-reverse\n")
+        s.sendall(message)
         got = recv_all(s)
-    if got != b"reverse-ok:lab-reverse\n":
-        raise RuntimeError("Reverse response mismatch: %r" % got)
-    return "Reverse passed"
-with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-    for result in (pool.submit(direct), pool.submit(reverse)):
+    want = b"reverse-ok:" + message
+    if got != want:
+        raise RuntimeError("Reverse response mismatch: %r != %r" % (got, want))
+    return "Reverse %02d passed" % index
+jobs = []
+with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
+    jobs.extend(pool.submit(direct, i) for i in range(12))
+    jobs.extend(pool.submit(reverse, i) for i in range(12))
+    for result in concurrent.futures.as_completed(jobs):
         print(result.result())
-print("PASS: Direct and Reverse carried concurrent TCP payloads over one TLS session")
+print("PASS: 12 Direct and 12 Reverse TCP streams completed concurrently over one TLS session")
+PY
+
+cat > "$LAB_DIR/hold.py" <<'PY'
+import select
+import socket
+import struct
+import sys
+gateway_ip, reverse_port, socks_port, public_ip, direct_port = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], int(sys.argv[5])
+direct = socket.create_connection(("127.0.0.1", socks_port), timeout=4)
+direct.settimeout(4)
+direct.sendall(b"\x05\x01\x00")
+if direct.recv(2) != b"\x05\x00":
+    raise SystemExit("SOCKS5 negotiation failed")
+direct.sendall(b"\x05\x01\x00\x01" + socket.inet_aton(public_ip) + struct.pack("!H", direct_port))
+reply = b""
+while len(reply) < 10:
+    part = direct.recv(10 - len(reply))
+    if not part:
+        raise SystemExit("SOCKS5 CONNECT reply ended early")
+    reply += part
+if reply[1] != 0:
+    raise SystemExit("SOCKS5 CONNECT failed: REP=%d" % reply[1])
+reverse = socket.create_connection((gateway_ip, reverse_port), timeout=4)
+direct.sendall(b"hold-direct-without-newline")
+reverse.sendall(b"hold-reverse-without-newline")
+print("READY", flush=True)
+pending = {direct: "Direct", reverse: "Reverse"}
+deadline = __import__("time").monotonic() + 6
+while pending and __import__("time").monotonic() < deadline:
+    ready, _, _ = select.select(list(pending), [], [], 0.2)
+    for sock in ready:
+        try:
+            data = sock.recv(1024)
+        except OSError:
+            data = b""
+        if data:
+            raise SystemExit("%s stream unexpectedly returned data during partial-frame disconnect: %r" % (pending[sock], data))
+        print("%s stream closed after transport loss" % pending.pop(sock), flush=True)
+for sock in list(pending):
+    sock.close()
+if pending:
+    raise SystemExit("streams did not close after Gateway transport loss: %s" % ", ".join(pending.values()))
+print("PASS: active Direct and Reverse streams closed cleanly after transport loss")
 PY
 
 cat > "$LAB_DIR/reject.py" <<'PY'
@@ -381,10 +432,23 @@ wait_log_count "$LAB_DIR/dialer.log" 'authenticated transport connected' 1 "$DL_
 ip netns exec "$DL_NS" python3 "$LAB_DIR/exercise.py" 192.0.2.1 18080 1080 8.8.8.8 18444
 ip netns exec "$DL_NS" python3 "$LAB_DIR/reject.py" 1080
 
-# Restart only the disposable Gateway process; Dialer must automatically reconnect.
+# Keep both directions active, then kill the isolated Gateway transport.
+# The clients must observe stream closure; the Dialer then reconnects automatically.
+ip netns exec "$DL_NS" python3 "$LAB_DIR/hold.py" 192.0.2.1 18080 1080 8.8.8.8 18444 > "$LAB_DIR/hold.log" 2>&1 &
+HOLD_PID=$!
+wait_log_count "$LAB_DIR/hold.log" 'READY' 1 "$HOLD_PID" || fail 'could not establish live streams for disconnect test'
+target_ready=0
+for _ in $(seq 1 100); do
+  if ip netns exec "$DL_NS" ss -tn state established | grep -Fq '192.0.2.2:18081'; then target_ready=1; break; fi
+  kill -0 "$HOLD_PID" >/dev/null 2>&1 || fail 'disconnect-test client exited before the Reverse target became active'
+  sleep 0.05
+done
+(( target_ready == 1 )) || fail 'Reverse target connection did not become established'
 kill -TERM "$GW_PID" >/dev/null 2>&1 || true
 wait "$GW_PID" >/dev/null 2>&1 || true
 GW_PID=""
+if ! wait "$HOLD_PID"; then cat "$LAB_DIR/hold.log" >&2; fail 'active streams did not close after Gateway transport loss'; fi
+HOLD_PID=""
 start_gateway
 wait_listener "$GW_NS" '192.0.2.1:18443' "$GW_PID" || fail 'Gateway did not restart'
 wait_log_count "$LAB_DIR/dialer.log" 'authenticated transport connected' 2 "$DL_PID" || fail 'Dialer did not reconnect after Gateway restart'
@@ -400,8 +464,9 @@ diff -u "$DL_BASE" "$LAB_DIR/dialer.after" > "$LAB_DIR/dialer.diff" || {
   cat "$LAB_DIR/dialer.diff" >&2
   fail 'Dialer routes, rules, sysctls, addresses, interfaces or firewall rules changed'
 }
-echo 'PASS: Direct and Reverse TCP passed concurrently over strict TLS 1.3/mTLS.'
+echo 'PASS: Direct and Reverse TCP passed concurrently over strict TLS 1.3/mTLS (12 streams per direction).'
 echo 'PASS: disallowed Direct destinations were rejected.'
+echo 'PASS: active Direct and Reverse streams closed after Gateway transport loss.'
 echo 'PASS: Dialer reconnected after Gateway restart.'
 echo 'PASS: namespace routes, rules, selected sysctls and firewall rules stayed unchanged.'
 echo 'PASS: host routes, rules, selected sysctls and firewall rules were unchanged after cleanup.'
