@@ -1452,6 +1452,30 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 
 		waitForStreamCount(t, left, 0)
 		waitForStreamCount(t, right, 0)
+
+		// One active pair accounts for six session-loop goroutines. A small
+		// allowance covers short-lived runtime/test-runner activity, while a
+		// per-generation ceiling catches leaks that accumulate across reconnects.
+		cycleDeadline := time.Now().Add(2 * time.Second)
+		stableSamples := 0
+		var cycleCount int
+		for time.Now().Before(cycleDeadline) {
+			runtime.Gosched()
+			cycleCount = runtime.NumGoroutine()
+			if cycleCount <= baseline+10 {
+				stableSamples++
+				if stableSamples >= 2 {
+					break
+				}
+			} else {
+				stableSamples = 0
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if stableSamples < 2 {
+			t.Fatalf("goroutines grew across reconnect generation %d: baseline=%d current=%d (allowance=10)", generation, baseline, cycleCount)
+		}
+
 		previousLeft, previousRight = left, right
 	}
 
