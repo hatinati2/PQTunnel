@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh 
 
 The installer verifies the selected release archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go for manager installation. The manager is installed but **not started**; set a random `PQTUNNEL_MANAGER_TOKEN` of at least 32 bytes in `/etc/default/pqtunnel-manager`, review the file, then start the service deliberately. It defaults to loopback. Direct public-IP access is supported only with trusted TLS and an IP SAN; see the manager guide.
 
-This is not a one-command tunnel configuration: Gateway/Dialer setup still requires reviewed certificates and role-specific environment files. The tunnel install/start commands are separate because they can change services or network state. The current release remains experimental and is not independently security-audited.
+This is not a one-command tunnel configuration: Gateway/Dialer setup still requires reviewed certificates and role-specific environment files. Use [the first-time installation flow](docs/INSTALLATION-FLOW.md) to prepare role-specific PKI and distinguish endpoint installation from the optional manager. The tunnel install/start commands are separate because they can change services or network state. The current release remains experimental and is not independently security-audited.
 
 ## Requirements
 
@@ -180,6 +180,7 @@ Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build L
 - [فارسی](README.fa.md)
 - [Security notes](SECURITY.md)
 - [Web management panel](docs/WEB-ADMIN-PANEL.md) (opt-in; loopback by default, optional TLS-only public IP)
+- [First-time site-to-site installation flow](docs/INSTALLATION-FLOW.md) (PKI staging, endpoint installers, and network-change safety)
 - [Two-VPS deployment readiness and recovery runbook](docs/TWO-VPS-DEPLOYMENT.md)
 - [Protocol notes](docs/PROTOCOL.md)
 - [Experimental server-to-server guide (Persian)](docs/SITE-TO-SITE.fa.md)
