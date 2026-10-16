@@ -109,6 +109,9 @@ func (h *Handler) serveSetupPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
+	if !h.requireLoopbackSetupAccess(w, r) {
+		return
+	}
 	if h.manager == nil || h.manager.ManagementSnapshot().Role != "dialer" {
 		http.Error(w, translateText(requestLanguage(r), "راه‌اندازی دو سرور فقط از پنل ایران/Dialer در دسترس است.", "Two-server setup is available only from the Iran/Dialer panel."), http.StatusForbidden)
 		return
