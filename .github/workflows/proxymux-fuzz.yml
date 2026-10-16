@@ -19,3 +19,5 @@ jobs:
           cache: true
       - name: Run extended bounded frame decoder fuzz campaign
         run: go test -fuzz=FuzzReadFrame -fuzztime=15s ./internal/proxymux
+      - name: Run bounded session frame-sequence fuzz campaign
+        run: go test -fuzz=FuzzSessionFrameSequence -fuzztime=10s ./internal/proxymux
