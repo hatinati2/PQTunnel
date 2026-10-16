@@ -142,8 +142,8 @@ The Gateway listener name and Dialer target name must match exactly. Replace eve
 
 ### Remaining release gates
 
-- Extend adversarial stream tests for half-close edge cases, queue saturation, open cancellation, repeated session replacement and cleanup under `go test -race`.
-- Add failure injection for target DNS changes, dial failures, malformed authenticated frames and peer shutdown at each stage of stream open/relay.
+- Continue expanding the bounded wire-frame fuzz campaign beyond the short CI run, and retain any minimized regression cases that it discovers.
+- Extend adversarial coverage for higher-load queue/backpressure behavior and rapid session replacement under `go test -race`; existing tests now cover TCP half-close, receive-queue saturation, cancellation of a remote open handler, Direct DNS cancellation, Reverse dial failure, and six successive broker session replacements with stale clears.
 - Decide and document whether HTTP CONNECT support is needed; the first implementation supports SOCKS5 TCP CONNECT only.
 - UDP forwarding, SOCKS5 UDP ASSOCIATE and transparent system-wide L3 routing are not implemented by this proxy mode.
 - Do not introduce an installer/systemd unit until protocol/security tests are complete and a separate operator-approved deployment plan identifies a listener already reachable under existing firewall/provider policy.

@@ -116,6 +116,43 @@ jobs:
           sudo apt-get install -y iproute2 nftables iptables openssl python3
       - name: Build proxy binary for the isolated lab
         run: go build -trimpath -o "$RUNNER_TEMP/pqtunnel-proxy" ./cmd/pqtunnel-proxy
+      - name: Fuzz the bounded wire frame decoder
+        run: go test -run='^
+
+  site-to-site-netns-integration:
+    name: netns site-to-site (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: true
+      - name: Build isolated lab binaries with the CI Go toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/pqtunnel-bin"
+          go build -o "$RUNNER_TEMP/pqtunnel-bin/pqtunneld" ./cmd/pqtunneld
+          go build -o "$RUNNER_TEMP/pqtunnel-bin/pqtunnel-client" ./cmd/pqtunnel-client
+          go build -o "$RUNNER_TEMP/pqtunnel-bin/pqtunnel-pki" ./cmd/pqtunnel-pki
+      - name: Install namespace ping tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 iputils-ping nftables tcpdump
+      - name: Run isolated dual-stack site-to-site TUN test
+        run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-site-to-site-netns.sh
+      - name: Test selective TCP/UDP port forwarding over dual-stack TUN
+        run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-selective-forward-netns.sh
+      - name: Test selective TCP/UDP egress over dual-stack TUN
+        run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-selective-egress-netns.sh
+      - name: Test selective network helper fail-closed and rollback
+        run: sudo bash scripts/test-site-to-site-selective-fail-closed.sh
+      - name: Test existing-firewall coexistence semantics in disposable namespaces
+        run: sudo bash scripts/test-firewall-coexistence-netns.sh
+ -fuzz=FuzzReadFrame -fuzztime=3s ./internal/proxymux
       - name: Test Direct, Reverse, reconnect and network-state invariance
         run: sudo env PQTUNNEL_PROXY_BIN="$RUNNER_TEMP/pqtunnel-proxy" bash scripts/test-proxy-netns.sh
 

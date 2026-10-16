@@ -8,28 +8,35 @@ import (
 )
 
 func TestSessionBrokerReplacedSessionSurvivesStaleClear(t *testing.T) {
-	oldLocal, _, _ := newTestSessionPair(t, 4)
-	newLocal, _, accepted := newTestSessionPair(t, 4)
+	const replacements = 6
 	broker := NewSessionBroker()
-	broker.Set(oldLocal)
-	broker.Set(newLocal)
-
-	if !oldLocal.isDone() {
-		t.Fatal("replacing a broker session did not close the previous session")
+	var sessions []*Session
+	var latestAccepted <-chan acceptedTarget
+	for i := 0; i < replacements; i++ {
+		local, _, accepted := newTestSessionPair(t, 4)
+		broker.Set(local)
+		sessions = append(sessions, local)
+		latestAccepted = accepted
+		if i > 0 && !sessions[i-1].isDone() {
+			t.Fatalf("replacement %d did not close the previous session", i)
+		}
 	}
-	// A slow/late goroutine belonging to the old session must not clear the new one.
-	broker.Clear(oldLocal)
 
+	// Simulate delayed teardown callbacks arriving out of order after several reconnects.
+	for i := len(sessions) - 2; i >= 0; i-- {
+		broker.Clear(sessions[i])
+	}
+	latest := sessions[len(sessions)-1]
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	stream, err := broker.Open(ctx, TypeOpenDirect, []byte("replacement-target"))
 	if err != nil {
-		t.Fatalf("Open through replacement session: %v", err)
+		t.Fatalf("Open through latest replacement session: %v", err)
 	}
-	if stream.session != newLocal {
-		t.Fatal("broker opened a stream on a stale session")
+	if stream.session != latest {
+		t.Fatal("stale Clear removed the latest session or broker opened on an older session")
 	}
-	target := awaitTarget(t, accepted, "replacement-target")
+	target := awaitTarget(t, latestAccepted, "replacement-target")
 	exchangeOnStream(t, stream, target, "after-reconnect", "response-after-reconnect")
 }
 
