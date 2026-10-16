@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -1368,4 +1369,123 @@ func FuzzSessionFrameSequence(f *testing.F) {
 			}
 		}
 	})
+}
+
+
+// Repeated stream churn across session replacement must reap stream state and
+// relay goroutines rather than accumulating resources across reconnects.
+func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
+	const (
+		reconnects       = 12
+		streamsPerSession = 8
+	)
+	baseline := runtime.NumGoroutine()
+	broker := NewSessionBroker()
+	var sessions []*Session
+
+	var previousLeft, previousRight *Session
+	for generation := 0; generation < reconnects; generation++ {
+		left, right, accepted := newTestSessionPair(t, streamsPerSession)
+		sessions = append(sessions, left, right)
+		broker.Set(left)
+
+		if previousLeft != nil {
+			if !previousLeft.isDone() {
+				t.Fatalf("previous local session remained alive after reconnect %d", generation)
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for !previousRight.isDone() && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !previousRight.isDone() {
+				t.Fatalf("previous remote session remained alive after reconnect %d", generation)
+			}
+			waitForStreamCount(t, previousLeft, 0)
+			waitForStreamCount(t, previousRight, 0)
+		}
+
+		for index := 0; index < streamsPerSession; index++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			stream, err := broker.Open(ctx, TypeOpenDirect, []byte("reconnect-soak"))
+			cancel()
+			if err != nil {
+				t.Fatalf("generation %d stream %d: broker open: %v", generation, index, err)
+			}
+			target := awaitTarget(t, accepted, "reconnect-soak")
+			deadline := time.Now().Add(2 * time.Second)
+			if err := stream.SetDeadline(deadline); err != nil {
+				t.Fatalf("generation %d stream %d: set stream deadline: %v", generation, index, err)
+			}
+			if err := target.SetDeadline(deadline); err != nil {
+				t.Fatalf("generation %d stream %d: set target deadline: %v", generation, index, err)
+			}
+
+			request := []byte{byte(generation), byte(index), 0xa5}
+			if n, err := stream.Write(request); err != nil || n != len(request) {
+				t.Fatalf("generation %d stream %d: write request = %d, %v", generation, index, n, err)
+			}
+			gotRequest := make([]byte, len(request))
+			if _, err := io.ReadFull(target, gotRequest); err != nil {
+				t.Fatalf("generation %d stream %d: read request at target: %v", generation, index, err)
+			}
+			if !bytes.Equal(gotRequest, request) {
+				t.Fatalf("generation %d stream %d: request = %v, want %v", generation, index, gotRequest, request)
+			}
+
+			response := []byte{0x5a, byte(index), byte(generation)}
+			if n, err := target.Write(response); err != nil || n != len(response) {
+				t.Fatalf("generation %d stream %d: target write = %d, %v", generation, index, n, err)
+			}
+			gotResponse := make([]byte, len(response))
+			if _, err := io.ReadFull(stream, gotResponse); err != nil {
+				t.Fatalf("generation %d stream %d: read response from stream: %v", generation, index, err)
+			}
+			if !bytes.Equal(gotResponse, response) {
+				t.Fatalf("generation %d stream %d: response = %v, want %v", generation, index, gotResponse, response)
+			}
+
+			if err := stream.Close(); err != nil {
+				t.Fatalf("generation %d stream %d: close stream: %v", generation, index, err)
+			}
+			_ = target.Close()
+		}
+
+		waitForStreamCount(t, left, 0)
+		waitForStreamCount(t, right, 0)
+		previousLeft, previousRight = left, right
+	}
+
+	broker.Clear(previousLeft)
+	for _, session := range sessions {
+		_ = session.Close()
+	}
+	for _, session := range sessions {
+		select {
+		case <-session.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("session did not stop during final resource cleanup")
+		}
+		waitForStreamCount(t, session, 0)
+	}
+
+	// Relays should terminate after their streams and transports are closed.
+	// Allow a small runtime/test-runner fluctuation, but reject a persistent
+	// increase consistent with leaked per-stream goroutines.
+	deadline := time.Now().Add(3 * time.Second)
+	stableSamples := 0
+	var lastCount int
+	for time.Now().Before(deadline) {
+		runtime.Gosched()
+		lastCount = runtime.NumGoroutine()
+		if lastCount <= baseline+5 {
+			stableSamples++
+			if stableSamples >= 3 {
+				return
+			}
+		} else {
+			stableSamples = 0
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("goroutine count did not settle near baseline: baseline=%d current=%d (allowance=5)", baseline, lastCount)
 }
