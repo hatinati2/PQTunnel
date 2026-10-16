@@ -156,17 +156,19 @@ case "$ACTION" in
     check_endpoint_absent
     check_manager_state
     check_listener_port_free
+    # Restrict/rotate any existing manager before installing the endpoint, so a failed later step cannot leave public HTTP enabled.
+    configure_manager
+    systemctl daemon-reload
+    systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service
+    systemctl enable --now pqtunnel-manager
+    systemctl restart pqtunnel-manager
     bash "$BUNDLE/scripts/install-server.sh" --source "$BUNDLE" --pki "$STAGE/gateway-pki"
     install -o root -g root -m 0640 "$STAGE/gateway-app.env" /etc/default/pqtunneld
     install -o root -g root -m 0640 "$STAGE/gateway-network.env" /etc/pqtunnel/site-to-site.env
     install -o root -g root -m 0755 "$BUNDLE/scripts/site-to-site-selective.sh" /usr/local/lib/pqtunnel/site-to-site-selective.sh
     systemctl daemon-reload
     systemd-analyze verify /etc/systemd/system/pqtunneld.service
-    configure_manager
-    systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service
     systemctl enable --now pqtunneld
-    systemctl enable --now pqtunnel-manager
-    systemctl restart pqtunnel-manager
     printf 'GATEWAY_MANAGER_TOKEN_APPLIED=1\n' > "$STAGE/manager-token-applied"
     ;;
   apply-network)
