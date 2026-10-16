@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-		"regexp"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -54,12 +54,16 @@ func ValidateSiteToSiteSetupRequest(req adminapi.SiteToSiteSetupRequest) error {
 	if req.TLSPort < 1 || req.TLSPort > 65535 {
 		return errors.New("Tunnel listener port must be between 1 and 65535")
 	}
-	tcp, err := validateSetupPorts(req.TCPPorts, false)
-	if err != nil || tcp == "" {
-		return errors.New("TCP destination ports must be a comma-separated list such as 443 or 80,443")
+	tcp, err := validateSetupPorts(req.TCPPorts, true)
+	if err != nil {
+		return errors.New("TCP destination ports must be a comma-separated list such as 443 or 80,443, or none")
 	}
-	if _, err := validateSetupPorts(req.UDPPorts, true); err != nil {
+	udp, err := validateSetupPorts(req.UDPPorts, true)
+	if err != nil {
 		return errors.New("UDP destination ports must be a comma-separated list such as 53,123 or none")
+	}
+	if tcp == "" && udp == "" {
+		return errors.New("select at least one TCP or UDP destination port")
 	}
 	if req.DialerWAN != "" && !setupInterfacePattern.MatchString(req.DialerWAN) {
 		return errors.New("Iran WAN interface name is invalid")
