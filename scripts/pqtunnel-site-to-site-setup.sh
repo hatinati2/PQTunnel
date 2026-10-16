@@ -2,7 +2,7 @@
 # Guided two-host PQTunnel setup. Selective-port only; refuses unmanaged network state.
 set -Eeuo pipefail
 umask 077
-VERSION="${PQTUNNEL_SETUP_VERSION:-v0.3.0-rc4}"
+VERSION="${PQTUNNEL_SETUP_VERSION:-v0.3.0-rc5}"
 REPO=hatinati2/PQTunnel
 REL="https://github.com/$REPO/releases/download/$VERSION"
 # Fetch the remote half from the same immutable release tag as the checked bundle.
