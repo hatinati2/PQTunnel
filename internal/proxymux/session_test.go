@@ -1375,10 +1375,15 @@ func FuzzSessionFrameSequence(f *testing.F) {
 // Repeated stream churn across session replacement must reap stream state and
 // relay goroutines rather than accumulating resources across reconnects.
 func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
-	const (
-		reconnects        = 12
-		streamsPerSession = 8
-	)
+	runSessionChurnResourceSoak(t, 12)
+}
+
+func TestSessionExtendedChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
+	runSessionChurnResourceSoak(t, 100)
+}
+
+func runSessionChurnResourceSoak(t *testing.T, reconnects int) {
+	const streamsPerSession = 8
 	runtime.GC()
 	baseline := runtime.NumGoroutine()
 	var baselineMem runtime.MemStats
