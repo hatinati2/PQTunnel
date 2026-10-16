@@ -91,6 +91,14 @@ type setupPageData struct {
 	IsError bool
 }
 
+func (h *Handler) requireLoopbackSetupAccess(w http.ResponseWriter, r *http.Request) bool {
+	if h.allowedPublicHost != "" || h.allowInsecurePublicHTTP {
+		http.Error(w, translateText(requestLanguage(r), "راه‌اندازی دو سرور فقط از پنل خصوصی روی loopback مجاز است. ابتدا با SSH forwarding به پنل وصل شو؛ استفاده از این فرایند از پنل عمومی مسدود است.", "The two-server setup is allowed only from the private loopback panel. Connect using SSH forwarding first; launching this workflow from a public listener is blocked."), http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 func (h *Handler) serveSetupPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w, r, "GET")
@@ -152,6 +160,9 @@ func (h *Handler) startSetup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.requireLoopbackSetupAccess(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
 	if err := r.ParseForm(); err != nil || !secureEqual(r.PostForm.Get("csrf"), current.CSRF) {
 		http.Error(w, translateText(requestLanguage(r), "درخواست نامعتبر است.", "Invalid request."), http.StatusBadRequest)
@@ -200,6 +211,9 @@ func (h *Handler) consumeSetupTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	_, current, ok := h.requirePostSession(w, r)
 	if !ok {
+		return
+	}
+	if !h.requireLoopbackSetupAccess(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
