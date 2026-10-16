@@ -1,0 +1,21 @@
+name: PQTunnel Proxymux Fuzz
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frame-decoder-fuzz:
+    name: bounded frame decoder fuzz
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: true
+      - name: Run bounded frame decoder fuzz campaign
+        run: go test -fuzz=FuzzReadFrame -fuzztime=3s ./internal/proxymux
