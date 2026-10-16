@@ -35,8 +35,8 @@ var blockedDirectPrefixes = mustPrefixes([]string{
 	"203.0.113.0/24",
 	"224.0.0.0/4",
 	"240.0.0.0/4",
-	"::/128",
-	"::1/128",
+	// Deprecated IPv4-compatible IPv6 addresses are not valid Direct targets.
+	"::/96",
 	// RFC 6052 NAT64 embeds IPv4 addresses in IPv6; block the whole well-known
 	// prefix so a private IPv4 target cannot be reached through a translator.
 	"64:ff9b::/96",
@@ -48,6 +48,7 @@ var blockedDirectPrefixes = mustPrefixes([]string{
 	"2002::/16",
 	"3ffe::/16",
 	"3fff::/20",
+	"5f00::/16",
 	"fc00::/7",
 	"fec0::/10",
 	"fe80::/10",

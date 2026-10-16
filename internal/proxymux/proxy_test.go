@@ -50,10 +50,12 @@ func TestDirectTargetHandlerRequiresAllowedPublicTarget(t *testing.T) {
 		t.Fatal("unlisted port was unexpectedly allowed")
 	}
 	for _, target := range []string{
+		"[::2]:443",
 		"[64:ff9b::a9fe:a9fe]:443",
 		"[100:0:0:1::1]:443",
 		"[3ffe::1]:443",
 		"[3fff::1]:443",
+		"[5f00::1]:443",
 		"[fec0::1]:443",
 	} {
 		if _, err := handler(context.Background(), TypeOpenDirect, []byte(target)); err == nil {
