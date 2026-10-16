@@ -74,4 +74,26 @@ network_guard(){
 }
 write_manager(){
   local role="$1" token="$2" localip="$3" peerip="$4" speed="$5" temp line
-  manager_state "$r
+  manager_state "$role"
+  if [[ ! -x /usr/local/sbin/pqtunnel-manager ]]; then bash "$BUNDLE/scripts/install-manager.sh" --source "$BUNDLE" --role "$role"; fi
+  temp="$(mktemp)"
+  if [[ -f /etc/default/pqtunnel-manager ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in PQTUNNEL_MANAGER_ROLE=*|PQTUNNEL_MANAGER_LISTEN=*|PQTUNNEL_MANAGER_TOKEN=*|PQTUNNEL_MANAGER_PUBLIC_HOST=*|PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=*|PQTUNNEL_MANAGER_TLS_CERT=*|PQTUNNEL_MANAGER_TLS_KEY=*|PQTUNNEL_MANAGER_SPEEDTEST_LISTEN=*|PQTUNNEL_MANAGER_SPEEDTEST_PEER=*|PQTUNNEL_MANAGER_SPEEDTEST_TOKEN=*) ;; *) printf '%s\n' "$line";; esac
+    done < /etc/default/pqtunnel-manager > "$temp"
+  fi
+  printf 'PQTUNNEL_MANAGER_ROLE=%s\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_LISTEN=%s:9109\nPQTUNNEL_MANAGER_SPEEDTEST_PEER=%s:9109\nPQTUNNEL_MANAGER_SPEEDTEST_TOKEN=%s\n' "$role" "$token" "$localip" "$peerip" "$speed" >> "$temp"
+  install -o root -g root -m 0600 "$temp" /etc/default/pqtunnel-manager; rm -f "$temp"
+}
+main(){
+  [[ $EUID -eq 0 ]] || fail 'run as root via sudo.'
+  for c in curl sha256sum tar ssh scp python3 openssl awk sed grep install od tr systemctl getent timeout; do need "$c"; done
+  [[ "$VERSION" =~ ^v[0-9A-Za-z._-]+$ ]] || fail 'invalid release version.'
+  WORK="$(mktemp -d -t pqtunnel-pair.XXXXXX)"; chmod 0700 "$WORK"
+  printf '\nPQTunnel two-VPS guided setup %s â experimental\n' "$VERSION"
+  printf 'This installs the Iran Dialer and Germany Gateway, plus both web managers. It routes only selected destination ports, not all device traffic.\n'
+  ask 'Germany Gateway SSH target (root@DNS-or-IPv4, key-based root SSH): ' REMOTE
+  [[ "$REMOTE" =~ ^root@[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || fail 'use root@hostname or root@IPv4; IPv6 SSH targets not supported by this wizard.'
+  ask 'SSH port [22]: ' tmp; SSH_PORT="${tmp:-22}"; [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] && ((10#$SSH_PORT>=1 && 10#$SSH_PORT<=65535)) || fail 'invalid SSH port.'
+  ask 'Gateway certificate DNS name or IPv4 (must match the public endpoint): ' GATEWAY_NAME; valid_host "$GATEWAY_NAME" || fail 'invalid Gateway certificate identity.'
+  ask 'Gateway TLS listener port [8443]: ' tmp; TLS_PORT="${tmp:-8443}"; [[ 
