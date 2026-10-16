@@ -33,6 +33,29 @@ const (
 
 // Frame is a single frame on the multiplexed TLS byte stream.
 // A transport connection must serialize concurrent calls to WriteFrame.
+func (typ Type) String() string {
+	switch typ {
+	case TypeOpenDirect:
+		return "open-direct"
+	case TypeOpenReverse:
+		return "open-reverse"
+	case TypeOpenOK:
+		return "open-ok"
+	case TypeOpenError:
+		return "open-error"
+	case TypeData:
+		return "data"
+	case TypeClose:
+		return "close"
+	case TypePing:
+		return "ping"
+	case TypePong:
+		return "pong"
+	default:
+		return "unknown"
+	}
+}
+
 type Frame struct {
 	Type     Type
 	StreamID uint32
