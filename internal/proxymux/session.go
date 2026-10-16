@@ -696,7 +696,6 @@ func (st *Stream) Write(p []byte) (int, error) {
 			}
 			return 0, net.ErrClosed
 		}
-		deadline := st.writeDeadline
 		st.mu.Unlock()
 
 		n := len(p)
@@ -731,9 +730,8 @@ func (st *Stream) CloseWrite() error {
 		return errors.New("proxymux: stream is not open")
 	}
 	st.writeClosed = true
-	deadline := st.writeDeadline
 	st.mu.Unlock()
-	if err := st.session.sendFrame(Frame{Type: TypeClose, StreamID: st.id, Payload: []byte{closeFlagWrite}}, deadline, nil); err != nil {
+	if err := st.sendFrame(Frame{Type: TypeClose, StreamID: st.id, Payload: []byte{closeFlagWrite}}); err != nil {
 		st.abort(err)
 		return err
 	}
