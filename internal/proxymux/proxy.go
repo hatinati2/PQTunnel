@@ -264,6 +264,9 @@ func ListenSOCKS5(address string) (net.Listener, error) {
 // must already be bound to loopback. UDP ASSOCIATE and all other commands are
 // rejected. It does not edit routes, TUN devices, sysctls, or firewall rules.
 func ServeSOCKS5Listener(ctx context.Context, listener net.Listener, broker *SessionBroker) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if listener == nil || broker == nil {
 		return errors.New("proxymux: SOCKS5 listener and session broker are required")
 	}
@@ -421,6 +424,9 @@ func ListenReverse(address string) (net.Listener, error) {
 // fixed mapping name. The Dialer-side handler resolves that name to a
 // preconfigured target; clients cannot specify arbitrary target addresses.
 func ServeReverseListener(ctx context.Context, listener net.Listener, mapping string, broker *SessionBroker) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if listener == nil || broker == nil || !validMappingID(mapping) {
 		return errors.New("proxymux: reverse listener, mapping name, and session broker are required")
 	}
