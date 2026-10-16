@@ -229,7 +229,7 @@ func serveGatewaySession(ctx context.Context, conn net.Conn, cfg config, allowed
 		return
 	}
 	state := tc.ConnectionState()
-	if len(state.PeerCertificates) == 0 || state.PeerCertificates[0].Subject.CommonName != cfg.PeerName {
+	if err := tunnel.VerifyPeerCommonName(state, cfg.PeerName); err != nil {
 		_ = tc.Close()
 		return
 	}
