@@ -166,6 +166,7 @@ case "$ACTION" in
     systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service
     systemctl enable --now pqtunneld
     systemctl enable --now pqtunnel-manager
+    systemctl restart pqtunnel-manager
     printf 'GATEWAY_MANAGER_TOKEN_APPLIED=1\n' > "$STAGE/manager-token-applied"
     ;;
   apply-network)
