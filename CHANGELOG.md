@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0-rc4
+
+- Added an experimental user-space Direct/Reverse TCP proxy (`pqtunnel-proxy`) with bounded flow control and regression coverage for rejecting WINDOW_UPDATE credits for DATA that has not been sent.
+- Added isolated network-namespace proxy integration tests and made them release gates on Ubuntu 24.04 and 26.04.
+- Included `pqtunnel-proxy` in Linux amd64/arm64 and Windows amd64 release bundles; Linux bundles also include `pqtunnel-manager`.
+- This remains an experimental release candidate, not production-ready. The proxy and tunnel have not undergone an independent security audit or real two-physical-VPS end-to-end validation.
+
 ## 0.3.0-rc3
 
 - Added the standalone Linux server manager with role-scoped systemd lifecycle controls, a validated editor for selected non-secret tunnel settings, protected configuration backups and attempted rollback after failed restarts.
