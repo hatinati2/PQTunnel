@@ -163,7 +163,7 @@ func TestSetupWizardCannotRunFromPublicManagerConfiguration(t *testing.T) {
 	dashboardReq.AddCookie(cookies[0])
 	dashboardResp := httptest.NewRecorder()
 	h.ServeHTTP(dashboardResp, dashboardReq)
-	csrf := regexp.MustCompile("name=\\"csrf\\" value=\\"([^\\"]+)\\"").FindStringSubmatch(dashboardResp.Body.String())
+	csrf := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(dashboardResp.Body.String())
 	if dashboardResp.Code != http.StatusOK || len(csrf) != 2 {
 		t.Fatalf("public manager dashboard unavailable: status=%d", dashboardResp.Code)
 	}
