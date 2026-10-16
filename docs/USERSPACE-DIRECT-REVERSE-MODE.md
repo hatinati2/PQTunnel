@@ -78,14 +78,17 @@ The first implementation should prioritize strong authentication, confidentialit
 
 Run only in disposable CI network namespaces or isolated VMs. Do not run these tests on either production VPS.
 
-- Start a fake Gateway and Dialer-side TCP target inside namespaces.
-- Verify a SOCKS5/HTTP CONNECT Direct connection traverses the TLS transport and returns the expected payload.
-- Verify a Gateway reverse listener reaches only its configured Dialer target.
-- Run Direct and Reverse concurrently over the same transport.
-- Verify disallowed targets/ports, unauthenticated peers, and non-loopback proxy binds are rejected.
-- Seed namespaces with representative unrelated host-firewall chains, mangle rules, and raw/NOTRACK rules. Confirm the proxy mode never changes the seeded rules or routing state.
-- Compare snapshots before/after tests for routes, sysctls, and firewall rules; ignore only packet counters.
-- Inject failures during connect, stream open, data transfer, and shutdown; assert deterministic cleanup without touching unrelated resources.
+The automated lab is `scripts/test-proxy-netns.sh`, wired into CI on Ubuntu 24.04 and 26.04. It creates two temporary network namespaces connected only by a veth pair, generates a disposable CA and role certificates, and gives the Gateway a synthetic public test address that is routed to loopback inside that namespace. Neither namespace has a default route to the Internet.
+
+The current lab verifies:
+
+- The actual proxy binary completes TLS 1.3 mutual authentication using the strict `X25519MLKEM768` group.
+- Twelve Direct SOCKS5 TCP streams and twelve Reverse TCP streams can transfer data concurrently over one authenticated transport.
+- Unlisted Direct destination ports and reserved/private destination addresses are rejected.
+- Active Direct and Reverse flows close when the isolated Gateway transport is stopped; the still-running Dialer reconnects when the Gateway comes back.
+- Interface/address, route, policy-rule, selected sysctl, nftables, iptables and ip6tables snapshots are unchanged inside both namespaces. Host routes, rules, selected sysctls and firewall configuration are captured before setup and compared after cleanup. Transient DAD flags, packet counters and save-file timestamps are normalized so the check tests configuration rather than unrelated runtime counters.
+
+Separate generated-certificate Go tests also assert rejection of a wrong client identity and a wrong Gateway DNS SAN. The lab does not use provider networking, does not prove reachability through a production firewall, and must not be run on the two production VPSs. It intentionally does not claim HTTP CONNECT or UDP support.
 
 ### Phase C — review gates
 
@@ -103,7 +106,7 @@ The draft branch now contains an initial implementation of the user-space TCP pr
 - `internal/proxymux/proxy.go`: loopback-only SOCKS5 TCP CONNECT for Direct, explicit Reverse TCP listeners with named fixed targets, target-port allowlisting, and rejection of private/reserved IP ranges for Direct outbound targets.
 - `cmd/pqtunnel-proxy/main.go`: explicit `gateway` and `dialer` roles using PQTunnel's strict TLS 1.3/mTLS configuration.
 
-CI tests exercise the frame codec, concurrent logical Direct/Reverse streams, the SOCKS5 Direct flow, the Reverse listener flow, stream limits, and bad configuration paths. These tests use local sockets and in-memory/net.Pipe peers; they are not proof of reachability through either production host's firewall or a provider firewall.
+CI tests cover the frame codec, TLS 1.3/mTLS integration with generated certificates, exact peer identity/SAN rejection, simultaneous Direct and Reverse traffic, stream limits and bad configuration. The additional `scripts/test-proxy-netns.sh` lab runs the actual proxy binaries in separate Gateway/Dialer network namespaces, stresses 12 streams per direction, rejects disallowed destinations, drops active flows during a Gateway restart, checks Dialer reconnection, and snapshots routes/rules/selected sysctls/firewall rules before and after. Passing this lab is evidence about the proxy in a disposable namespace, not proof of reachability through either production host's firewall or a provider firewall.
 
 ### Configuration model (illustrative only)
 
@@ -139,13 +142,11 @@ The Gateway listener name and Dialer target name must match exactly. Replace eve
 
 ### Remaining release gates
 
-- Add an end-to-end TLS integration test using generated test certificates and verify exact peer identity/SAN behavior, reconnect cleanup and concurrent streams over TLS, not just over a memory pipe.
-- Test address policy and stream cancellation/backpressure under race and failure injection; compare process/resource cleanup before and after.
-- Verify that both directions can be used simultaneously under a single mTLS session across reconnects, with mismatched mapping names and unauthorized peers rejected.
+- Extend adversarial stream tests for half-close edge cases, queue saturation, open cancellation, repeated session replacement and cleanup under `go test -race`.
+- Add failure injection for target DNS changes, dial failures, malformed authenticated frames and peer shutdown at each stage of stream open/relay.
 - Decide and document whether HTTP CONNECT support is needed; the first implementation supports SOCKS5 TCP CONNECT only.
 - UDP forwarding, SOCKS5 UDP ASSOCIATE and transparent system-wide L3 routing are not implemented by this proxy mode.
-- Run the listener/reverse-target setup only in disposable namespaces or isolated VMs before any production rollout.
-- Add an installer/systemd unit only after the protocol and end-to-end tests pass. The current draft is not integrated into the production bootstrap installer.
+- Do not introduce an installer/systemd unit until protocol/security tests are complete and a separate operator-approved deployment plan identifies a listener already reachable under existing firewall/provider policy.
 
 ## Current decision
 

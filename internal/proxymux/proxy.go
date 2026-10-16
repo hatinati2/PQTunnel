@@ -37,12 +37,19 @@ var blockedDirectPrefixes = mustPrefixes([]string{
 	"240.0.0.0/4",
 	"::/128",
 	"::1/128",
+	// RFC 6052 NAT64 embeds IPv4 addresses in IPv6; block the whole well-known
+	// prefix so a private IPv4 target cannot be reached through a translator.
+	"64:ff9b::/96",
 	"64:ff9b:1::/48",
 	"100::/64",
+	"100:0:0:1::/64",
 	"2001::/23",
 	"2001:db8::/32",
 	"2002::/16",
+	"3ffe::/16",
+	"3fff::/20",
 	"fc00::/7",
+	"fec0::/10",
 	"fe80::/10",
 	"ff00::/8",
 })
