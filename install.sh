@@ -1,15 +1,30 @@
 #!/usr/bin/env bash
-# PQTunnel one-line entry point. Preflight is read-only; manager setup is automated.
+# PQTunnel one-line entry point. Preflight is read-only; manager setup can print a new token once.
 set -Eeuo pipefail
 
-VERSION="v0.3.0-rc3"
+VERSION="v0.3.0-rc4"
 REPO="hatinati2/PQTunnel"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
 RELEASE_BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 TMP_DIR=""
+TOKEN=""
+TOKEN_GENERATED=0
 
 fail() { printf 'PQTunnel installer: %s\n' "$*" >&2; exit 1; }
-cleanup() { [[ -z "$TMP_DIR" ]] || rm -rf -- "$TMP_DIR"; }
+cleanup() {
+  local status=$?
+  if (( TOKEN_GENERATED )); then
+    if (( status == 0 )); then
+      printf '\nPQTunnel manager installed and started. Save this newly generated token now; it is shown only once:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$TOKEN"
+      printf 'Keep it private. It grants access to the management panel.\n'
+    else
+      printf '\nPQTunnel setup did not finish successfully. A token was generated and saved; keep it for recovery and do not share it:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$TOKEN" >&2
+    fi
+    unset TOKEN
+  fi
+  [[ -z "$TMP_DIR" ]] || rm -rf -- "$TMP_DIR" || status=1
+  return "$status"
+}
 trap cleanup EXIT
 
 need() { command -v "$1" >/dev/null 2>&1 || fail "required command '$1' is missing; no changes made."; }
@@ -19,7 +34,7 @@ prompt() {
 }
 usage() {
   cat <<'USAGE'
-PQTunnel one-line installer (experimental release v0.3.0-rc3)
+PQTunnel one-line installer (experimental release v0.3.0-rc4)
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
@@ -27,15 +42,15 @@ Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | bash -s -- --preflight dialer
 
 Modes:
-  --manager gateway|dialer   Download and checksum-verify the Linux release bundle,
-                             install the manager, generate a strong token, configure it,
-                             validate the unit, then enable and start the local-only manager.
+  --manager gateway|dialer   Download and checksum-verify the v0.3.0-rc4 Linux bundle,
+                             install the manager, generate a strong token when needed,
+                             configure it, validate the unit, then enable and start it.
+                             A newly generated token is displayed once after setup.
   --preflight gateway|dialer|both
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
 
-Manager setup does NOT configure or start the tunnel and does not change routes, firewall,
-NAT, or forwarding. The web manager defaults to 127.0.0.1:9091. Public-IP access is optional and requires a trusted TLS certificate with the public IP in its IP SAN; plaintext public HTTP is rejected.
+This one-line manager mode installs and starts the web manager only. It does NOT install/configure/start the tunnel endpoint and does not change routes, firewall, NAT, or forwarding. Tunnel setup still requires reviewed PKI and role-specific config on both peers. The web manager defaults to 127.0.0.1:9091; use SSH forwarding for remote access. Public-IP access is not enabled by this installer.
 USAGE
 }
 
@@ -53,7 +68,7 @@ done
 if [[ -z "$MODE" ]]; then
   printf '\nPQTunnel %s — one-line setup\n' "$VERSION"
   printf '  1) Read-only preflight (no changes)\n'
-  printf '  2) Install, securely configure, and start local web manager\n'
+  printf '  2) Install and start local web manager (show a new token once)\n'
   prompt 'Choose [1-2]: ' CHOICE
   case "$CHOICE" in
     1) MODE=preflight; ROLE=both ;;
@@ -103,12 +118,14 @@ case "$MODE" in
     fi
 
     [[ -f "$CONFIG" ]] || fail "manager config not found at $CONFIG; service left stopped."
-    # If no token exists, generate a fresh 256-bit secret locally; never print it.
+    # Generate a fresh 256-bit secret only when no token is already configured.
+    # The EXIT trap prints a new token once, including if a later setup step fails.
     if ! grep -q '^PQTUNNEL_MANAGER_TOKEN=.' "$CONFIG"; then
       TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
-      [[ "${#TOKEN}" -eq 64 ]] || fail 'could not generate a secure manager token; service left stopped.'
+      [[ "$TOKEN" =~ ^[0-9a-f]{64}$ ]] || fail 'could not generate a secure manager token; service left stopped.'
       sed -i "s/^PQTUNNEL_MANAGER_TOKEN=$/PQTUNNEL_MANAGER_TOKEN=$TOKEN/" "$CONFIG"
-      unset TOKEN
+      grep -Fxq "PQTUNNEL_MANAGER_TOKEN=$TOKEN" "$CONFIG" || fail 'token could not be saved; service left stopped.'
+      TOKEN_GENERATED=1
     fi
     chown root:root "$CONFIG"
     chmod 0600 "$CONFIG"
@@ -120,8 +137,7 @@ case "$MODE" in
     systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service
     systemctl enable --now pqtunnel-manager
     systemctl --no-pager --full status pqtunnel-manager
-    printf '\nPQTunnel manager installed and started. Its token is stored root-only in %s.\n' "$CONFIG"
-    printf 'The token was not printed. Default access is loopback-only. Public HTTP is disabled by default and can be enabled only by setting PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=true plus a public IP allowlist; credentials are unencrypted. Prefer HTTPS or SSH.\n'
-    printf 'No tunnel service, route, firewall, NAT, or forwarding settings were changed.\n'
+    printf '\nManager token configuration is stored root-only in %s. Default access is loopback-only; use SSH forwarding for remote access.\n' "$CONFIG"
+    printf 'This mode does not install or start the tunnel endpoint, and does not change routes, firewall, NAT, or forwarding.\n'
     ;;
 esac
