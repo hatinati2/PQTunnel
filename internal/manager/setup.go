@@ -157,6 +157,12 @@ func (m *Controller) StartSiteToSiteSetup(ctx context.Context, req adminapi.Site
 	if err != nil {
 		return errors.New("could not inspect setup worker state")
 	}
+	if stateData, stateErr := os.ReadFile(setupStatePath); stateErr == nil {
+		switch strings.TrimSpace(string(stateData)) {
+		case "queued", "running", "awaiting-confirmation":
+			return errors.New("a site-to-site setup is already queued or running")
+		}
+	}
 	if strings.TrimSpace(active) == "active" || strings.TrimSpace(active) == "activating" {
 		return errors.New("a site-to-site setup is already running")
 	}
