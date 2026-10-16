@@ -440,3 +440,116 @@ func TestSessionReceiveQueueSaturationReapsOnlyAffectedStream(t *testing.T) {
 		t.Fatal("queue saturation terminated the shared session instead of resetting one stream")
 	}
 }
+
+
+// Closing the transport while a remote OPEN handler is blocked must cancel
+// the handler and release the local OpenContext caller without waiting for its
+// open timeout.
+func TestSessionShutdownCancelsPendingRemoteOpen(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	rightHandler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}
+	left, right := newSessionPairWithHandlers(t, 4, nil, rightHandler)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := left.OpenContext(context.Background(), TypeOpenDirect, []byte("shutdown-pending-open"))
+		result <- err
+	}()
+	waitForSignal(t, started, "blocked remote open handler")
+
+	if err := left.Close(); err != nil {
+		t.Fatalf("close session during pending open: %v", err)
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("OpenContext unexpectedly succeeded after session shutdown")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenContext remained blocked after session shutdown")
+	}
+	waitForSignal(t, cancelled, "remote handler cancellation after session shutdown")
+	deadline := time.Now().Add(2 * time.Second)
+	for !right.isDone() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !right.isDone() {
+		t.Fatal("peer session did not observe transport shutdown")
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+}
+
+// Repeated transport shutdown during concurrent stream opens must not strand
+// callers or leave logical streams registered after the session is gone.
+func TestSessionShutdownDuringConcurrentOpensReapsAllStreams(t *testing.T) {
+	const opens = 32
+	started := make(chan struct{}, opens)
+	cancelled := make(chan struct{}, opens)
+	rightHandler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		cancelled <- struct{}{}
+		return nil, ctx.Err()
+	}
+	left, right := newSessionPairWithHandlers(t, opens, nil, rightHandler)
+
+	start := make(chan struct{})
+	results := make(chan error, opens)
+	var wg sync.WaitGroup
+	wg.Add(opens)
+	for i := 0; i < opens; i++ {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_, err := left.OpenContext(ctx, TypeOpenDirect, []byte("shutdown-race"))
+			results <- err
+		}(i)
+	}
+	close(start)
+
+	for i := 0; i < opens; i++ {
+		select {
+		case <-started:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("only %d remote handlers started before timeout", i)
+		}
+	}
+	if err := left.Close(); err != nil {
+		t.Fatalf("close session during concurrent opens: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("concurrent OpenContext callers were stranded by session shutdown")
+	}
+	close(results)
+	for err := range results {
+		if err == nil {
+			t.Fatal("OpenContext unexpectedly succeeded while session was shutting down")
+		}
+	}
+	for i := 0; i < opens; i++ {
+		select {
+		case <-cancelled:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d remote handlers observed cancellation", i)
+		}
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+}
