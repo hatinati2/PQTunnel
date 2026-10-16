@@ -63,8 +63,8 @@ chmod 0700 "$WORK"
 cleanup() { rm -rf -- "$WORK"; }
 trap cleanup EXIT
 
-mkdir -m 0700 "$WORK/ca" "$WORK/output" \
-  "$WORK/output/ca-offline" "$WORK/output/gateway-pki" "$WORK/output/dialer-pki"
+mkdir -m 0700 "$WORK/ca" "$WORK/output"
+mkdir -m 0700 "$WORK/output/ca-offline" "$WORK/output/gateway-pki" "$WORK/output/dialer-pki"
 
 BIN="$WORK/pqtunnel-pki"
 (
