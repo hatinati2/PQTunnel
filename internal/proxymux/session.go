@@ -20,11 +20,6 @@ const (
 	streamReadQueueFrames    = 16
 )
 
-const (
-	closeFlagWrite byte = 1
-	closeFlagReset byte = 2
-)
-
 // OpenHandler validates an incoming logical stream request and returns the
 // already-connected TCP target. It must enforce role-specific target allowlists.
 // The returned connection is relayed to the stream by Session.
@@ -63,6 +58,8 @@ type Session struct {
 	outbound chan Frame
 	mu sync.Mutex
 	streams map[uint32]*Stream
+	closedIDs map[uint32]struct{}
+	closedOrder []uint32
 
 	errMu sync.RWMutex
 	err error
@@ -97,7 +94,7 @@ func NewSession(parent context.Context, conn net.Conn, opts SessionOptions) (*Se
 		initiator: opts.Initiator, maxStreams: opts.MaxStreams,
 		openTimeout: opts.OpenTimeout, writeTimeout: opts.WriteTimeout,
 		keepAliveInterval: opts.KeepAliveInterval, onOpen: opts.OnOpen,
-		outbound: make(chan Frame, 256), streams: make(map[uint32]*Stream),
+		outbound: make(chan Frame, 256), streams: make(map[uint32]*Stream), closedIDs: make(map[uint32]struct{}),
 	}
 	if opts.Initiator {
 		s.nextID = 1
@@ -354,8 +351,14 @@ func (s *Session) handleFrame(frame Frame) error {
 		return s.handleRemoteOpen(frame)
 	case TypeOpenOK:
 		st, ok := s.getStream(frame.StreamID)
-		if !ok || !st.localOpen {
+		if !ok {
+			if s.localOwnsID(frame.StreamID) && s.wasClosed(frame.StreamID) {
+				return s.sendFrame(Frame{Type: TypeClose, StreamID: frame.StreamID, Payload: []byte{closeFlagReset}}, time.Now().Add(s.writeTimeout), nil)
+			}
 			return fmt.Errorf("proxymux: unexpected OPEN_OK for stream %d", frame.StreamID)
+		}
+		if !st.localOpen {
+			return fmt.Errorf("proxymux: OPEN_OK targets a remotely opened stream %d", frame.StreamID)
 		}
 		st.mu.Lock()
 		if st.reset {
@@ -375,16 +378,30 @@ func (s *Session) handleFrame(frame Frame) error {
 		return nil
 	case TypeOpenError:
 		st, ok := s.getStream(frame.StreamID)
-		if !ok || !st.localOpen {
+		if !ok {
+			if s.localOwnsID(frame.StreamID) && s.wasClosed(frame.StreamID) {
+				return nil
+			}
 			return fmt.Errorf("proxymux: unexpected OPEN_ERROR for stream %d", frame.StreamID)
 		}
-		st.resolveOpen(errors.New("proxymux: remote rejected stream open"))
-		st.endRead(errors.New("proxymux: remote rejected stream open"))
+		if !st.localOpen {
+			return fmt.Errorf("proxymux: OPEN_ERROR targets a remotely opened stream %d", frame.StreamID)
+		}
+		openErr := errors.New("proxymux: remote rejected stream open")
+		st.mu.Lock()
+		st.reset = true
+		st.writeClosed = true
+		st.mu.Unlock()
+		st.resolveOpen(openErr)
+		st.endRead(openErr)
 		s.removeStream(st)
 		return nil
 	case TypeData:
 		st, ok := s.getStream(frame.StreamID)
 		if !ok {
+			if s.wasClosed(frame.StreamID) {
+				return nil
+			}
 			return fmt.Errorf("proxymux: DATA for unknown stream %d", frame.StreamID)
 		}
 		if err := st.pushData(frame.Payload); err != nil {
@@ -394,7 +411,10 @@ func (s *Session) handleFrame(frame Frame) error {
 	case TypeClose:
 		st, ok := s.getStream(frame.StreamID)
 		if !ok {
-			return nil // A close can race with local cleanup.
+			if s.wasClosed(frame.StreamID) {
+				return nil
+			}
+			return fmt.Errorf("proxymux: CLOSE for unknown stream %d", frame.StreamID)
 		}
 		if frame.Payload[0] == closeFlagReset {
 			s.handleRemoteReset(st)
@@ -424,6 +444,10 @@ func (s *Session) handleRemoteOpen(frame Frame) error {
 		s.mu.Unlock()
 		return fmt.Errorf("proxymux: duplicate remote stream ID %d", frame.StreamID)
 	}
+	if _, closed := s.closedIDs[frame.StreamID]; closed {
+		s.mu.Unlock()
+		return fmt.Errorf("proxymux: reused remote stream ID %d", frame.StreamID)
+	}
 	if len(s.streams) >= s.maxStreams {
 		s.mu.Unlock()
 		_ = s.sendFrame(Frame{Type: TypeOpenError, StreamID: frame.StreamID, Payload: []byte("busy")}, time.Now().Add(s.writeTimeout), nil)
@@ -448,17 +472,26 @@ func (s *Session) runRemoteOpen(st *Stream, frameType Type, payload []byte) {
 	ctx, cancel := context.WithTimeout(s.ctx, s.openTimeout)
 	target, err := s.onOpen(ctx, frameType, payload)
 	cancel()
+	if err == nil && target == nil {
+		err = errors.New("proxymux: open handler returned a nil target")
+	}
 	if err != nil {
 		_ = s.sendFrame(Frame{Type: TypeOpenError, StreamID: st.id, Payload: []byte("open failed")}, time.Now().Add(s.writeTimeout), nil)
+		st.mu.Lock()
+		st.reset = true
+		st.writeClosed = true
+		st.mu.Unlock()
 		st.endRead(err)
 		s.removeStream(st)
 		return
 	}
-	if s.isDone() || st.isReset() {
+	st.mu.Lock()
+	if s.isDone() || st.reset {
+		st.mu.Unlock()
 		_ = target.Close()
 		return
 	}
-	st.mu.Lock()
+	st.target = target
 	st.ready = true
 	st.openPending = false
 	st.mu.Unlock()
@@ -475,7 +508,11 @@ func (s *Session) handleRemoteReset(st *Stream) {
 	alreadyReset := st.reset
 	st.reset = true
 	st.writeClosed = true
+	target := st.target
 	st.mu.Unlock()
+	if target != nil {
+		_ = target.Close()
+	}
 	st.endRead(net.ErrClosed)
 	s.removeStream(st)
 	if !alreadyReset {
@@ -494,8 +531,28 @@ func (s *Session) removeStream(st *Stream) {
 	s.mu.Lock()
 	if current, ok := s.streams[st.id]; ok && current == st {
 		delete(s.streams, st.id)
+		if _, exists := s.closedIDs[st.id]; !exists {
+			s.closedIDs[st.id] = struct{}{}
+			s.closedOrder = append(s.closedOrder, st.id)
+			if len(s.closedOrder) > 4096 {
+				old := s.closedOrder[0]
+				s.closedOrder = s.closedOrder[1:]
+				delete(s.closedIDs, old)
+			}
+		}
 	}
 	s.mu.Unlock()
+}
+
+func (s *Session) wasClosed(id uint32) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.closedIDs[id]
+	return ok
+}
+
+func (s *Session) localOwnsID(id uint32) bool {
+	return (id%2 == 1) == s.initiator
 }
 
 func (s *Session) shutdown(err error) {
@@ -533,6 +590,7 @@ type Stream struct {
 
 	openResult chan error
 	readCh chan []byte
+	target net.Conn
 	readCloseOnce sync.Once
 	readMu sync.Mutex
 	writeMu sync.Mutex
@@ -669,8 +727,13 @@ func (st *Stream) abort(err error) {
 	st.reset = true
 	st.writeClosed = true
 	deadline := st.writeDeadline
+	target := st.target
 	st.mu.Unlock()
+	if target != nil {
+		_ = target.Close()
+	}
 	st.endRead(err)
+	st.session.removeStream(st)
 	if !alreadyReset && !st.session.isDone() {
 		_ = st.session.sendFrame(Frame{Type: TypeClose, StreamID: st.id, Payload: []byte{closeFlagReset}}, deadline, nil)
 	}
@@ -707,7 +770,11 @@ func (st *Stream) markSessionEnd(err error) {
 	st.mu.Lock()
 	st.reset = true
 	st.writeClosed = true
+	target := st.target
 	st.mu.Unlock()
+	if target != nil {
+		_ = target.Close()
+	}
 	st.endRead(err)
 	st.resolveOpen(err)
 }
