@@ -40,10 +40,13 @@ jobs:
           go build -o "$RUNNER_TEMP/pqtunnel-bin/pqtunneld" ./cmd/pqtunneld
           go build -o "$RUNNER_TEMP/pqtunnel-bin/pqtunnel-client" ./cmd/pqtunnel-client
           go build -o "$RUNNER_TEMP/pqtunnel-bin/pqtunnel-pki" ./cmd/pqtunnel-pki
+          go build -o "$RUNNER_TEMP/pqtunnel-bin/pqtunnel-proxy" ./cmd/pqtunnel-proxy
       - name: Install namespace test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y iproute2 iputils-ping nftables tcpdump
+          sudo apt-get install -y iproute2 iputils-ping nftables tcpdump iptables openssl python3
+      - name: Run isolated Direct/Reverse TCP proxy lab
+        run: sudo env PQTUNNEL_PROXY_BIN="$RUNNER_TEMP/pqtunnel-bin/pqtunnel-proxy" bash scripts/test-proxy-netns.sh
       - name: Run isolated dual-stack site-to-site TUN test
         run: sudo env PQTUNNEL_BIN_DIR="$RUNNER_TEMP/pqtunnel-bin" bash scripts/test-site-to-site-netns.sh
       - name: Test selective TCP/UDP port forwarding over dual-stack TUN
@@ -90,7 +93,7 @@ jobs:
             read -r goos goarch <<< "$target"
             pkg="PQTunnel-${GITHUB_REF_NAME}-${goos}-${goarch}"
             mkdir -p "dist/$pkg"
-            for cmd in pqtunneld pqtunnel-client pqtunnel-pki; do
+            for cmd in pqtunneld pqtunnel-client pqtunnel-pki pqtunnel-proxy; do
               ext=''
               if [[ "$goos" == windows ]]; then ext='.exe'; fi
               GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags='-s -w' -o "dist/$pkg/${cmd}${ext}" "./cmd/$cmd"
