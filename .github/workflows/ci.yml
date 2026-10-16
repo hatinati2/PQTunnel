@@ -117,7 +117,9 @@ jobs:
       - name: Build proxy binary for the isolated lab
         run: go build -trimpath -o "$RUNNER_TEMP/pqtunnel-proxy" ./cmd/pqtunnel-proxy
       - name: Fuzz the bounded wire frame decoder
-        run: go test -run='^
+        run: go test -run=^$ -fuzz=FuzzReadFrame -fuzztime=3s ./internal/proxymux
+      - name: Test Direct, Reverse, reconnect and network-state invariance
+        run: sudo env PQTUNNEL_PROXY_BIN="$RUNNER_TEMP/pqtunnel-proxy" bash scripts/test-proxy-netns.sh
 
   site-to-site-netns-integration:
     name: netns site-to-site (${{ matrix.os }})
