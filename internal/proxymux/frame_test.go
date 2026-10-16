@@ -18,6 +18,7 @@ func TestFrameRoundTrip(t *testing.T) {
 		{Type: TypeClose, StreamID: 2, Payload: []byte{closeFlagWrite}},
 		{Type: TypePing, Payload: []byte("nonce123")},
 		{Type: TypePong, Payload: []byte("nonce123")},
+		{Type: TypeWindowUpdate, StreamID: 1, Payload: []byte{0, 0, 0, 1}},
 	}
 
 	for _, want := range tests {
@@ -56,7 +57,7 @@ func TestReadFrameRejectsInvalidHeadersBeforePayloadRead(t *testing.T) {
 		name string
 		wire []byte
 	}{
-		{name: "unsupported version", wire: rawFrame(2, byte(TypePing), 0, 0, 0)},
+		{name: "unsupported version", wire: rawFrame(Version+1, byte(TypePing), 0, 0, 0)},
 		{name: "reserved bits", wire: rawFrame(Version, byte(TypePing), 0, 0, 1)},
 		{name: "unknown type", wire: rawFrame(Version, 99, 0, 0, 0)},
 		{name: "stream frame zero ID", wire: rawFrame(Version, byte(TypeData), 0, 0, 0)},
@@ -67,6 +68,8 @@ func TestReadFrameRejectsInvalidHeadersBeforePayloadRead(t *testing.T) {
 		{name: "empty OPEN_DIRECT", wire: rawFrame(Version, byte(TypeOpenDirect), 1, 0, 0)},
 		{name: "OPEN_OK payload", wire: rawFrame(Version, byte(TypeOpenOK), 1, 1, 0)},
 		{name: "wrong keepalive length", wire: rawFrame(Version, byte(TypePing), 0, 7, 0)},
+		{name: "zero WINDOW_UPDATE stream ID", wire: rawFrame(Version, byte(TypeWindowUpdate), 0, 4, 0)},
+		{name: "wrong WINDOW_UPDATE length", wire: rawFrame(Version, byte(TypeWindowUpdate), 1, 3, 0)},
 		{name: "wrong CLOSE length", wire: rawFrame(Version, byte(TypeClose), 1, 0, 0)},
 	}
 	for _, tt := range tests {
@@ -82,6 +85,18 @@ func TestReadFrameRejectsInvalidHeadersBeforePayloadRead(t *testing.T) {
 	}
 }
 
+
+func TestWindowUpdateRequiresBoundedPositiveCredit(t *testing.T) {
+	for _, credit := range []uint32{0, uint32(streamReadQueueFrames + 1)} {
+		var payload [4]byte
+		binary.BigEndian.PutUint32(payload[:], credit)
+		var wire bytes.Buffer
+		err := WriteFrame(&wire, Frame{Type: TypeWindowUpdate, StreamID: 1, Payload: payload[:]})
+		if err == nil {
+			t.Fatalf("WINDOW_UPDATE credit %d was unexpectedly accepted", credit)
+		}
+	}
+}
 
 func TestReadFrameRejectsUnknownCloseFlag(t *testing.T) {
 	wire := rawFrame(Version, byte(TypeClose), 1, 1, 0)
@@ -117,6 +132,7 @@ func TestWriteFrameRejectsInvalidFrame(t *testing.T) {
 		{Type: TypeOpenOK, StreamID: 1, Payload: []byte("bad")},
 		{Type: TypeOpenDirect, StreamID: 1},
 		{Type: TypeOpenDirect, StreamID: 1, Payload: bytes.Repeat([]byte("x"), maxControlSize+1)},
+		{Type: TypeWindowUpdate, StreamID: 1},
 		{Type: TypeData, StreamID: 1, Payload: bytes.Repeat([]byte("x"), maxDataSize+1)},
 	}
 	for _, frame := range tests {
