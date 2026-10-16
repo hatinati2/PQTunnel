@@ -142,6 +142,20 @@ func (s *Session) Close() error {
 // Open requests one new logical stream. The remote side must accept the
 // requested operation and return OPEN_OK before the stream is usable.
 func (s *Session) Open(frameType Type, payload []byte) (*Stream, error) {
+	return s.OpenContext(context.Background(), frameType, payload)
+}
+
+// OpenContext opens a logical stream and observes the caller's context while
+// waiting for capacity, enqueueing OPEN, and awaiting OPEN_OK.
+func (s *Session) OpenContext(ctx context.Context, frameType Type, payload []byte) (*Stream, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	if frameType != TypeOpenDirect && frameType != TypeOpenReverse {
 		return nil, errors.New("proxymux: Open requires OPEN_DIRECT or OPEN_REVERSE")
 	}
@@ -195,6 +209,9 @@ func (s *Session) Open(frameType Type, payload []byte) (*Stream, error) {
 		err := os.ErrDeadlineExceeded
 		st.abort(err)
 		return nil, fmt.Errorf("proxymux: open request timed out: %w", err)
+	case <-ctx.Done():
+		st.abort(ctx.Err())
+		return nil, ctx.Err()
 	case <-s.done:
 		return nil, s.sessionError()
 	}
