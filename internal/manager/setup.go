@@ -77,6 +77,9 @@ func validSetupHost(host string) bool {
 	if ip := netParseIPv4(host); ip {
 		return true
 	}
+	if strings.Count(host, ".") == 3 && strings.Trim(host, "0123456789.") == "" {
+		return false
+	}
 	host = strings.TrimSuffix(host, ".")
 	if host == "" {
 		return false
