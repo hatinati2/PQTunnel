@@ -523,7 +523,11 @@ func (s *Session) runRemoteOpen(st *Stream, frameType Type, payload []byte) {
 	st.mu.Unlock()
 
 	target, err := s.onOpen(ctx, frameType, payload)
+	handlerContextErr := ctx.Err()
 	cancel()
+	if err == nil && handlerContextErr != nil {
+		err = handlerContextErr
+	}
 
 	st.mu.Lock()
 	st.openCancel = nil
