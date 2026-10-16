@@ -38,14 +38,14 @@ class OneLineInstallerTests(unittest.TestCase):
     def test_manager_install_does_not_claim_to_configure_the_tunnel(self) -> None:
         self.assertIn("does NOT install/configure/start the tunnel endpoint", self.script)
         self.assertIn("does not change routes, firewall, NAT, or forwarding", self.script)
-        self.assertIn("this command installs the **web manager only**" if False else "web manager only", self.readme_en)
+        self.assertIn("web manager only", self.readme_en)
         self.assertIn("فقط پنل مدیریت وب", self.readme_fa)
 
     def test_manager_starts_only_after_unit_validation(self) -> None:
         validate = self.script.index("systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service")
         start = self.script.index("systemctl enable --now pqtunnel-manager")
         self.assertLess(validate, start)
-        self.assertIn("Default access", self.script) if "Default access" in self.script else self.assertIn("127.0.0.1:9091", self.script)
+        self.assertIn("127.0.0.1:9091", self.script)
 
 
 if __name__ == "__main__":
