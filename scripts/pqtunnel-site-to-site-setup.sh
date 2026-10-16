@@ -67,6 +67,7 @@ import ipaddress,re,sys
 v=sys.argv[1]
 try: raise SystemExit(0 if ipaddress.ip_address(v).version==4 else 1)
 except ValueError: pass
+if re.fullmatch(r'[0-9.]+', v): raise SystemExit(1)
 if not v or len(v)>253 or any(not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?',x) for x in v.rstrip('.').split('.')): raise SystemExit(1)
 PY
 }
