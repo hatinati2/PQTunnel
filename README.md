@@ -77,19 +77,19 @@ The installer verifies the v0.3.0-rc5 Linux archive against `SHA256SUMS`, suppor
 
 For an existing manager from an older release, first upgrade it on the **Iran/Dialer VPS** after the matching wizard release is published:
 
-\`\`\`sh
+```sh
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager-upgrade dialer
-\`\`\`
+```
 
-The upgrader verifies the release archive, makes a root-only backup under \`/var/lib/pqtunnel-manager/backups\`, and preserves the existing role/config. If the old listener was public or allowed insecure HTTP, it changes the listener to \`127.0.0.1:9091\`, rotates its token, and prints that new token once. Save it before continuing.
+The upgrader verifies the release archive, makes a root-only backup under `/var/lib/pqtunnel-manager/backups`, and preserves the existing role/config. If the old listener was public or allowed insecure HTTP, it changes the listener to `127.0.0.1:9091`, rotates its token, and prints that new token once. Save it before continuing.
 
 From your admin computer, open an SSH forward to the Iran VPS:
 
-\`\`\`sh
+```sh
 ssh -N -L 9091:127.0.0.1:9091 root@IRAN_PUBLIC_IP
-\`\`\`
+```
 
-Open \`http://127.0.0.1:9091\`, log in with the Dialer manager token, then select **Setup wizard**. The Iran root account must already have key-based SSH access to \`root@GERMANY_IP\`, and the Gateway's SSH host key must have been independently verified and recorded in root's \`known_hosts\`. The wizard never asks for an SSH password or transfers your SSH private key.
+Open `http://127.0.0.1:9091`, log in with the Dialer manager token, then select **Setup wizard**. The Iran root account must already have key-based SSH access to `root@GERMANY_IP`, and the Gateway's SSH host key must have been independently verified and recorded in root's `known_hosts`. The wizard never asks for an SSH password or transfers your SSH private key.
 
 Submit the endpoint details to start checks. The preparation stage may install missing OS prerequisite packages and may secure an old public manager, but it does not yet install tunnel certificates or apply tunnel routing. If both hosts pass the guards, the panel displays the selected WAN interfaces, TLS port, and selected TCP/UDP destination ports. Review that plan and the provider firewall first, then use the separate **Approve plan and apply network changes** button. Keep console/out-of-band recovery access on both hosts.
 
