@@ -25,6 +25,8 @@ jobs:
           cache: true
       - name: Unit tests
         run: go test -race ./...
+      - name: Test staged site-to-site PKI bundle
+        run: bash scripts/test-prepare-site-to-site-pki.sh
       - name: Static analysis
         run: go vet ./...
       - name: Build Linux binaries
@@ -75,6 +77,8 @@ jobs:
         run: |
           set -euo pipefail
           for script in scripts/*.sh; do bash -n "$script"; done
+      - name: Test client installer completeness
+        run: bash scripts/test-installer-completeness.sh
       - name: Test read-only VPS preflight on disposable runner
         shell: bash
         run: bash scripts/test-site-to-site-preflight.sh
