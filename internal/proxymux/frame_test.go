@@ -15,9 +15,9 @@ func TestFrameRoundTrip(t *testing.T) {
 		{Type: TypeOpenOK, StreamID: 1},
 		{Type: TypeOpenError, StreamID: 2, Payload: []byte("denied")},
 		{Type: TypeData, StreamID: 1, Payload: []byte{0, 1, 2, 3, 255}},
-		{Type: TypeClose, StreamID: 2},
-		{Type: TypePing, Payload: []byte("nonce")},
-		{Type: TypePong, Payload: []byte("nonce")},
+		{Type: TypeClose, StreamID: 2, Payload: []byte{closeFlagWrite}},
+		{Type: TypePing, Payload: []byte("nonce123")},
+		{Type: TypePong, Payload: []byte("nonce123")},
 	}
 
 	for _, want := range tests {
@@ -63,6 +63,11 @@ func TestReadFrameRejectsInvalidHeadersBeforePayloadRead(t *testing.T) {
 		{name: "control frame nonzero ID", wire: rawFrame(Version, byte(TypePing), 9, 0, 0)},
 		{name: "oversized control", wire: rawFrame(Version, byte(TypeOpenDirect), 1, maxControlSize+1, 0)},
 		{name: "oversized data", wire: rawFrame(Version, byte(TypeData), 1, maxDataSize+1, 0)},
+		{name: "empty DATA", wire: rawFrame(Version, byte(TypeData), 1, 0, 0)},
+		{name: "empty OPEN_DIRECT", wire: rawFrame(Version, byte(TypeOpenDirect), 1, 0, 0)},
+		{name: "OPEN_OK payload", wire: rawFrame(Version, byte(TypeOpenOK), 1, 1, 0)},
+		{name: "wrong keepalive length", wire: rawFrame(Version, byte(TypePing), 0, 7, 0)},
+		{name: "wrong CLOSE length", wire: rawFrame(Version, byte(TypeClose), 1, 0, 0)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -74,6 +79,15 @@ func TestReadFrameRejectsInvalidHeadersBeforePayloadRead(t *testing.T) {
 				t.Fatal("ReadFrame() unexpectedly accepted invalid header")
 			}
 		})
+	}
+}
+
+
+func TestReadFrameRejectsUnknownCloseFlag(t *testing.T) {
+	wire := rawFrame(Version, byte(TypeClose), 1, 1, 0)
+	wire[headerSize] = 99
+	if _, err := ReadFrame(bytes.NewReader(wire)); err == nil {
+		t.Fatal("ReadFrame() unexpectedly accepted unknown CLOSE flag")
 	}
 }
 
@@ -97,6 +111,11 @@ func TestWriteFrameRejectsInvalidFrame(t *testing.T) {
 		{Type: Type(99), StreamID: 1},
 		{Type: TypeData, StreamID: 0, Payload: []byte("x")},
 		{Type: TypePing, StreamID: 1},
+		{Type: TypeData, StreamID: 1},
+		{Type: TypeClose, StreamID: 1},
+		{Type: TypePing, Payload: []byte("short")},
+		{Type: TypeOpenOK, StreamID: 1, Payload: []byte("bad")},
+		{Type: TypeOpenDirect, StreamID: 1},
 		{Type: TypeOpenDirect, StreamID: 1, Payload: bytes.Repeat([]byte("x"), maxControlSize+1)},
 		{Type: TypeData, StreamID: 1, Payload: bytes.Repeat([]byte("x"), maxDataSize+1)},
 	}
