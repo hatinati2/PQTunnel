@@ -17,6 +17,11 @@ const (
 	maxControlSize = 4 * 1024
 )
 
+const (
+	closeFlagWrite byte = 1
+	closeFlagReset byte = 2
+)
+
 // Type identifies a logical-stream or control frame.
 type Type byte
 
@@ -88,6 +93,9 @@ func ReadFrame(r io.Reader) (Frame, error) {
 	if _, err := io.ReadFull(r, frame.Payload); err != nil {
 		return Frame{}, fmt.Errorf("proxymux: incomplete frame payload: %w", err)
 	}
+	if err := validatePayload(frame); err != nil {
+		return Frame{}, err
+	}
 	return frame, nil
 }
 
@@ -97,6 +105,9 @@ func ReadFrame(r io.Reader) (Frame, error) {
 func WriteFrame(w io.Writer, frame Frame) error {
 	size := uint32(len(frame.Payload))
 	if err := validateHeader(frame.Type, frame.StreamID, size); err != nil {
+		return err
+	}
+	if err := validatePayload(frame); err != nil {
 		return err
 	}
 	var header [headerSize]byte
@@ -115,24 +126,62 @@ func WriteFrame(w io.Writer, frame Frame) error {
 
 func validateHeader(frameType Type, streamID, size uint32) error {
 	switch frameType {
-	case TypeOpenDirect, TypeOpenReverse, TypeOpenOK, TypeOpenError, TypeData, TypeClose:
+	case TypeOpenDirect, TypeOpenReverse:
 		if streamID == 0 {
 			return fmt.Errorf("proxymux: stream frame requires a nonzero stream ID")
+		}
+		if size == 0 || size > maxControlSize {
+			return fmt.Errorf("proxymux: open request payload must be between 1 and %d bytes", maxControlSize)
+		}
+	case TypeOpenOK:
+		if streamID == 0 {
+			return fmt.Errorf("proxymux: stream frame requires a nonzero stream ID")
+		}
+		if size != 0 {
+			return fmt.Errorf("proxymux: OPEN_OK payload must be empty")
+		}
+	case TypeOpenError:
+		if streamID == 0 {
+			return fmt.Errorf("proxymux: stream frame requires a nonzero stream ID")
+		}
+		if size == 0 || size > maxControlSize {
+			return fmt.Errorf("proxymux: OPEN_ERROR payload must be between 1 and %d bytes", maxControlSize)
+		}
+	case TypeData:
+		if streamID == 0 {
+			return fmt.Errorf("proxymux: stream frame requires a nonzero stream ID")
+		}
+		if size == 0 || size > maxDataSize {
+			return fmt.Errorf("proxymux: DATA payload must be between 1 and %d bytes", maxDataSize)
+		}
+	case TypeClose:
+		if streamID == 0 {
+			return fmt.Errorf("proxymux: stream frame requires a nonzero stream ID")
+		}
+		if size != 1 {
+			return fmt.Errorf("proxymux: CLOSE payload must be exactly one byte")
 		}
 	case TypePing, TypePong:
 		if streamID != 0 {
 			return fmt.Errorf("proxymux: control frame requires stream ID zero")
 		}
+		if size != 8 {
+			return fmt.Errorf("proxymux: keepalive payload must be exactly 8 bytes")
+		}
 	default:
 		return fmt.Errorf("proxymux: unknown frame type %d", frameType)
 	}
+	return nil
+}
 
-	limit := uint32(maxControlSize)
-	if frameType == TypeData {
-		limit = maxDataSize
-	}
-	if size > limit {
-		return fmt.Errorf("proxymux: frame payload exceeds limit (%d > %d)", size, limit)
+func validatePayload(frame Frame) error {
+	if frame.Type == TypeClose {
+		if len(frame.Payload) != 1 {
+			return fmt.Errorf("proxymux: CLOSE payload must be exactly one byte")
+		}
+		if frame.Payload[0] != closeFlagWrite && frame.Payload[0] != closeFlagReset {
+			return fmt.Errorf("proxymux: invalid CLOSE flag %d", frame.Payload[0])
+		}
 	}
 	return nil
 }
