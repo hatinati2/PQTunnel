@@ -30,8 +30,8 @@ jobs:
           go test -race -count=25 \
             -run "^(TestSessionShutdownCancelsPendingRemoteOpen|TestSessionShutdownDuringConcurrentOpensReapsAllStreams|TestSessionLateOpenOKAfterCancellationResetsOnlyStream|TestSessionBrokerOpenRetriesAfterReplacementDuringRemoteOpen|TestSessionDataBeforeOpenOKReleasesOpenCaller|TestSessionCloseBeforeOpenOKReleasesOpenCaller|TestSessionRejectsOpenErrorAfterOpenOK|TestStreamWriteDeadlineWhenOutboundQueueSaturates|TestSessionAllocateIDWraparoundSkipsActiveAndRecentlyClosedIDs|TestSessionClosedIDCacheRemainsBounded|TestSessionRejectsDuplicateOpenOK|TestSessionLateTargetAfterRepeatedOpenTimeoutsIsClosed|TestSessionInboundOpenFloodIsBoundedAndReaped|TestSessionChurnAcrossReconnectsDoesNotLeakResources)$" \
             ./internal/proxymux
-      - name: Report proxymux resource soak metrics
-        run: go test -race -v -count=1 -run "^TestSessionChurnAcrossReconnectsDoesNotLeakResources$" ./internal/proxymux
+      - name: Run extended 100-reconnect resource soak
+        run: go test -race -v -count=1 -run "^TestSessionExtendedChurnAcrossReconnectsDoesNotLeakResources$" ./internal/proxymux
       - name: Test staged site-to-site PKI bundle
         run: bash scripts/test-prepare-site-to-site-pki.sh
       - name: Static analysis
