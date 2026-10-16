@@ -7,20 +7,20 @@ REPO=hatinati2/PQTunnel
 REL="https://github.com/$REPO/releases/download/$VERSION"
 # Fetch the remote half from the same immutable release tag as the checked bundle.
 RAW="https://raw.githubusercontent.com/$REPO/$VERSION"
-WORK="" STAGE="" REMOTE="" SSH_PORT=22 DTOKEN="" GTOKEN="" STOKEN="" TOKENS_SHOWN=0
+WORK="" STAGE="" REMOTE="" SSH_PORT=22 DTOKEN="" GTOKEN="" STOKEN="" TOKENS_SHOWN=0 DIALER_TOKEN_NEW=1 DIALER_TOKEN_WAS_ROTATED=0
 fail(){ printf 'PQTunnel setup: %s\n' "$*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || fail "Missing prerequisite: $1"; }
 SETUP_INPUTS=()
 SETUP_INPUT_INDEX=0
-if [[ -n "\${PQTUNNEL_SETUP_INPUT_FILE:-}" ]]; then
+if [[ -n "${PQTUNNEL_SETUP_INPUT_FILE:-}" ]]; then
  [[ -f "$PQTUNNEL_SETUP_INPUT_FILE" && ! -L "$PQTUNNEL_SETUP_INPUT_FILE" ]] || fail 'Setup input file is missing or unsafe.'
  [[ "$(stat -c '%a' "$PQTUNNEL_SETUP_INPUT_FILE")" == 600 ]] || fail 'Setup input file must be mode 0600.'
  mapfile -t SETUP_INPUTS < "$PQTUNNEL_SETUP_INPUT_FILE"
 fi
 ask(){
- if [[ -n "\${PQTUNNEL_SETUP_INPUT_FILE:-}" ]]; then
-  (( SETUP_INPUT_INDEX < \${#SETUP_INPUTS[@]} )) || fail 'Graphical setup input ended unexpectedly.'
-  printf -v "$2" '%s' "\${SETUP_INPUTS[$SETUP_INPUT_INDEX]}"
+ if [[ -n "${PQTUNNEL_SETUP_INPUT_FILE:-}" ]]; then
+  (( SETUP_INPUT_INDEX < ${#SETUP_INPUTS[@]} )) || fail 'Graphical setup input ended unexpectedly.'
+  printf -v "$2" '%s' "${SETUP_INPUTS[$SETUP_INPUT_INDEX]}"
   SETUP_INPUT_INDEX=$((SETUP_INPUT_INDEX + 1))
  else
   [[ -r /dev/tty ]] || fail 'Run from an interactive terminal.'
@@ -30,10 +30,10 @@ ask(){
 cleanup(){
  local rc=$?
  if [[ -n "$STAGE" && -n "$REMOTE" ]]; then ssh -p "$SSH_PORT" -o BatchMode=yes "$REMOTE" "rm -rf -- '$STAGE'" >/dev/null 2>&1 || true; fi
- if (( ! TOKENS_SHOWN )) && [[ -n "$DTOKEN" || -n "$GTOKEN" || -n "$STOKEN" ]]; then
+ if (( ! TOKENS_SHOWN )) && [[ ( "$DIALER_TOKEN_NEW" == 1 && -n "$DTOKEN" ) || -n "$GTOKEN" || -n "$STOKEN" ]]; then
   printf '\nWARNING: setup stopped part-way. Keep generated secrets private and verify which configs were installed.\n' >&2
-  [[ -z "$DTOKEN" ]] || printf 'Iran/Dialer manager token: %s\n' "$DTOKEN" >&2
-  [[ -z "$GTOKEN" ]] || printf 'Overseas/Gateway manager token: %s\n' "$GTOKEN" >&2
+  [[ -z "$DTOKEN" || "$DIALER_TOKEN_NEW" != 1 ]] || printf 'Iran/Dialer manager token: %s\n' "$DTOKEN" >&2
+  [[ -z "$GTOKEN" ]] || printf 'Germany/Gateway manager token: %s\n' "$GTOKEN" >&2
   [[ -z "$STOKEN" ]] || printf 'Shared speed-test token: %s\n' "$STOKEN" >&2
   TOKENS_SHOWN=1
  fi
@@ -88,7 +88,15 @@ secure_existing_local_manager(){
  (( count==3 )) || fail 'Partial local manager installation found; inspect it before continuing.'
  role="$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' "$config" | head -n1)"
  [[ "$role" == dialer ]] || fail "Existing local manager role is '$role', not 'dialer'; refusing to take over the wrong role."
+ local current_listen current_insecure
+ current_listen="$(sed -n 's/^PQTUNNEL_MANAGER_LISTEN=//p' "$config" | head -n1)"
+ current_insecure="$(sed -n 's/^PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=//p' "$config" | head -n1)"
+ if [[ "$current_insecure" != true && ( "$current_listen" =~ ^127\.0\.0\.1:[0-9]+$ || "$current_listen" =~ ^\[::1\]:[0-9]+$ ) ]]; then
+  printf 'Existing manager is already loopback-only; preserving its token.\n'
+  return 0
+ fi
  DTOKEN="$(openssl rand -hex 32)"
+ DIALER_TOKEN_WAS_ROTATED=1
  [[ "$DTOKEN" =~ ^[0-9a-f]{64}$ ]] || fail 'Could not generate a secure Dialer manager token.'
  backup="$config.backup.$(date +%Y%m%d-%H%M%S)"
  cp -a -- "$config" "$backup"; chown root:root "$backup"; chmod 0600 "$backup"
@@ -127,6 +135,14 @@ main(){
  WORK="$(mktemp -d -t pqtunnel-site-to-site.XXXXXX)"; chmod 0700 "$WORK"
  # Secure any existing public-HTTP panel before SSH checks, package setup, or network preflight.
  secure_existing_local_manager
+ if [[ "${PQTUNNEL_SETUP_PRESERVE_DIALER_MANAGER_TOKEN:-0}" == 1 && "$DIALER_TOKEN_WAS_ROTATED" == 0 && -f /etc/default/pqtunnel-manager ]]; then
+  existing_token="$(sed -n 's/^PQTUNNEL_MANAGER_TOKEN=//p' /etc/default/pqtunnel-manager | head -n1)"
+  if [[ "$existing_token" =~ ^[0-9a-f]{64}$ ]]; then
+   DTOKEN="$existing_token"
+   DIALER_TOKEN_NEW=0
+   printf 'Existing Dialer manager token will be preserved for the graphical session.\n'
+  fi
+ fi
  for c in curl sha256sum tar ssh scp ip nft sysctl pgrep ss sort timeout python3 getent; do need "$c"; done
  printf '\nPQTunnel two-VPS setup %s (EXPERIMENTAL)\n' "$VERSION"
  printf 'Installs Iran/Dialer + Germany/Gateway and both panels. Routes selected destination ports only, not all device traffic.\n'
@@ -252,7 +268,9 @@ ENV
  systemctl enable --now pqtunnel-client; systemctl --no-pager --full status pqtunnel-client
  systemctl enable --now pqtunnel-manager; systemctl restart pqtunnel-manager; systemctl --no-pager --full status pqtunnel-manager
  ssh -p "$SSH_PORT" "$REMOTE" 'systemctl --no-pager is-active pqtunneld && systemctl --no-pager is-active pqtunnel-manager'
- printf '\nSetup finished. Save these tokens privately (one-time display).\nIran/Dialer manager token: %s\nGermany/Gateway manager token: %s\nShared speed-test token: %s\n' "$DTOKEN" "$GTOKEN" "$STOKEN"
+ printf '\nSetup finished. Save newly generated tokens privately (one-time display).\n'
+ if [[ "$DIALER_TOKEN_NEW" == 1 ]]; then printf 'Iran/Dialer manager token: %s\n' "$DTOKEN"; fi
+ printf 'Germany/Gateway manager token: %s\nShared speed-test token: %s\n' "$GTOKEN" "$STOKEN"
  printf '\nPanels are loopback-only. On your admin computer use:\nGermany: ssh -N -L 9091:127.0.0.1:9091 -p %s %s\nIran:    ssh -N -L 9092:127.0.0.1:9091 USER@IRAN_PUBLIC_IP\nReplace USER@IRAN_PUBLIC_IP with your SSH user and public address for the Iran VPS.\nThen open http://127.0.0.1:9091 (Germany) or http://127.0.0.1:9092 (Iran).\n' "$SSH_PORT" "$REMOTE"
  printf 'Via Germany: TCP %s; UDP %s. Other destination ports remain direct. Provider firewall was not changed.\n' "$TCP" "${UDP:-none}"
  ssh -p "$SSH_PORT" "$REMOTE" "rm -rf -- '$STAGE'" || fail 'Setup completed, but remote staging directory cleanup failed.'
