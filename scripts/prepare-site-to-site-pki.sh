@@ -74,7 +74,7 @@ BIN="$WORK/pqtunnel-pki"
 "$BIN" init --server-name "$SERVER_NAME" --out "$WORK/ca"
 "$BIN" issue-client --ip "$CLIENT_IP" --out "$WORK/ca"
 
-CLIENT_STEM="client-\${CLIENT_IP//./_}"
+CLIENT_STEM="client-${CLIENT_IP//./_}"
 CLIENT_CERT="$WORK/ca/$CLIENT_STEM.crt"
 CLIENT_KEY="$WORK/ca/$CLIENT_STEM.key"
 [[ -s "$CLIENT_CERT" && -s "$CLIENT_KEY" ]] || fail 'client certificate issuance did not create expected files.'
