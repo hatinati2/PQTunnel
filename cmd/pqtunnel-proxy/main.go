@@ -157,6 +157,7 @@ func runGateway(ctx context.Context, cfg config, cert tls.Certificate, caPool *x
 
 	broker := proxymux.NewSessionBroker()
 	opened := make([]net.Listener, 0, len(reverseListeners))
+	openedNames := make([]string, 0, len(reverseListeners))
 	for name, address := range reverseListeners {
 		listener, err := proxymux.ListenReverse(address)
 		if err != nil {
@@ -166,11 +167,7 @@ func runGateway(ctx context.Context, cfg config, cert tls.Certificate, caPool *x
 			return fmt.Errorf("bind Reverse listener %q: %w", name, err)
 		}
 		opened = append(opened, listener)
-		go func(mapping string, ln net.Listener) {
-			if serveErr := proxymux.ServeReverseListener(ctx, ln, mapping, broker); serveErr != nil && ctx.Err() == nil {
-				fmt.Fprintf(os.Stderr, "pqtunnel-proxy: Reverse listener %q: %v\n", mapping, serveErr)
-			}
-		}(name, listener)
+		openedNames = append(openedNames, name)
 	}
 	defer func() {
 		for _, listener := range opened {
@@ -188,6 +185,14 @@ func runGateway(ctx context.Context, cfg config, cert tls.Certificate, caPool *x
 	stopListener := context.AfterFunc(ctx, func() { _ = listener.Close() })
 	defer stopListener()
 
+	for i, reverseListener := range opened {
+		mapping := openedNames[i]
+		go func(mapping string, ln net.Listener) {
+			if serveErr := proxymux.ServeReverseListener(ctx, ln, mapping, broker); serveErr != nil && ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "pqtunnel-proxy: Reverse listener %q: %v\n", mapping, serveErr)
+			}
+		}(mapping, reverseListener)
+	}
 	fmt.Fprintf(os.Stderr, "pqtunnel-proxy: Gateway listening at %s; existing firewall policy is not modified\n", cfg.Listen)
 	slots := make(chan struct{}, maxTLSHandshakes)
 	for {
