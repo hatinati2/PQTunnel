@@ -1,0 +1,1703 @@
+package proxymux
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"io"
+	"net"
+	"os"
+	"runtime"
+	"sync"
+	"testing"
+	"time"
+)
+
+type acceptedTarget struct {
+	name string
+	conn net.Conn
+}
+
+func newSessionPairWithHandlers(t *testing.T, maxStreams int, leftHandler, rightHandler OpenHandler) (*Session, *Session) {
+	t.Helper()
+	leftConn, rightConn := net.Pipe()
+	opts := SessionOptions{
+		MaxStreams: maxStreams,
+		OpenTimeout: 2 * time.Second,
+		WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	}
+	leftOpts := opts
+	leftOpts.Initiator = true
+	leftOpts.OnOpen = leftHandler
+	left, err := NewSession(context.Background(), leftConn, leftOpts)
+	if err != nil {
+		_ = leftConn.Close()
+		_ = rightConn.Close()
+		t.Fatalf("NewSession(left): %v", err)
+	}
+	rightOpts := opts
+	rightOpts.Initiator = false
+	rightOpts.OnOpen = rightHandler
+	right, err := NewSession(context.Background(), rightConn, rightOpts)
+	if err != nil {
+		_ = left.Close()
+		_ = rightConn.Close()
+		t.Fatalf("NewSession(right): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = left.Close()
+		_ = right.Close()
+	})
+	return left, right
+}
+
+func newTCPConnPair() (net.Conn, net.Conn, error) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer listener.Close()
+	client, err := net.Dial("tcp4", listener.Addr().String())
+	if err != nil {
+		return nil, nil, err
+	}
+	server, err := listener.Accept()
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, err
+	}
+	return client, server, nil
+}
+
+func waitForSignal(t *testing.T, signal <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+func newTestSessionPair(t *testing.T, maxStreams int) (*Session, *Session, <-chan acceptedTarget) {
+	t.Helper()
+	leftConn, rightConn := net.Pipe()
+	accepted := make(chan acceptedTarget, 8)
+
+	openHandler := func(_ context.Context, typ Type, payload []byte) (net.Conn, error) {
+		if typ != TypeOpenDirect && typ != TypeOpenReverse {
+			return nil, errors.New("unexpected open type")
+		}
+		serverSide, testSide := net.Pipe()
+		accepted <- acceptedTarget{name: string(payload), conn: testSide}
+		return serverSide, nil
+	}
+	left, err := NewSession(context.Background(), leftConn, SessionOptions{
+		Initiator: true, MaxStreams: maxStreams,
+		OpenTimeout: time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+		OnOpen: openHandler,
+	})
+	if err != nil {
+		_ = leftConn.Close()
+		_ = rightConn.Close()
+		t.Fatalf("NewSession(left): %v", err)
+	}
+	right, err := NewSession(context.Background(), rightConn, SessionOptions{
+		Initiator: false, MaxStreams: maxStreams,
+		OpenTimeout: time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+		OnOpen: openHandler,
+	})
+	if err != nil {
+		_ = left.Close()
+		_ = rightConn.Close()
+		t.Fatalf("NewSession(right): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = left.Close()
+		_ = right.Close()
+	})
+	return left, right, accepted
+}
+
+func awaitTarget(t *testing.T, accepted <-chan acceptedTarget, want string) net.Conn {
+	t.Helper()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case target := <-accepted:
+			if target.name == want {
+				t.Cleanup(func() { _ = target.conn.Close() })
+				_ = target.conn.SetDeadline(time.Now().Add(2 * time.Second))
+				return target.conn
+			}
+			_ = target.conn.Close()
+		case <-timer.C:
+			t.Fatalf("timed out waiting for target %q", want)
+			return nil
+		}
+	}
+}
+
+func exchangeOnStream(t *testing.T, stream *Stream, target net.Conn, request, response string) {
+	t.Helper()
+	_ = target.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = stream.SetDeadline(time.Now().Add(2 * time.Second))
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := stream.Write([]byte(request))
+		writeDone <- err
+	}()
+	gotRequest := make([]byte, len(request))
+	if _, err := io.ReadFull(target, gotRequest); err != nil {
+		t.Fatalf("target read request: %v", err)
+	}
+	if !bytes.Equal(gotRequest, []byte(request)) {
+		t.Fatalf("target received %q, want %q", gotRequest, request)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("stream write: %v", err)
+	}
+
+	writeResponseDone := make(chan error, 1)
+	go func() {
+		_, err := target.Write([]byte(response))
+		writeResponseDone <- err
+	}()
+	gotResponse := make([]byte, len(response))
+	if _, err := io.ReadFull(stream, gotResponse); err != nil {
+		t.Fatalf("stream read response: %v", err)
+	}
+	if !bytes.Equal(gotResponse, []byte(response)) {
+		t.Fatalf("stream received %q, want %q", gotResponse, response)
+	}
+	if err := <-writeResponseDone; err != nil {
+		t.Fatalf("target write response: %v", err)
+	}
+}
+
+func TestSessionMultiplexesDirectAndReverseStreams(t *testing.T) {
+	left, _, accepted := newTestSessionPair(t, 8)
+
+	direct, err := left.Open(TypeOpenDirect, []byte("direct:127.0.0.1:8080"))
+	if err != nil {
+		t.Fatalf("open Direct stream: %v", err)
+	}
+	reverse, err := left.Open(TypeOpenReverse, []byte("reverse:web"))
+	if err != nil {
+		t.Fatalf("open Reverse stream: %v", err)
+	}
+	directTarget := awaitTarget(t, accepted, "direct:127.0.0.1:8080")
+	reverseTarget := awaitTarget(t, accepted, "reverse:web")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		exchangeOnStream(t, direct, directTarget, "direct-request", "direct-response")
+	}()
+	go func() {
+		defer wg.Done()
+		exchangeOnStream(t, reverse, reverseTarget, "reverse-request", "reverse-response")
+	}()
+	wg.Wait()
+}
+
+func TestSessionRejectsOpenWhenStreamLimitReached(t *testing.T) {
+	left, _, accepted := newTestSessionPair(t, 1)
+
+	first, err := left.Open(TypeOpenDirect, []byte("direct:first"))
+	if err != nil {
+		t.Fatalf("open first stream: %v", err)
+	}
+	_ = awaitTarget(t, accepted, "direct:first")
+
+	if _, err := left.Open(TypeOpenReverse, []byte("reverse:second")); err == nil {
+		t.Fatal("second stream unexpectedly opened beyond the configured limit")
+	}
+	_ = first.Close()
+}
+
+func TestSessionRejectsRemoteOpenWithoutHandler(t *testing.T) {
+	leftConn, rightConn := net.Pipe()
+	left, err := NewSession(context.Background(), leftConn, SessionOptions{
+		Initiator: true, OpenTimeout: time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := NewSession(context.Background(), rightConn, SessionOptions{
+		Initiator: false, OpenTimeout: time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = left.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = left.Close()
+		_ = right.Close()
+	})
+
+	if _, err := left.Open(TypeOpenDirect, []byte("disallowed:target")); err == nil {
+		t.Fatal("open unexpectedly succeeded without a remote handler")
+	}
+	if left.isDone() || right.isDone() {
+		t.Fatal("a rejected stream incorrectly terminated the shared session")
+	}
+}
+
+
+// waitForStreamCount waits until a session releases all streams expected by a test.
+func waitForStreamCount(t *testing.T, session *Session, want int) {
+	t.Helper()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		session.mu.Lock()
+		got := len(session.streams)
+		session.mu.Unlock()
+		if got == want {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("session retained %d streams, want %d", got, want)
+		case <-ticker.C:
+		}
+	}
+}
+
+// A vanished local target must not leave its logical stream in either session.
+func TestSessionReapsStreamWhenTargetClosesDuringTraffic(t *testing.T) {
+	left, right, accepted := newTestSessionPair(t, 8)
+	stream, err := left.Open(TypeOpenDirect, []byte("reap:target"))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	target := awaitTarget(t, accepted, "reap:target")
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := stream.Write(bytes.Repeat([]byte("x"), 64*1024))
+		writeDone <- err
+	}()
+
+	// The target is deliberately not read: its peer relay may be blocked
+	// writing buffered data when the local TCP connection disappears.
+	time.Sleep(25 * time.Millisecond)
+	if err := target.Close(); err != nil {
+		t.Fatalf("close target: %v", err)
+	}
+
+	select {
+	case <-writeDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("writer did not unblock after the target closed")
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+}
+
+
+// Half-closing one stream direction must preserve the other direction until
+// the peer has sent its response and half-closed as well.
+func TestSessionHalfClosePreservesResponse(t *testing.T) {
+	accepted := make(chan net.Conn, 1)
+	rightHandler := func(_ context.Context, typ Type, _ []byte) (net.Conn, error) {
+		if typ != TypeOpenDirect {
+			return nil, errors.New("unexpected stream type")
+		}
+		client, server, err := newTCPConnPair()
+		if err != nil {
+			return nil, err
+		}
+		accepted <- client
+		return server, nil
+	}
+	left, right := newSessionPairWithHandlers(t, 4, nil, rightHandler)
+	stream, err := left.Open(TypeOpenDirect, []byte("half-close"))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	var target net.Conn
+	select {
+	case target = <-accepted:
+		t.Cleanup(func() { _ = target.Close() })
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for TCP test target")
+	}
+
+	const request = "request-before-fin"
+	const response = "response-after-fin"
+	if _, err := stream.Write([]byte(request)); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	if err := stream.CloseWrite(); err != nil {
+		t.Fatalf("half-close stream write side: %v", err)
+	}
+	gotRequest, err := io.ReadAll(target)
+	if err != nil {
+		t.Fatalf("read request until remote FIN: %v", err)
+	}
+	if string(gotRequest) != request {
+		t.Fatalf("target received %q, want %q", gotRequest, request)
+	}
+	if _, err := target.Write([]byte(response)); err != nil {
+		t.Fatalf("write response after receiving FIN: %v", err)
+	}
+	if err := target.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatalf("half-close target write side: %v", err)
+	}
+	gotResponse, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatalf("read response until stream EOF: %v", err)
+	}
+	if string(gotResponse) != response {
+		t.Fatalf("stream received %q, want %q", gotResponse, response)
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+	if left.isDone() || right.isDone() {
+		t.Fatal("half-close incorrectly terminated the shared session")
+	}
+}
+
+// Cancelling a local open must cancel the remote target dial/open operation and
+// remove both logical streams without taking down the shared transport.
+func TestSessionOpenContextCancellationCancelsRemoteHandler(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	rightHandler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}
+	left, right := newSessionPairWithHandlers(t, 4, nil, rightHandler)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := left.OpenContext(ctx, TypeOpenDirect, []byte("cancel-me"))
+		result <- err
+	}()
+	waitForSignal(t, started, "remote open handler")
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("OpenContext() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("OpenContext did not return after cancellation")
+	}
+	waitForSignal(t, cancelled, "remote open handler cancellation")
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+	if left.isDone() || right.isDone() {
+		t.Fatal("cancelling one open incorrectly terminated the shared session")
+	}
+}
+
+// A WINDOW_UPDATE cannot acknowledge a DATA frame whose send credit was
+// reserved but whose frame has not actually been written to the transport.
+func TestSessionRejectsWindowUpdateForUnsentData(t *testing.T) {
+	left, right, accepted := newTestSessionPair(t, 4)
+	stream, err := left.Open(TypeOpenDirect, []byte("window-update-unsent"))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	_ = awaitTarget(t, accepted, "window-update-unsent")
+
+	// Model the interval after credit acquisition but before DATA is enqueued.
+	// The old implementation treated this reservation as an outstanding frame.
+	if err := stream.acquireSendCredit(); err != nil {
+		t.Fatalf("acquire send credit: %v", err)
+	}
+
+	var payload [4]byte
+	binary.BigEndian.PutUint32(payload[:], 1)
+	if err := right.sendFrame(Frame{
+		Type: TypeWindowUpdate, StreamID: stream.id, Payload: payload[:],
+	}, time.Now().Add(time.Second), nil); err != nil {
+		t.Fatalf("send premature WINDOW_UPDATE: %v", err)
+	}
+
+	select {
+	case <-left.done:
+	case <-time.After(time.Second):
+		t.Fatal("session accepted WINDOW_UPDATE for DATA that was never sent")
+	}
+	if err := left.Err(); err == nil {
+		t.Fatal("session closed without recording the WINDOW_UPDATE protocol error")
+	}
+}
+
+// A blocked target makes the peer receive queue fill. The affected stream
+// must be reset and reaped while unrelated streams/session state stay alive.
+func TestSessionReceiveQueueSaturationReapsOnlyAffectedStream(t *testing.T) {
+	left, right, accepted := newTestSessionPair(t, 4)
+	stream, err := left.Open(TypeOpenDirect, []byte("queue-saturation"))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	var target net.Conn
+	select {
+	case item := <-accepted:
+		if item.name != "queue-saturation" {
+			t.Fatalf("unexpected target %q", item.name)
+		}
+		target = item.conn
+		t.Cleanup(func() { _ = target.Close() })
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for target")
+	}
+
+	payload := bytes.Repeat([]byte("q"), maxDataSize)
+	for i := 0; i < streamReadQueueFrames+4; i++ {
+		// Keep the local sender's accounting correct for the initial window,
+		// then deliberately violate the protocol by sending past zero credits.
+		if i < streamReadQueueFrames {
+			stream.mu.Lock()
+			stream.sendWindowFrames--
+			stream.mu.Unlock()
+		}
+		if err := left.sendFrame(Frame{
+			Type: TypeData, StreamID: stream.id, Payload: payload,
+		}, time.Now().Add(time.Second), nil); err != nil {
+			if left.isDone() {
+				t.Fatalf("session ended while injecting over-window DATA frame %d: %v", i, err)
+			}
+			break
+		}
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+	if left.isDone() || right.isDone() {
+		t.Fatal("queue saturation terminated the shared session instead of resetting one stream")
+	}
+}
+
+
+// Closing the transport while a remote OPEN handler is blocked must cancel
+// the handler and release the local OpenContext caller without waiting for its
+// open timeout.
+func TestSessionShutdownCancelsPendingRemoteOpen(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	rightHandler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}
+	left, right := newSessionPairWithHandlers(t, 4, nil, rightHandler)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := left.OpenContext(context.Background(), TypeOpenDirect, []byte("shutdown-pending-open"))
+		result <- err
+	}()
+	waitForSignal(t, started, "blocked remote open handler")
+
+	if err := left.Close(); err != nil {
+		t.Fatalf("close session during pending open: %v", err)
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("OpenContext unexpectedly succeeded after session shutdown")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenContext remained blocked after session shutdown")
+	}
+	waitForSignal(t, cancelled, "remote handler cancellation after session shutdown")
+	deadline := time.Now().Add(2 * time.Second)
+	for !right.isDone() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !right.isDone() {
+		t.Fatal("peer session did not observe transport shutdown")
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+}
+
+// Repeated transport shutdown during concurrent stream opens must not strand
+// callers or leave logical streams registered after the session is gone.
+func TestSessionShutdownDuringConcurrentOpensReapsAllStreams(t *testing.T) {
+	const opens = 32
+	started := make(chan struct{}, opens)
+	cancelled := make(chan struct{}, opens)
+	rightHandler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		cancelled <- struct{}{}
+		return nil, ctx.Err()
+	}
+	left, right := newSessionPairWithHandlers(t, opens, nil, rightHandler)
+
+	start := make(chan struct{})
+	results := make(chan error, opens)
+	var wg sync.WaitGroup
+	wg.Add(opens)
+	for i := 0; i < opens; i++ {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_, err := left.OpenContext(ctx, TypeOpenDirect, []byte("shutdown-race"))
+			results <- err
+		}(i)
+	}
+	close(start)
+
+	for i := 0; i < opens; i++ {
+		select {
+		case <-started:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("only %d remote handlers started before timeout", i)
+		}
+	}
+	if err := left.Close(); err != nil {
+		t.Fatalf("close session during concurrent opens: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("concurrent OpenContext callers were stranded by session shutdown")
+	}
+	close(results)
+	for err := range results {
+		if err == nil {
+			t.Fatal("OpenContext unexpectedly succeeded while session was shutting down")
+		}
+	}
+	for i := 0; i < opens; i++ {
+		select {
+		case <-cancelled:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d remote handlers observed cancellation", i)
+		}
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+}
+
+
+// A late OPEN_OK for a stream reset by local cancellation must trigger a
+// stream-local reset, not terminate the otherwise healthy session.
+func TestSessionLateOpenOKAfterCancellationResetsOnlyStream(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true,
+		MaxStreams: 4,
+		OpenTimeout: time.Second,
+		WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, openErr := session.OpenContext(ctx, TypeOpenDirect, []byte("late-open-ok"))
+		result <- openErr
+	}()
+
+	openFrame, err := ReadFrame(peerConn)
+	if err != nil {
+		cancel()
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if openFrame.Type != TypeOpenDirect || openFrame.StreamID == 0 {
+		cancel()
+		t.Fatalf("unexpected initial frame: %#v", openFrame)
+	}
+
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("OpenContext() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenContext did not return after cancellation")
+	}
+
+	reset, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read cancellation reset: %v", err)
+	}
+	if reset.Type != TypeClose || reset.StreamID != openFrame.StreamID ||
+		len(reset.Payload) != 1 || reset.Payload[0] != closeFlagReset {
+		t.Fatalf("unexpected cancellation frame: %#v", reset)
+	}
+
+	if err := WriteFrame(peerConn, Frame{Type: TypeOpenOK, StreamID: openFrame.StreamID}); err != nil {
+		t.Fatalf("write delayed OPEN_OK: %v", err)
+	}
+	lateReset, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read reset for delayed OPEN_OK: %v", err)
+	}
+	if lateReset.Type != TypeClose || lateReset.StreamID != openFrame.StreamID ||
+		len(lateReset.Payload) != 1 || lateReset.Payload[0] != closeFlagReset {
+		t.Fatalf("unexpected response to delayed OPEN_OK: %#v", lateReset)
+	}
+
+	if session.isDone() {
+		t.Fatal("late OPEN_OK for a cancelled stream terminated the shared session")
+	}
+	waitForStreamCount(t, session, 0)
+}
+
+
+// DATA received before OPEN_OK is a stream-local protocol violation. It must
+// reset that stream and promptly release the waiting OpenContext caller
+// instead of leaving it blocked until the full open timeout.
+func TestSessionDataBeforeOpenOKReleasesOpenCaller(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true,
+		MaxStreams: 4,
+		OpenTimeout: 4 * time.Second,
+		WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	type openResult struct {
+		stream *Stream
+		err    error
+	}
+	result := make(chan openResult, 1)
+	go func() {
+		stream, openErr := session.OpenContext(
+			context.Background(), TypeOpenDirect, []byte("early-data"),
+		)
+		result <- openResult{stream: stream, err: openErr}
+	}()
+
+	_ = peerConn.SetDeadline(time.Now().Add(2 * time.Second))
+	request, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if request.Type != TypeOpenDirect || request.StreamID == 0 {
+		t.Fatalf("unexpected OPEN frame: %#v", request)
+	}
+	if err := WriteFrame(peerConn, Frame{
+		Type: TypeData, StreamID: request.StreamID, Payload: []byte("too-early"),
+	}); err != nil {
+		t.Fatalf("write DATA before OPEN_OK: %v", err)
+	}
+
+	reset, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read stream reset: %v", err)
+	}
+	if reset.Type != TypeClose || reset.StreamID != request.StreamID ||
+		len(reset.Payload) != 1 || reset.Payload[0] != closeFlagReset {
+		t.Fatalf("unexpected response to premature DATA: %#v", reset)
+	}
+
+	select {
+	case got := <-result:
+		if got.err == nil {
+			t.Fatal("OpenContext unexpectedly succeeded after premature DATA")
+		}
+		if got.stream != nil {
+			t.Fatal("OpenContext returned a stream after protocol reset")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("OpenContext remained blocked after its stream was reset")
+	}
+	if session.isDone() {
+		t.Fatal("premature DATA on one stream terminated the shared session")
+	}
+	waitForStreamCount(t, session, 0)
+}
+
+
+// CLOSE before OPEN_OK must reset only the pending stream and release the
+// OpenContext caller immediately, rather than leaving it until OpenTimeout.
+func TestSessionCloseBeforeOpenOKReleasesOpenCaller(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true, MaxStreams: 4,
+		OpenTimeout: 4 * time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	result := make(chan error, 1)
+	go func() {
+		_, openErr := session.OpenContext(context.Background(), TypeOpenDirect, []byte("early-close"))
+		result <- openErr
+	}()
+	_ = peerConn.SetDeadline(time.Now().Add(2 * time.Second))
+	request, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if err := WriteFrame(peerConn, Frame{
+		Type: TypeClose, StreamID: request.StreamID, Payload: []byte{closeFlagWrite},
+	}); err != nil {
+		t.Fatalf("write CLOSE before OPEN_OK: %v", err)
+	}
+	reset, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read stream reset: %v", err)
+	}
+	if reset.Type != TypeClose || reset.StreamID != request.StreamID ||
+		len(reset.Payload) != 1 || reset.Payload[0] != closeFlagReset {
+		t.Fatalf("unexpected response to premature CLOSE: %#v", reset)
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("OpenContext unexpectedly succeeded after premature CLOSE")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("OpenContext remained blocked after premature CLOSE")
+	}
+	if session.isDone() {
+		t.Fatal("premature CLOSE on one stream terminated the shared session")
+	}
+	waitForStreamCount(t, session, 0)
+}
+
+// OPEN_ERROR is only valid while the stream is pending. A late OPEN_ERROR
+// after OPEN_OK is a protocol-order violation and must terminate the session.
+func TestSessionRejectsOpenErrorAfterOpenOK(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true, MaxStreams: 4,
+		OpenTimeout: time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	result := make(chan error, 1)
+	go func() {
+		_, openErr := session.OpenContext(context.Background(), TypeOpenDirect, []byte("open-error-order"))
+		result <- openErr
+	}()
+	_ = peerConn.SetDeadline(time.Now().Add(2 * time.Second))
+	request, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if err := WriteFrame(peerConn, Frame{Type: TypeOpenOK, StreamID: request.StreamID}); err != nil {
+		t.Fatalf("write OPEN_OK: %v", err)
+	}
+	if err := <-result; err != nil {
+		t.Fatalf("OpenContext before late OPEN_ERROR: %v", err)
+	}
+	if err := WriteFrame(peerConn, Frame{
+		Type: TypeOpenError, StreamID: request.StreamID, Payload: []byte("late error"),
+	}); err != nil {
+		t.Fatalf("write delayed OPEN_ERROR: %v", err)
+	}
+
+	select {
+	case <-session.Done():
+	case <-time.After(time.Second):
+		t.Fatal("out-of-order OPEN_ERROR did not terminate the session")
+	}
+	if session.Err() == nil {
+		t.Fatal("session ended without recording a protocol error")
+	}
+}
+
+// A full outbound queue must respect the stream write deadline without
+// terminating the shared session. The peer intentionally stops reading after
+// OPEN_OK so the transport writer blocks on net.Pipe.
+func TestStreamWriteDeadlineWhenOutboundQueueSaturates(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true, MaxStreams: 4,
+		OpenTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	result := make(chan *Stream, 1)
+	openErr := make(chan error, 1)
+	go func() {
+		stream, err := session.OpenContext(context.Background(), TypeOpenDirect, []byte("write-deadline"))
+		if err != nil {
+			openErr <- err
+			return
+		}
+		result <- stream
+	}()
+	_ = peerConn.SetDeadline(time.Now().Add(2 * time.Second))
+	request, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if err := WriteFrame(peerConn, Frame{Type: TypeOpenOK, StreamID: request.StreamID}); err != nil {
+		t.Fatalf("write OPEN_OK: %v", err)
+	}
+
+	var stream *Stream
+	select {
+	case stream = <-result:
+	case err := <-openErr:
+		t.Fatalf("OpenContext: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for OPEN_OK")
+	}
+	if err := stream.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatalf("SetWriteDeadline: %v", err)
+	}
+
+	payload := bytes.Repeat([]byte("w"), maxDataSize*258)
+	n, err := stream.Write(payload)
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("Write error = %v, want os.ErrDeadlineExceeded (wrote %d bytes)", err, n)
+	}
+	if n <= 0 || n >= len(payload) {
+		t.Fatalf("Write returned partial count %d for payload length %d", n, len(payload))
+	}
+	if session.isDone() {
+		t.Fatal("a single stream write deadline terminated the shared session")
+	}
+}
+
+
+// Large writes must apply per-stream backpressure instead of overflowing the
+// bounded receive queue. This also guards the byte-stream behavior users expect.
+func TestSessionWindowControlSupportsLargePayload(t *testing.T) {
+	left, _, accepted := newTestSessionPair(t, 2)
+	stream, err := left.Open(TypeOpenDirect, []byte("large-window-transfer"))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer stream.Close()
+	target := awaitTarget(t, accepted, "large-window-transfer")
+	_ = target.SetDeadline(time.Now().Add(30 * time.Second))
+
+	const size = 16 << 20
+	want := make([]byte, size)
+	for i := range want {
+		want[i] = byte((i*31 + 7) % 251)
+	}
+	type writeResult struct {
+		n int
+		err error
+	}
+	done := make(chan writeResult, 1)
+	go func() {
+		n, writeErr := stream.Write(want)
+		done <- writeResult{n: n, err: writeErr}
+	}()
+	got := make([]byte, size)
+	if _, err := io.ReadFull(target, got); err != nil {
+		t.Fatalf("read large payload from target: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("large payload changed while crossing the multiplexed stream")
+	}
+	select {
+	case result := <-done:
+		if result.err != nil || result.n != size {
+			t.Fatalf("large stream write returned n=%d err=%v; want n=%d and nil error", result.n, result.err, size)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("large stream write did not finish after target drained the payload")
+	}
+}
+
+// Stream ID allocation must wrap without using zero, colliding with a live
+// stream, or reusing one of the recently closed IDs.
+func TestSessionAllocateIDWraparoundSkipsActiveAndRecentlyClosedIDs(t *testing.T) {
+	left, right, _ := newTestSessionPair(t, 8)
+	maxID := ^uint32(0)
+	tests := []struct {
+		name     string
+		session  *Session
+		nextID   uint32
+		closed   []uint32
+		activeID uint32
+		wantID   uint32
+	}{
+		{
+			name: "initiator odd IDs",
+			session: left,
+			nextID: maxID,
+			closed: []uint32{maxID, 1},
+			activeID: 3,
+			wantID: 5,
+		},
+		{
+			name: "acceptor even IDs",
+			session: right,
+			nextID: maxID - 1,
+			closed: []uint32{maxID - 1, 2},
+			activeID: 4,
+			wantID: 6,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := tt.session
+			s.mu.Lock()
+			s.nextID = tt.nextID
+			for _, id := range tt.closed {
+				s.closedIDs[id] = struct{}{}
+			}
+			s.streams[tt.activeID] = newStream(s, tt.activeID, s.initiator)
+			got, err := s.allocateIDLocked()
+			s.mu.Unlock()
+
+			if err != nil {
+				t.Fatalf("allocateIDLocked() error = %v", err)
+			}
+			if got != tt.wantID {
+				t.Fatalf("allocateIDLocked() = %d, want %d", got, tt.wantID)
+			}
+			if got == 0 || (got%2 == 1) != s.initiator {
+				t.Fatalf("allocated stream ID %d has invalid parity for initiator=%t", got, s.initiator)
+			}
+		})
+	}
+}
+
+// The recently-closed ID cache must remain bounded as streams churn.
+func TestSessionClosedIDCacheRemainsBounded(t *testing.T) {
+	left, _, _ := newTestSessionPair(t, 4)
+	left.mu.Lock()
+	for id := uint32(1); id <= 4097; id++ {
+		left.rememberClosedIDLocked(id)
+	}
+	count := len(left.closedIDs)
+	_, firstRetained := left.closedIDs[1]
+	_, newestRetained := left.closedIDs[4097]
+	orderLen := len(left.closedOrder)
+	left.mu.Unlock()
+
+	if count != 4096 || orderLen != 4096 {
+		t.Fatalf("closed ID cache sizes = map:%d order:%d, want 4096 each", count, orderLen)
+	}
+	if firstRetained {
+		t.Fatal("oldest closed ID was not evicted from the bounded cache")
+	}
+	if !newestRetained {
+		t.Fatal("newest closed ID was unexpectedly evicted")
+	}
+}
+
+// OPEN_OK is a one-time transition. A duplicate success response for the same
+// still-open stream is a protocol violation and must close the session.
+func TestSessionRejectsDuplicateOpenOK(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true, MaxStreams: 4,
+		OpenTimeout: time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	type openResult struct {
+		stream *Stream
+		err    error
+	}
+	result := make(chan openResult, 1)
+	go func() {
+		stream, openErr := session.OpenContext(context.Background(), TypeOpenDirect, []byte("duplicate-open-ok"))
+		result <- openResult{stream: stream, err: openErr}
+	}()
+
+	_ = peerConn.SetDeadline(time.Now().Add(2 * time.Second))
+	request, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if err := WriteFrame(peerConn, Frame{Type: TypeOpenOK, StreamID: request.StreamID}); err != nil {
+		t.Fatalf("write first OPEN_OK: %v", err)
+	}
+	select {
+	case got := <-result:
+		if got.err != nil || got.stream == nil {
+			t.Fatalf("OpenContext after first OPEN_OK = (%v, %v)", got.stream, got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenContext did not complete after first OPEN_OK")
+	}
+
+	if err := WriteFrame(peerConn, Frame{Type: TypeOpenOK, StreamID: request.StreamID}); err != nil {
+		t.Fatalf("write duplicate OPEN_OK: %v", err)
+	}
+	select {
+	case <-session.Done():
+	case <-time.After(time.Second):
+		t.Fatal("duplicate OPEN_OK did not terminate the session")
+	}
+	if session.Err() == nil {
+		t.Fatal("duplicate OPEN_OK terminated the session without a protocol error")
+	}
+	waitForStreamCount(t, session, 0)
+}
+
+// A handler can ignore cancellation and return a connected target after its
+// open deadline. The session must reject that late target, close it, and reap
+// every stream. Repeat the scenario to catch target leaks across timeouts.
+func TestSessionLateTargetAfterRepeatedOpenTimeoutsIsClosed(t *testing.T) {
+	const attempts = 3
+	localConn, peerConn := net.Pipe()
+	targetPeers := make(chan net.Conn, attempts)
+	handlerTimedOut := make(chan struct{}, attempts)
+	releaseHandler := make(chan struct{}, attempts)
+
+	handler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		target, observer := net.Pipe()
+		targetPeers <- observer
+		<-ctx.Done()
+		handlerTimedOut <- struct{}{}
+		<-releaseHandler
+		return target, nil
+	}
+	local, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true, MaxStreams: 8,
+		OpenTimeout: 3 * time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession(local): %v", err)
+	}
+	remote, err := NewSession(context.Background(), peerConn, SessionOptions{
+		Initiator: false, MaxStreams: 8,
+		OpenTimeout: 75 * time.Millisecond, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour, OnOpen: handler,
+	})
+	if err != nil {
+		_ = local.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession(remote): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = local.Close()
+		_ = remote.Close()
+	})
+
+	for i := 0; i < attempts; i++ {
+		type result struct {
+			stream *Stream
+			err    error
+		}
+		opened := make(chan result, 1)
+		go func() {
+			stream, openErr := local.OpenContext(context.Background(), TypeOpenDirect, []byte("late-target"))
+			opened <- result{stream: stream, err: openErr}
+		}()
+
+		var targetPeer net.Conn
+		select {
+		case targetPeer = <-targetPeers:
+			t.Cleanup(func() { _ = targetPeer.Close() })
+		case <-time.After(2 * time.Second):
+			t.Fatalf("attempt %d: handler did not create target", i)
+		}
+		select {
+		case <-handlerTimedOut:
+		case <-time.After(time.Second):
+			t.Fatalf("attempt %d: remote open context did not expire", i)
+		}
+		releaseHandler <- struct{}{}
+
+		select {
+		case got := <-opened:
+			if got.err == nil || got.stream != nil {
+				t.Fatalf("attempt %d: late target unexpectedly opened stream (%v, %v)", i, got.stream, got.err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("attempt %d: OpenContext remained blocked after remote timeout", i)
+		}
+
+		closed := make(chan error, 1)
+		go func(conn net.Conn) {
+			var one [1]byte
+			_, readErr := conn.Read(one[:])
+			closed <- readErr
+		}(targetPeer)
+		select {
+		case readErr := <-closed:
+			if readErr == nil {
+				t.Fatalf("attempt %d: late target connection remained open", i)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("attempt %d: target connection was leaked after open timeout", i)
+		}
+
+		waitForStreamCount(t, local, 0)
+		waitForStreamCount(t, remote, 0)
+		if local.isDone() || remote.isDone() {
+			t.Fatalf("attempt %d: one expired open terminated the shared session", i)
+		}
+	}
+}
+
+
+// Inbound OPEN floods must not create more handler workers or registered
+// streams than MaxStreams allows, and transport shutdown must reap all of them.
+func TestSessionInboundOpenFloodIsBoundedAndReaped(t *testing.T) {
+	const (
+		incomingLimit = 8
+		openAttempts  = 32
+	)
+	started := make(chan struct{}, openAttempts)
+	cancelled := make(chan struct{}, openAttempts)
+	handler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		cancelled <- struct{}{}
+		return nil, ctx.Err()
+	}
+
+	leftConn, rightConn := net.Pipe()
+	left, err := NewSession(context.Background(), leftConn, SessionOptions{
+		Initiator: true, MaxStreams: openAttempts,
+		OpenTimeout: 5 * time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = leftConn.Close()
+		_ = rightConn.Close()
+		t.Fatalf("NewSession(left): %v", err)
+	}
+	right, err := NewSession(context.Background(), rightConn, SessionOptions{
+		Initiator: false, MaxStreams: incomingLimit,
+		OpenTimeout: 5 * time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour, OnOpen: handler,
+	})
+	if err != nil {
+		_ = left.Close()
+		_ = rightConn.Close()
+		t.Fatalf("NewSession(right): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = left.Close()
+		_ = right.Close()
+	})
+
+	type openResult struct {
+		stream *Stream
+		err    error
+	}
+	results := make(chan openResult, openAttempts)
+	start := make(chan struct{})
+	for i := 0; i < openAttempts; i++ {
+		go func(i int) {
+			<-start
+			stream, openErr := left.OpenContext(
+				context.Background(), TypeOpenDirect, []byte{byte(i + 1)},
+			)
+			results <- openResult{stream: stream, err: openErr}
+		}(i)
+	}
+	close(start)
+
+	for i := 0; i < incomingLimit; i++ {
+		select {
+		case <-started:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("only %d remote handlers started; want %d", i, incomingLimit)
+		}
+	}
+
+	rejected := 0
+	for rejected < openAttempts-incomingLimit {
+		select {
+		case got := <-results:
+			if got.err == nil || got.stream != nil {
+				t.Fatalf("over-limit OPEN unexpectedly succeeded: stream=%v err=%v", got.stream, got.err)
+			}
+			rejected++
+		case <-time.After(3 * time.Second):
+			t.Fatalf("only %d over-limit opens were rejected; want %d", rejected, openAttempts-incomingLimit)
+		}
+	}
+
+	right.mu.Lock()
+	active := len(right.streams)
+	right.mu.Unlock()
+	if active != incomingLimit {
+		t.Fatalf("registered inbound streams = %d, want exactly %d", active, incomingLimit)
+	}
+	if len(started) != 0 {
+		t.Fatalf("handler workers started beyond MaxStreams: %d extra starts", len(started))
+	}
+
+	if err := left.Close(); err != nil {
+		t.Fatalf("close initiating session: %v", err)
+	}
+	for i := 0; i < incomingLimit; i++ {
+		select {
+		case <-cancelled:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d of %d handler workers observed shutdown", i, incomingLimit)
+		}
+	}
+	for i := 0; i < incomingLimit; i++ {
+		select {
+		case got := <-results:
+			if got.err == nil || got.stream != nil {
+				t.Fatalf("pending open unexpectedly succeeded during shutdown: stream=%v err=%v", got.stream, got.err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d pending open callers returned after shutdown", i)
+		}
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+}
+
+
+// FuzzSessionFrameSequence exercises the multiplexing control state machine
+// with wire-valid frames in arbitrary order, without starting transport loops.
+func FuzzSessionFrameSequence(f *testing.F) {
+	f.Add([]byte{
+		0, 2, 0, 0, 0, 1, // OPEN_DIRECT on a remote-owned even ID
+		2, 1, 0, 0, 0, 2, // OPEN_OK on a pending local stream
+		4, 3, 0, 0, 0, 3, // DATA on an active stream
+		5, 3, 0, 0, 0, 1, // CLOSE_WRITE
+	})
+	f.Add([]byte{
+		2, 1, 0, 0, 0, 0, // OPEN_OK
+		3, 1, 0, 0, 0, 1, // out-of-order OPEN_ERROR
+	})
+	f.Add(make([]byte, 96))
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		// Bound per-input work and outbound buffering so mutations stay cheap.
+		if len(raw) > 768 {
+			raw = raw[:768]
+		}
+		localConn, peerConn := net.Pipe()
+		ctx, cancel := context.WithCancel(context.Background())
+		s := &Session{
+			conn: localConn, ctx: ctx, cancel: cancel, done: make(chan struct{}),
+			initiator: true, nextID: 5, maxStreams: 8,
+			openTimeout: time.Second, writeTimeout: time.Second,
+			keepAliveInterval: time.Hour,
+			outbound: make(chan Frame, 512),
+			streams: make(map[uint32]*Stream),
+			closedIDs: make(map[uint32]struct{}),
+		}
+		s.lastPong.Store(time.Now().UnixNano())
+		pending := newStream(s, 1, true)
+		s.streams[pending.id] = pending
+		active := newStream(s, 3, true)
+		active.openPending = false
+		active.ready = true
+		s.streams[active.id] = active
+		t.Cleanup(func() {
+			_ = s.Close()
+			_ = peerConn.Close()
+		})
+
+		for offset := 0; offset+6 <= len(raw); offset += 6 {
+			chunk := raw[offset : offset+6]
+			frameType := Type(chunk[0]%8 + 1)
+			id := uint32(chunk[1]) |
+				uint32(chunk[2])<<8 |
+				uint32(chunk[3])<<16 |
+				uint32(chunk[4])<<24
+			selector := chunk[5]
+			frame := Frame{Type: frameType}
+
+			switch frameType {
+			case TypeOpenDirect, TypeOpenReverse:
+				id &= ^uint32(1) // the remote endpoint owns even IDs
+				if id == 0 {
+					id = 2
+				}
+				frame.StreamID = id
+				frame.Payload = []byte{selector}
+			case TypeOpenOK:
+				frame.StreamID = 1
+				if selector&1 != 0 {
+					frame.StreamID = 3
+				}
+			case TypeOpenError:
+				frame.StreamID = 1
+				if selector&1 != 0 {
+					frame.StreamID = 3
+				}
+				frame.Payload = []byte{selector}
+			case TypeData:
+				switch selector % 3 {
+				case 0:
+					frame.StreamID = 1
+				case 1:
+					frame.StreamID = 3
+				default:
+					frame.StreamID = id
+					if frame.StreamID == 0 {
+						frame.StreamID = 5
+					}
+				}
+				frame.Payload = []byte{selector}
+			case TypeClose:
+				switch selector % 3 {
+				case 0:
+					frame.StreamID = 1
+				case 1:
+					frame.StreamID = 3
+				default:
+					frame.StreamID = id
+					if frame.StreamID == 0 {
+						frame.StreamID = 5
+					}
+				}
+				flag := closeFlagWrite
+				if selector&1 != 0 {
+					flag = closeFlagReset
+				}
+				frame.Payload = []byte{flag}
+			case TypePing, TypePong:
+				frame.StreamID = 0
+				frame.Payload = make([]byte, 8)
+				for i := range frame.Payload {
+					frame.Payload[i] = selector ^ byte(i)
+				}
+			}
+
+			if err := validateHeader(frame.Type, frame.StreamID, uint32(len(frame.Payload))); err != nil {
+				break
+			}
+			if err := validatePayload(frame); err != nil {
+				break
+			}
+			if err := s.handleFrame(frame); err != nil {
+				// The real read loop shuts down the session on the same error.
+				break
+			}
+
+			s.mu.Lock()
+			streamCount := len(s.streams)
+			closedCount := len(s.closedIDs)
+			s.mu.Unlock()
+			if streamCount > s.maxStreams {
+				t.Fatalf("session retained %d streams beyond limit %d", streamCount, s.maxStreams)
+			}
+			if closedCount > 4096 {
+				t.Fatalf("closed stream ID cache grew to %d entries", closedCount)
+			}
+		}
+	})
+}
+
+
+// Repeated stream churn across session replacement must reap stream state and
+// relay goroutines rather than accumulating resources across reconnects.
+func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
+	runSessionChurnResourceSoak(t, 12)
+}
+
+func TestSessionExtendedChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
+	runSessionChurnResourceSoak(t, 100)
+}
+
+func runSessionChurnResourceSoak(t *testing.T, reconnects int) {
+	const streamsPerSession = 8
+	runtime.GC()
+	baseline := runtime.NumGoroutine()
+	var baselineMem runtime.MemStats
+	runtime.ReadMemStats(&baselineMem)
+	heapBaseline := baselineMem.HeapAlloc
+	var stableHeapBaseline uint64
+	var maxHeapAfterGC uint64
+	var maxCleanupDuration time.Duration
+
+	broker := NewSessionBroker()
+	var previousLeft, previousRight *Session
+	var currentLeft, currentRight *Session
+	t.Cleanup(func() {
+		if currentLeft != nil {
+			broker.Clear(currentLeft)
+			_ = currentLeft.Close()
+		}
+		if currentRight != nil {
+			_ = currentRight.Close()
+		}
+	})
+
+	for generation := 0; generation < reconnects; generation++ {
+		leftConn, rightConn := net.Pipe()
+		accepted := make(chan acceptedTarget, streamsPerSession)
+		handler := func(_ context.Context, typ Type, payload []byte) (net.Conn, error) {
+			if typ != TypeOpenDirect {
+				return nil, errors.New("unexpected stream type in resource soak")
+			}
+			serverSide, testSide := net.Pipe()
+			accepted <- acceptedTarget{name: string(payload), conn: testSide}
+			return serverSide, nil
+		}
+
+		left, err := NewSession(context.Background(), leftConn, SessionOptions{
+			Initiator: true, MaxStreams: streamsPerSession,
+			OpenTimeout: 2 * time.Second, WriteTimeout: time.Second,
+			KeepAliveInterval: time.Hour,
+		})
+		if err != nil {
+			_ = leftConn.Close()
+			_ = rightConn.Close()
+			t.Fatalf("generation %d: create local session: %v", generation, err)
+		}
+		right, err := NewSession(context.Background(), rightConn, SessionOptions{
+			Initiator: false, MaxStreams: streamsPerSession,
+			OpenTimeout: 2 * time.Second, WriteTimeout: time.Second,
+			KeepAliveInterval: time.Hour, OnOpen: handler,
+		})
+		if err != nil {
+			_ = left.Close()
+			_ = rightConn.Close()
+			t.Fatalf("generation %d: create remote session: %v", generation, err)
+		}
+		currentLeft, currentRight = left, right
+		broker.Set(left)
+
+		if previousLeft != nil {
+			if !previousLeft.isDone() {
+				t.Fatalf("previous local session remained alive after reconnect %d", generation)
+			}
+			select {
+			case <-previousRight.Done():
+			case <-time.After(2 * time.Second):
+				t.Fatalf("previous remote session remained alive after reconnect %d", generation)
+			}
+			waitForStreamCount(t, previousLeft, 0)
+			waitForStreamCount(t, previousRight, 0)
+		}
+
+		var lastStreamCloseStarted time.Time
+		for index := 0; index < streamsPerSession; index++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			stream, err := broker.Open(ctx, TypeOpenDirect, []byte("reconnect-soak"))
+			cancel()
+			if err != nil {
+				t.Fatalf("generation %d stream %d: broker open: %v", generation, index, err)
+			}
+
+			var target net.Conn
+			select {
+			case got := <-accepted:
+				if got.name != "reconnect-soak" {
+					_ = got.conn.Close()
+					t.Fatalf("generation %d stream %d: target name = %q", generation, index, got.name)
+				}
+				target = got.conn
+			case <-time.After(2 * time.Second):
+				t.Fatalf("generation %d stream %d: target was not accepted", generation, index)
+			}
+
+			deadline := time.Now().Add(2 * time.Second)
+			if err := stream.SetDeadline(deadline); err != nil {
+				_ = target.Close()
+				t.Fatalf("generation %d stream %d: set stream deadline: %v", generation, index, err)
+			}
+			if err := target.SetDeadline(deadline); err != nil {
+				_ = target.Close()
+				t.Fatalf("generation %d stream %d: set target deadline: %v", generation, index, err)
+			}
+
+			request := []byte{byte(generation), byte(index), 0xa5}
+			if n, err := stream.Write(request); err != nil || n != len(request) {
+				_ = target.Close()
+				t.Fatalf("generation %d stream %d: write request = %d, %v", generation, index, n, err)
+			}
+			gotRequest := make([]byte, len(request))
+			if _, err := io.ReadFull(target, gotRequest); err != nil {
+				_ = target.Close()
+				t.Fatalf("generation %d stream %d: read request at target: %v", generation, index, err)
+			}
+			if !bytes.Equal(gotRequest, request) {
+				_ = target.Close()
+				t.Fatalf("generation %d stream %d: request = %v, want %v", generation, index, gotRequest, request)
+			}
+
+			response := []byte{0x5a, byte(index), byte(generation)}
+			if n, err := target.Write(response); err != nil || n != len(response) {
+				_ = target.Close()
+				t.Fatalf("generation %d stream %d: target write = %d, %v", generation, index, n, err)
+			}
+			gotResponse := make([]byte, len(response))
+			if _, err := io.ReadFull(stream, gotResponse); err != nil {
+				_ = target.Close()
+				t.Fatalf("generation %d stream %d: read response from stream: %v", generation, index, err)
+			}
+			if !bytes.Equal(gotResponse, response) {
+				_ = target.Close()
+				t.Fatalf("generation %d stream %d: response = %v, want %v", generation, index, gotResponse, response)
+			}
+
+			lastStreamCloseStarted = time.Now()
+			if err := stream.Close(); err != nil {
+				_ = target.Close()
+				t.Fatalf("generation %d stream %d: close stream: %v", generation, index, err)
+			}
+			_ = target.Close()
+		}
+
+		waitForStreamCount(t, left, 0)
+		waitForStreamCount(t, right, 0)
+		cleanupDuration := time.Since(lastStreamCloseStarted)
+		if cleanupDuration > maxCleanupDuration {
+			maxCleanupDuration = cleanupDuration
+		}
+		if cleanupDuration > 2*time.Second {
+			t.Fatalf("stream cleanup took %s in reconnect generation %d", cleanupDuration, generation)
+		}
+
+		runtime.GC()
+		var cycleMem runtime.MemStats
+		runtime.ReadMemStats(&cycleMem)
+		if cycleMem.HeapAlloc > maxHeapAfterGC {
+			maxHeapAfterGC = cycleMem.HeapAlloc
+		}
+		// After one warm-up reconnect, only the active pair and its predecessor
+		// should be reachable. Historical sessions must not accumulate linearly.
+		if generation == 1 {
+			stableHeapBaseline = cycleMem.HeapAlloc
+		} else if generation > 1 && cycleMem.HeapAlloc > stableHeapBaseline+(4<<20) {
+			t.Fatalf("heap did not plateau across reconnects: generation=%d heap=%d stable_baseline=%d allowance=%d",
+				generation, cycleMem.HeapAlloc, stableHeapBaseline, 4<<20)
+		}
+		t.Logf("generation=%d live_streams=0 cleanup=%s goroutines=%d heap_after_gc=%d",
+			generation, cleanupDuration, runtime.NumGoroutine(), cycleMem.HeapAlloc)
+
+		cycleDeadline := time.Now().Add(2 * time.Second)
+		stableSamples := 0
+		var cycleCount int
+		for time.Now().Before(cycleDeadline) {
+			runtime.Gosched()
+			cycleCount = runtime.NumGoroutine()
+			if cycleCount <= baseline+10 {
+				stableSamples++
+				if stableSamples >= 2 {
+					break
+				}
+			} else {
+				stableSamples = 0
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if stableSamples < 2 {
+			t.Fatalf("goroutines grew across reconnect generation %d: baseline=%d current=%d (allowance=10)", generation, baseline, cycleCount)
+		}
+
+		previousLeft, previousRight = left, right
+	}
+
+	broker.Clear(previousLeft)
+	_ = previousLeft.Close()
+	_ = previousRight.Close()
+	for _, session := range []*Session{previousLeft, previousRight} {
+		select {
+		case <-session.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("session did not stop during final resource cleanup")
+		}
+		waitForStreamCount(t, session, 0)
+	}
+	currentLeft, currentRight = nil, nil
+	previousLeft, previousRight = nil, nil
+	runtime.GC()
+	var finalMem runtime.MemStats
+	runtime.ReadMemStats(&finalMem)
+	const maxRetainedHeapGrowth = 16 << 20
+	if finalMem.HeapAlloc > heapBaseline+maxRetainedHeapGrowth {
+		t.Fatalf("retained heap grew beyond allowance: baseline=%d final=%d max_cycle=%d allowance=%d",
+			heapBaseline, finalMem.HeapAlloc, maxHeapAfterGC, maxRetainedHeapGrowth)
+	}
+	heapGrowth := int64(finalMem.HeapAlloc) - int64(heapBaseline)
+	t.Logf("resource soak summary: heap_baseline=%d heap_final=%d heap_growth=%d max_cycle_heap_after_gc=%d max_stream_cleanup=%s",
+		heapBaseline, finalMem.HeapAlloc, heapGrowth, maxHeapAfterGC, maxCleanupDuration)
+
+	deadline := time.Now().Add(3 * time.Second)
+	stableSamples := 0
+	var lastCount int
+	for time.Now().Before(deadline) {
+		runtime.Gosched()
+		lastCount = runtime.NumGoroutine()
+		if lastCount <= baseline+5 {
+			stableSamples++
+			if stableSamples >= 3 {
+				return
+			}
+		} else {
+			stableSamples = 0
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("goroutine count did not settle near baseline: baseline=%d current=%d (allowance=5)", baseline, lastCount)
+}
