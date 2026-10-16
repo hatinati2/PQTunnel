@@ -71,9 +71,15 @@ then
 fi
 [[ "$CLIENT_IP" =~ ^[0-9.]+$ ]] || fail '--client-ip must be an IPv4 address.'
 
-command -v go >/dev/null 2>&1 || fail 'Go is required to build cmd/pqtunnel-pki.'
 command -v openssl >/dev/null 2>&1 || fail 'OpenSSL is required to validate generated certificates.'
-[[ -f go.mod && -f cmd/pqtunnel-pki/main.go ]] || fail 'run this script from the PQTunnel repository root.'
+BIN_INPUT="${PQTUNNEL_PKI_BIN:-}"
+if [[ -n "$BIN_INPUT" ]]; then
+  [[ -f "$BIN_INPUT" && -x "$BIN_INPUT" ]] || fail 'PQTUNNEL_PKI_BIN must point to an executable pqtunnel-pki binary.'
+  BIN_INPUT="$(cd -- "$(dirname -- "$BIN_INPUT")" && pwd -P)/$(basename -- "$BIN_INPUT")"
+else
+  command -v go >/dev/null 2>&1 || fail 'Go is required to build cmd/pqtunnel-pki; alternatively set PQTUNNEL_PKI_BIN to a trusted prebuilt binary.'
+  [[ -f go.mod && -f cmd/pqtunnel-pki/main.go ]] || fail 'run this script from the PQTunnel repository root, or set PQTUNNEL_PKI_BIN.'
+fi
 
 OUT_PARENT="$(dirname -- "$OUT_INPUT")"
 OUT_BASE="$(basename -- "$OUT_INPUT")"
@@ -91,10 +97,14 @@ trap cleanup EXIT
 mkdir -m 0700 "$WORK/ca" "$WORK/output"
 mkdir -m 0700 "$WORK/output/ca-offline" "$WORK/output/gateway-pki" "$WORK/output/dialer-pki"
 
-BIN="$WORK/pqtunnel-pki"
-(
-  GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$BIN" ./cmd/pqtunnel-pki
-)
+if [[ -n "$BIN_INPUT" ]]; then
+  BIN="$BIN_INPUT"
+else
+  BIN="$WORK/pqtunnel-pki"
+  (
+    GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$BIN" ./cmd/pqtunnel-pki
+  )
+fi
 
 "$BIN" init --server-name "$SERVER_NAME" --out "$WORK/ca"
 "$BIN" issue-client --ip "$CLIENT_IP" --out "$WORK/ca"
