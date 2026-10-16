@@ -97,6 +97,8 @@ jobs:
           python3 scripts/check-release-version.py --check-docs
       - name: Test release proxy packaging and integration wiring
         run: python3 scripts/test-release-workflow.py
+      - name: Test one-line installer release pin and token handoff
+        run: python3 scripts/test-one-line-installer.py
       - name: Install nftables parser for check-only regression test
         run: |
           sudo apt-get update
