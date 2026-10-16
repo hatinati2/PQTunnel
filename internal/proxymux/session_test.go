@@ -1118,3 +1118,118 @@ func TestSessionLateTargetAfterRepeatedOpenTimeoutsIsClosed(t *testing.T) {
 		}
 	}
 }
+
+
+// Inbound OPEN floods must not create more handler workers or registered
+// streams than MaxStreams allows, and transport shutdown must reap all of them.
+func TestSessionInboundOpenFloodIsBoundedAndReaped(t *testing.T) {
+	const (
+		incomingLimit = 8
+		openAttempts  = 32
+	)
+	started := make(chan struct{}, openAttempts)
+	cancelled := make(chan struct{}, openAttempts)
+	handler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		cancelled <- struct{}{}
+		return nil, ctx.Err()
+	}
+
+	leftConn, rightConn := net.Pipe()
+	left, err := NewSession(context.Background(), leftConn, SessionOptions{
+		Initiator: true, MaxStreams: openAttempts,
+		OpenTimeout: 5 * time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = leftConn.Close()
+		_ = rightConn.Close()
+		t.Fatalf("NewSession(left): %v", err)
+	}
+	right, err := NewSession(context.Background(), rightConn, SessionOptions{
+		Initiator: false, MaxStreams: incomingLimit,
+		OpenTimeout: 5 * time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour, OnOpen: handler,
+	})
+	if err != nil {
+		_ = left.Close()
+		_ = rightConn.Close()
+		t.Fatalf("NewSession(right): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = left.Close()
+		_ = right.Close()
+	})
+
+	type openResult struct {
+		stream *Stream
+		err    error
+	}
+	results := make(chan openResult, openAttempts)
+	start := make(chan struct{})
+	for i := 0; i < openAttempts; i++ {
+		go func(i int) {
+			<-start
+			stream, openErr := left.OpenContext(
+				context.Background(), TypeOpenDirect, []byte{byte(i + 1)},
+			)
+			results <- openResult{stream: stream, err: openErr}
+		}(i)
+	}
+	close(start)
+
+	for i := 0; i < incomingLimit; i++ {
+		select {
+		case <-started:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("only %d remote handlers started; want %d", i, incomingLimit)
+		}
+	}
+
+	rejected := 0
+	for rejected < openAttempts-incomingLimit {
+		select {
+		case got := <-results:
+			if got.err == nil || got.stream != nil {
+				t.Fatalf("over-limit OPEN unexpectedly succeeded: stream=%v err=%v", got.stream, got.err)
+			}
+			rejected++
+		case <-time.After(3 * time.Second):
+			t.Fatalf("only %d over-limit opens were rejected; want %d", rejected, openAttempts-incomingLimit)
+		}
+	}
+
+	right.mu.Lock()
+	active := len(right.streams)
+	right.mu.Unlock()
+	if active != incomingLimit {
+		t.Fatalf("registered inbound streams = %d, want exactly %d", active, incomingLimit)
+	}
+	if len(started) != 0 {
+		t.Fatalf("handler workers started beyond MaxStreams: %d extra starts", len(started))
+	}
+
+	if err := left.Close(); err != nil {
+		t.Fatalf("close initiating session: %v", err)
+	}
+	for i := 0; i < incomingLimit; i++ {
+		select {
+		case <-cancelled:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d of %d handler workers observed shutdown", i, incomingLimit)
+		}
+	}
+	for i := 0; i < incomingLimit; i++ {
+		select {
+		case got := <-results:
+			if got.err == nil || got.stream != nil {
+				t.Fatalf("pending open unexpectedly succeeded during shutdown: stream=%v err=%v", got.stream, got.err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d pending open callers returned after shutdown", i)
+		}
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+}
