@@ -17,3 +17,19 @@ func StrictTLS13Config() *tls.Config {
 		SessionTicketsDisabled: true,
 	}
 }
+
+ 
+// VerifyPeerCommonName enforces an exact application identity after the TLS
+// stack has validated the peer certificate chain and its usage.
+func VerifyPeerCommonName(state tls.ConnectionState, expected string) error {
+	if expected == "" {
+		return errors.New("expected peer common name is required")
+	}
+	if len(state.PeerCertificates) == 0 {
+		return errors.New("peer certificate is required")
+	}
+	if state.PeerCertificates[0].Subject.CommonName != expected {
+		return errors.New("peer certificate common name mismatch")
+	}
+	return nil
+}
