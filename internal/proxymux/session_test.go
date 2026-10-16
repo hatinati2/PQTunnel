@@ -3,6 +3,7 @@ package proxymux
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -402,6 +403,40 @@ func TestSessionOpenContextCancellationCancelsRemoteHandler(t *testing.T) {
 	waitForStreamCount(t, right, 0)
 	if left.isDone() || right.isDone() {
 		t.Fatal("cancelling one open incorrectly terminated the shared session")
+	}
+}
+
+// A WINDOW_UPDATE cannot acknowledge a DATA frame whose send credit was
+// reserved but whose frame has not actually been written to the transport.
+func TestSessionRejectsWindowUpdateForUnsentData(t *testing.T) {
+	left, right, accepted := newTestSessionPair(t, 4)
+	stream, err := left.Open(TypeOpenDirect, []byte("window-update-unsent"))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	_ = awaitTarget(t, accepted, "window-update-unsent")
+
+	// Model the interval after credit acquisition but before DATA is enqueued.
+	// The old implementation treated this reservation as an outstanding frame.
+	if err := stream.acquireSendCredit(); err != nil {
+		t.Fatalf("acquire send credit: %v", err)
+	}
+
+	var payload [4]byte
+	binary.BigEndian.PutUint32(payload[:], 1)
+	if err := right.sendFrame(Frame{
+		Type: TypeWindowUpdate, StreamID: stream.id, Payload: payload[:],
+	}, time.Now().Add(time.Second), nil); err != nil {
+		t.Fatalf("send premature WINDOW_UPDATE: %v", err)
+	}
+
+	select {
+	case <-left.done:
+	case <-time.After(time.Second):
+		t.Fatal("session accepted WINDOW_UPDATE for DATA that was never sent")
+	}
+	if err := left.Err(); err == nil {
+		t.Fatal("session closed without recording the WINDOW_UPDATE protocol error")
 	}
 }
 

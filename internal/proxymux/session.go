@@ -320,13 +320,32 @@ func (s *Session) writeLoop() {
 			if s.isDone() {
 				return
 			}
+			var flowStream *Stream
+			if frame.Type == TypeData {
+				flowStream, _ = s.getStream(frame.StreamID)
+				if flowStream != nil {
+					flowStream.flowMu.Lock()
+				}
+			}
 			if err := s.conn.SetWriteDeadline(time.Now().Add(s.writeTimeout)); err != nil {
+				if flowStream != nil {
+					flowStream.flowMu.Unlock()
+				}
 				s.shutdown(fmt.Errorf("proxymux: set transport write deadline: %w", err))
 				return
 			}
 			if err := WriteFrame(s.conn, frame); err != nil {
+				if flowStream != nil {
+					flowStream.flowMu.Unlock()
+				}
 				s.shutdown(fmt.Errorf("proxymux: write transport frame: %w", err))
 				return
+			}
+			if flowStream != nil {
+				flowStream.mu.Lock()
+				flowStream.sendOutstandingFrames++
+				flowStream.mu.Unlock()
+				flowStream.flowMu.Unlock()
 			}
 			_ = s.conn.SetWriteDeadline(time.Time{})
 		}
@@ -442,23 +461,37 @@ func (s *Session) handleFrame(frame Frame) error {
 			}
 			return fmt.Errorf("proxymux: WINDOW_UPDATE for unknown stream %d", frame.StreamID)
 		}
-		credit := int(binary.BigEndian.Uint32(frame.Payload))
+		// Serialize credit validation against DATA writes. If the peer responds
+		// immediately after receiving a DATA frame, it waits until that write is
+		// accounted for; credits cannot be claimed for merely reserved frames.
+		st.flowMu.Lock()
 		st.mu.Lock()
 		if st.reset {
 			st.mu.Unlock()
+			st.flowMu.Unlock()
 			return nil
 		}
 		if !st.ready {
 			st.mu.Unlock()
+			st.flowMu.Unlock()
 			return fmt.Errorf("proxymux: WINDOW_UPDATE before stream %d opened", frame.StreamID)
+		}
+		if credit > st.sendOutstandingFrames {
+			outstanding := st.sendOutstandingFrames
+			st.mu.Unlock()
+			st.flowMu.Unlock()
+			return fmt.Errorf("proxymux: WINDOW_UPDATE credit %d exceeds outstanding DATA frames for stream %d (%d)", credit, frame.StreamID, outstanding)
 		}
 		if st.sendWindowFrames+credit > streamReadQueueFrames {
 			st.mu.Unlock()
+			st.flowMu.Unlock()
 			return fmt.Errorf("proxymux: WINDOW_UPDATE exceeds stream %d send window", frame.StreamID)
 		}
+		st.sendOutstandingFrames -= credit
 		st.sendWindowFrames += credit
 		st.signalWindowChangedLocked()
 		st.mu.Unlock()
+		st.flowMu.Unlock()
 		return nil
 	case TypeData:
 		st, ok := s.getStream(frame.StreamID)
@@ -695,6 +728,7 @@ type Stream struct {
 	openResult chan error
 	readCh chan []byte
 	sendWindowFrames int
+	sendOutstandingFrames int
 	windowChanged chan struct{}
 	target net.Conn
 	openCancel context.CancelFunc
@@ -703,6 +737,8 @@ type Stream struct {
 	readCloseOnce sync.Once
 	readMu sync.Mutex
 	writeMu sync.Mutex
+	// flowMu serializes DATA writes with WINDOW_UPDATE accounting.
+	flowMu sync.Mutex
 	mu sync.Mutex
 
 	pending []byte
