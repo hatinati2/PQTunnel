@@ -1,6 +1,6 @@
 # PQTunnel — نسخهٔ آزمایشی
 
-**نسخه: 0.3.0-rc3 · وضعیت: نامزد انتشار آزمایشی؛ آمادهٔ استفادهٔ تولیدی نیست.**
+**نسخه: 0.3.0-rc4 · وضعیت: نامزد انتشار آزمایشی؛ آمادهٔ استفادهٔ تولیدی نیست.**
 
 PQTunnel یک تونل آزمایشی لایهٔ ۳ با encapsulation بسته‌های IPv4 و IPv6 است که TCP را داخل TLS 1.3 حمل می‌کند و برای تبادل کلید، گروه هیبریدی `X25519MLKEM768` را به‌صورت اجباری انتخاب می‌کند. احراز هویت با گواهی‌های دوطرفه و CA خصوصی انجام می‌شود.
 
@@ -22,6 +22,7 @@ PQTunnel یک تونل آزمایشی لایهٔ ۳ با encapsulation بسته�
 - ابزار فقط‌خواندنی و محافظ حریم خصوصی برای خلاصه‌سازی وضعیت موجود nftables/iptables؛ گزینه‌های ناشناخته را محتاطانه به‌عنوان selector اضافی دسته‌بندی می‌کند و متن خام قواعد یا مقادیر selector را چاپ نمی‌کند. [یادداشت سازگاری فایروال](docs/EXISTING-FIREWALL-COEXISTENCE.md) را ببین.
 - مدیر وب مستقل و اختیاری لینوکس برای تونل server-to-server (`pqtunnel-manager`) با Start/Stop/Restart محدود به نقش ثابت، ویرایش اعتبارسنجی‌شدهٔ تنظیمات غیرمحرمانه، گزارش‌های سرویس با حذف اطلاعات حساس، قطع اتصال همتا و تست سرعت داخل مسیر تونل. این سرویس پیش‌فرض خاموش است و به‌صورت پیش‌فرض فقط روی loopback گوش می‌دهد؛ دسترسی مستقیم از IP عمومی نیازمند opt-in صریح است؛ HTTP موقت با `PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=true` ممکن است اما ناامن است و اطلاعات ورود قابل شنود هستند. TLS معتبر یا SSH توصیه می‌شود؛ راهنمای [مدیریت وب](docs/WEB-ADMIN-PANEL.md) را ببین. پنل قدیمی داخل daemon قابلیت جداگانه و محدودتری است.
 - محدودسازی تعداد نشست‌ها و handshakeهای هم‌زمان در سرور، صف بسته‌های محدود و backoff برای اتصال مجدد.
+- پروکسی TCP آزمایشی در فضای کاربر با حالت‌های Direct و Reverse (`pqtunnel-proxy`) و کنترل جریان محدودشده؛ این مسیر از تونل لایهٔ ۳ جداست و برای استفادهٔ عملیاتی آماده نیست.
 - گردش‌کار CI برای تست و cross-build لینوکس و ویندوز و ساخت فایل‌های Release از روی تگ نسخه.
 - اصلاح مسیر ماژول Go به `github.com/hatinati2/PQTunnel`.
 
@@ -62,7 +63,7 @@ PQTUNNEL_ADMIN_TOKEN=REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_BYTES
 ```sh
 go test ./...
 go vet ./...
-go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki ./cmd/pqtunnel-manager
+go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki ./cmd/pqtunnel-manager ./cmd/pqtunnel-proxy
 ```
 
 CI تست‌ها، تحلیل ایستا، یک آزمون یکپارچه‌سازی TLS روی loopback و cross-build برای Linux amd64/arm64 و Windows amd64 انجام می‌دهد؛ همچنین روی Ubuntu 24.04 و 26.04 تونل TUN واقعی و پورت‌فوروارد ورودی TCP/UDP را آزمایش می‌کند. تست خروج انتخابی بررسی می‌کند که TCP/443 و TCP/8443 و نیز UDP/53 و UDP/5354 از تونل عبور کنند، درحالی‌که TCP/8080، TCP/9443، UDP/5353، UDP/5355 و پروتکل اشتباه روی پورت‌های TCP/53 یا UDP/443 مستقیم بمانند؛ این بررسی برای IPv4 و IPv6 در network namespaceهای ایزوله انجام می‌شود. این تست‌ها فایروال ارائه‌دهنده یا کارکرد روی دو VPS واقعی را تأیید نمی‌کنند. ساخت Android هنوز در CI تأیید نمی‌شود.
@@ -165,7 +166,7 @@ REF=REPLACE_WITH_REVIEWED_40_CHAR_SHA; curl -fsSL "https://raw.githubusercontent
 
 ## انتشار نسخه
 
-ساخت تگ نسخه با پیشوند `v`، workflow فایل `.github/workflows/release.yml` را اجرا می‌کند تا باینری‌های Linux amd64/arm64 و Windows amd64 تولید شوند. ساخت Release به معنی آماده‌بودن VPN برای استفادهٔ تولیدی نیست.
+ساخت تگ نسخه با پیشوند `v`، workflow فایل `.github/workflows/release.yml` را اجرا می‌کند تا بسته‌های Linux amd64/arm64 و Windows amd64 تولید شوند؛ باینری آزمایشی `pqtunnel-proxy` هم داخل بسته‌ها قرار می‌گیرد و `pqtunnel-manager` در بسته‌های Linux موجود است. ساخت Release به معنی آماده‌بودن تونل یا پروکسی TCP برای استفادهٔ عملیاتی نیست.
 
 ## اسناد
 
