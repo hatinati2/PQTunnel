@@ -64,7 +64,7 @@ trap 'rc=$?; if [[ "$rc" -ne 0 ]]; then finalize failed; fi' EXIT
 mkdir -p "$STATE_DIR"
 chmod 0700 "$STATE_DIR"
 write_state running
-rm -f "$TOKEN_FILE" "$SAFE_LOG" "$RAW_LOG"
+rm -f "$TOKEN_FILE" "$SAFE_LOG" "$RAW_LOG" /var/lib/pqtunnel-manager/setup-approval
 
 [[ -x "$SCRIPT" ]] || { echo 'Pinned setup script is missing; upgrade PQTunnel manager.' > "$SAFE_LOG"; write_state failed; exit 1; }
 [[ "${PQTUNNEL_SETUP_INPUT_B64:-}" =~ ^[A-Za-z0-9+/=]+$ ]] || { echo 'Setup input was missing or invalid.' > "$SAFE_LOG"; write_state failed; exit 1; }
@@ -78,7 +78,7 @@ SETUP_VERSION="$(sed -n 's/^PQTUNNEL_SETUP_VERSION=//p' /etc/default/pqtunnel-ma
 [[ "$SETUP_VERSION" =~ ^v[0-9A-Za-z._-]+$ ]] || { echo 'Setup release version is missing; upgrade the manager.' > "$SAFE_LOG"; write_state failed; exit 1; }
 
 set +e
-PQTUNNEL_SETUP_VERSION="$SETUP_VERSION" PQTUNNEL_SETUP_PRESERVE_DIALER_MANAGER_TOKEN=1 PQTUNNEL_SETUP_INPUT_FILE="$INPUT_FILE" bash "$SCRIPT" > "$RAW_LOG" 2>&1
+PQTUNNEL_SETUP_VERSION="$SETUP_VERSION" PQTUNNEL_SETUP_PRESERVE_DIALER_MANAGER_TOKEN=1 PQTUNNEL_SETUP_STATE_FILE="$STATE_FILE" PQTUNNEL_SETUP_APPROVAL_FILE=/var/lib/pqtunnel-manager/setup-approval PQTUNNEL_SETUP_INPUT_FILE="$INPUT_FILE" bash "$SCRIPT" > "$RAW_LOG" 2>&1
 rc=$?
 set -e
 extract_tokens || true
