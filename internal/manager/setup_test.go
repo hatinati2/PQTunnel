@@ -31,6 +31,11 @@ func TestValidateSiteToSiteSetupRequestAcceptsValidInputs(t *testing.T) {
 	if err := ValidateSiteToSiteSetupRequest(req); err != nil {
 		t.Fatalf("valid IPv4 with no UDP ports rejected: %v", err)
 	}
+	req.TCPPorts = "none"
+	req.UDPPorts = "53"
+	if err := ValidateSiteToSiteSetupRequest(req); err != nil {
+		t.Fatalf("valid UDP-only profile rejected: %v", err)
+	}
 }
 
 func TestValidateSiteToSiteSetupRequestRejectsUnsafeValues(t *testing.T) {
