@@ -629,3 +629,78 @@ func TestSessionLateOpenOKAfterCancellationResetsOnlyStream(t *testing.T) {
 	}
 	waitForStreamCount(t, session, 0)
 }
+
+
+// DATA received before OPEN_OK is a stream-local protocol violation. It must
+// reset that stream and promptly release the waiting OpenContext caller
+// instead of leaving it blocked until the full open timeout.
+func TestSessionDataBeforeOpenOKReleasesOpenCaller(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true,
+		MaxStreams: 4,
+		OpenTimeout: 4 * time.Second,
+		WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	type openResult struct {
+		stream *Stream
+		err    error
+	}
+	result := make(chan openResult, 1)
+	go func() {
+		stream, openErr := session.OpenContext(
+			context.Background(), TypeOpenDirect, []byte("early-data"),
+		)
+		result <- openResult{stream: stream, err: openErr}
+	}()
+
+	_ = peerConn.SetDeadline(time.Now().Add(2 * time.Second))
+	request, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if request.Type != TypeOpenDirect || request.StreamID == 0 {
+		t.Fatalf("unexpected OPEN frame: %#v", request)
+	}
+	if err := WriteFrame(peerConn, Frame{
+		Type: TypeData, StreamID: request.StreamID, Payload: []byte("too-early"),
+	}); err != nil {
+		t.Fatalf("write DATA before OPEN_OK: %v", err)
+	}
+
+	reset, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read stream reset: %v", err)
+	}
+	if reset.Type != TypeClose || reset.StreamID != request.StreamID ||
+		len(reset.Payload) != 1 || reset.Payload[0] != closeFlagReset {
+		t.Fatalf("unexpected response to premature DATA: %#v", reset)
+	}
+
+	select {
+	case got := <-result:
+		if got.err == nil {
+			t.Fatal("OpenContext unexpectedly succeeded after premature DATA")
+		}
+		if got.stream != nil {
+			t.Fatal("OpenContext returned a stream after protocol reset")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("OpenContext remained blocked after its stream was reset")
+	}
+	if session.isDone() {
+		t.Fatal("premature DATA on one stream terminated the shared session")
+	}
+	waitForStreamCount(t, session, 0)
+}
