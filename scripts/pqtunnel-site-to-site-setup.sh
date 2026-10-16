@@ -5,7 +5,9 @@ umask 077
 VERSION="${PQTUNNEL_SETUP_VERSION:-v0.3.0-rc4}"
 REPO=hatinati2/PQTunnel
 REL="https://github.com/$REPO/releases/download/$VERSION"
-RAW="https://raw.githubusercontent.com/$REPO/main"
+# Match the immutable source revision used by install.sh, not mutable main.
+SOURCE_REF="ce5e8df485f14cf039a441a4607bc1e8737a25ef"
+RAW="https://raw.githubusercontent.com/$REPO/$SOURCE_REF"
 WORK="" STAGE="" REMOTE="" SSH_PORT=22 DTOKEN="" GTOKEN="" STOKEN="" TOKENS_SHOWN=0
 fail(){ printf 'PQTunnel setup: %s\n' "$*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || fail "Missing prerequisite: $1"; }
