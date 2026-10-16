@@ -12,12 +12,15 @@ import (
 	"time"
 )
 
+var errStreamDeadlineChanged = errors.New("proxymux: stream deadline changed")
+
 const (
 	defaultMaxStreams        = 128
 	defaultOpenTimeout       = 10 * time.Second
 	defaultWriteTimeout      = 10 * time.Second
 	defaultKeepAliveInterval = 20 * time.Second
-	streamReadQueueFrames    = 16
+	streamReadQueueFrames    = 8
+	maxSessionStreams        = 512
 )
 
 // OpenHandler validates an incoming logical stream request and returns the
@@ -78,6 +81,11 @@ func NewSession(parent context.Context, conn net.Conn, opts SessionOptions) (*Se
 	}
 	if opts.MaxStreams <= 0 {
 		opts.MaxStreams = defaultMaxStreams
+	}
+	if opts.MaxStreams > maxSessionStreams {
+		cancel()
+		_ = conn.Close()
+		return nil, fmt.Errorf("proxymux: MaxStreams exceeds hard limit of %d", maxSessionStreams)
 	}
 	if opts.OpenTimeout <= 0 {
 		opts.OpenTimeout = defaultOpenTimeout
@@ -218,6 +226,8 @@ func newStream(session *Session, id uint32, local bool) *Stream {
 		session: session, id: id, localOpen: local,
 		openPending: local, openResult: make(chan error, 1),
 		readCh: make(chan []byte, streamReadQueueFrames),
+		readDeadlineChanged: make(chan struct{}),
+		writeDeadlineChanged: make(chan struct{}),
 	}
 }
 
@@ -273,7 +283,7 @@ func (s *Session) sendFrame(frame Frame, deadline time.Time, changed <-chan stru
 			if timer != nil {
 				timer.Stop()
 			}
-			return os.ErrDeadlineExceeded
+			return errStreamDeadlineChanged
 		}
 	}
 }
@@ -449,6 +459,7 @@ func (s *Session) handleRemoteOpen(frame Frame) error {
 		return fmt.Errorf("proxymux: reused remote stream ID %d", frame.StreamID)
 	}
 	if len(s.streams) >= s.maxStreams {
+		s.rememberClosedIDLocked(frame.StreamID)
 		s.mu.Unlock()
 		_ = s.sendFrame(Frame{Type: TypeOpenError, StreamID: frame.StreamID, Payload: []byte("busy")}, time.Now().Add(s.writeTimeout), nil)
 		return nil
@@ -476,6 +487,9 @@ func (s *Session) runRemoteOpen(st *Stream, frameType Type, payload []byte) {
 		err = errors.New("proxymux: open handler returned a nil target")
 	}
 	if err != nil {
+		if target != nil {
+			_ = target.Close()
+		}
 		_ = s.sendFrame(Frame{Type: TypeOpenError, StreamID: st.id, Payload: []byte("open failed")}, time.Now().Add(s.writeTimeout), nil)
 		st.mu.Lock()
 		st.reset = true
@@ -531,17 +545,22 @@ func (s *Session) removeStream(st *Stream) {
 	s.mu.Lock()
 	if current, ok := s.streams[st.id]; ok && current == st {
 		delete(s.streams, st.id)
-		if _, exists := s.closedIDs[st.id]; !exists {
-			s.closedIDs[st.id] = struct{}{}
-			s.closedOrder = append(s.closedOrder, st.id)
-			if len(s.closedOrder) > 4096 {
-				old := s.closedOrder[0]
-				s.closedOrder = s.closedOrder[1:]
-				delete(s.closedIDs, old)
-			}
-		}
+		s.rememberClosedIDLocked(st.id)
 	}
 	s.mu.Unlock()
+}
+
+func (s *Session) rememberClosedIDLocked(id uint32) {
+	if _, exists := s.closedIDs[id]; exists {
+		return
+	}
+	s.closedIDs[id] = struct{}{}
+	s.closedOrder = append(s.closedOrder, id)
+	if len(s.closedOrder) > 4096 {
+		old := s.closedOrder[0]
+		s.closedOrder = s.closedOrder[1:]
+		delete(s.closedIDs, old)
+	}
 }
 
 func (s *Session) wasClosed(id uint32) bool {
@@ -591,6 +610,8 @@ type Stream struct {
 	openResult chan error
 	readCh chan []byte
 	target net.Conn
+	readDeadlineChanged chan struct{}
+	writeDeadlineChanged chan struct{}
 	readCloseOnce sync.Once
 	readMu sync.Mutex
 	writeMu sync.Mutex
@@ -619,6 +640,7 @@ func (st *Stream) Read(p []byte) (int, error) {
 		}
 		st.mu.Lock()
 		deadline := st.readDeadline
+		deadlineChanged := st.readDeadlineChanged
 		st.mu.Unlock()
 		var timer *time.Timer
 		var timeout <-chan time.Time
@@ -650,6 +672,11 @@ func (st *Stream) Read(p []byte) (int, error) {
 				timer.Stop()
 			}
 			return 0, st.session.sessionError()
+		case <-deadlineChanged:
+			if timer != nil {
+				timer.Stop()
+			}
+			continue
 		case <-timeout:
 			return 0, os.ErrDeadlineExceeded
 		}
@@ -677,7 +704,7 @@ func (st *Stream) Write(p []byte) (int, error) {
 			n = maxDataSize
 		}
 		payload := append([]byte(nil), p[:n]...)
-		if err := st.session.sendFrame(Frame{Type: TypeData, StreamID: st.id, Payload: payload}, deadline, nil); err != nil {
+		if err := st.sendFrame(Frame{Type: TypeData, StreamID: st.id, Payload: payload}); err != nil {
 			if written > 0 {
 				return written, err
 			}
@@ -726,7 +753,6 @@ func (st *Stream) abort(err error) {
 	alreadyReset := st.reset
 	st.reset = true
 	st.writeClosed = true
-	deadline := st.writeDeadline
 	target := st.target
 	st.mu.Unlock()
 	if target != nil {
@@ -735,7 +761,7 @@ func (st *Stream) abort(err error) {
 	st.endRead(err)
 	st.session.removeStream(st)
 	if !alreadyReset && !st.session.isDone() {
-		_ = st.session.sendFrame(Frame{Type: TypeClose, StreamID: st.id, Payload: []byte{closeFlagReset}}, deadline, nil)
+		_ = st.sendFrame(Frame{Type: TypeClose, StreamID: st.id, Payload: []byte{closeFlagReset}})
 	}
 }
 
@@ -810,6 +836,7 @@ func (st *Stream) RemoteAddr() net.Addr { return st.session.conn.RemoteAddr() }
 func (st *Stream) SetDeadline(t time.Time) error {
 	st.mu.Lock()
 	st.readDeadline, st.writeDeadline = t, t
+	st.notifyDeadlineChangeLocked()
 	st.mu.Unlock()
 	return nil
 }
@@ -817,6 +844,10 @@ func (st *Stream) SetDeadline(t time.Time) error {
 func (st *Stream) SetReadDeadline(t time.Time) error {
 	st.mu.Lock()
 	st.readDeadline = t
+	if st.readDeadlineChanged != nil {
+		close(st.readDeadlineChanged)
+	}
+	st.readDeadlineChanged = make(chan struct{})
 	st.mu.Unlock()
 	return nil
 }
@@ -824,8 +855,37 @@ func (st *Stream) SetReadDeadline(t time.Time) error {
 func (st *Stream) SetWriteDeadline(t time.Time) error {
 	st.mu.Lock()
 	st.writeDeadline = t
+	if st.writeDeadlineChanged != nil {
+		close(st.writeDeadlineChanged)
+	}
+	st.writeDeadlineChanged = make(chan struct{})
 	st.mu.Unlock()
 	return nil
+}
+
+func (st *Stream) notifyDeadlineChangeLocked() {
+	if st.readDeadlineChanged != nil {
+		close(st.readDeadlineChanged)
+	}
+	if st.writeDeadlineChanged != nil {
+		close(st.writeDeadlineChanged)
+	}
+	st.readDeadlineChanged = make(chan struct{})
+	st.writeDeadlineChanged = make(chan struct{})
+}
+
+func (st *Stream) sendFrame(frame Frame) error {
+	for {
+		st.mu.Lock()
+		deadline := st.writeDeadline
+		changed := st.writeDeadlineChanged
+		st.mu.Unlock()
+		err := st.session.sendFrame(frame, deadline, changed)
+		if errors.Is(err, errStreamDeadlineChanged) {
+			continue
+		}
+		return err
+	}
 }
 
 func relayStream(stream *Stream, target net.Conn) {
