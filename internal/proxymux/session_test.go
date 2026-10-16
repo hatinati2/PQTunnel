@@ -425,16 +425,16 @@ func TestSessionReceiveQueueSaturationReapsOnlyAffectedStream(t *testing.T) {
 		t.Fatal("timed out waiting for target")
 	}
 
-	writeDone := make(chan error, 1)
-	payload := bytes.Repeat([]byte("q"), maxDataSize*(streamReadQueueFrames+4))
-	go func() {
-		_, err := stream.Write(payload)
-		writeDone <- err
-	}()
-	select {
-	case <-writeDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("writer remained blocked after bounded receive queue filled")
+	payload := bytes.Repeat([]byte("q"), maxDataSize)
+	for i := 0; i < streamReadQueueFrames+4; i++ {
+		if err := left.sendFrame(Frame{
+			Type: TypeData, StreamID: stream.id, Payload: payload,
+		}, time.Now().Add(time.Second), nil); err != nil {
+			if left.isDone() {
+				t.Fatalf("session ended while injecting over-window DATA frame %d: %v", i, err)
+			}
+			break
+		}
 	}
 	waitForStreamCount(t, left, 0)
 	waitForStreamCount(t, right, 0)
@@ -879,6 +879,49 @@ func TestStreamWriteDeadlineWhenOutboundQueueSaturates(t *testing.T) {
 	}
 }
 
+
+// Large writes must apply per-stream backpressure instead of overflowing the
+// bounded receive queue. This also guards the byte-stream behavior users expect.
+func TestSessionWindowControlSupportsLargePayload(t *testing.T) {
+	left, _, accepted := newTestSessionPair(t, 2)
+	stream, err := left.Open(TypeOpenDirect, []byte("large-window-transfer"))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer stream.Close()
+	target := awaitTarget(t, accepted, "large-window-transfer")
+	_ = target.SetDeadline(time.Now().Add(30 * time.Second))
+
+	const size = 16 << 20
+	want := make([]byte, size)
+	for i := range want {
+		want[i] = byte((i*31 + 7) % 251)
+	}
+	type writeResult struct {
+		n int
+		err error
+	}
+	done := make(chan writeResult, 1)
+	go func() {
+		n, writeErr := stream.Write(want)
+		done <- writeResult{n: n, err: writeErr}
+	}()
+	got := make([]byte, size)
+	if _, err := io.ReadFull(target, got); err != nil {
+		t.Fatalf("read large payload from target: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("large payload changed while crossing the multiplexed stream")
+	}
+	select {
+	case result := <-done:
+		if result.err != nil || result.n != size {
+			t.Fatalf("large stream write returned n=%d err=%v; want n=%d and nil error", result.n, result.err, size)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("large stream write did not finish after target drained the payload")
+	}
+}
 
 // Stream ID allocation must wrap without using zero, colliding with a live
 // stream, or reusing one of the recently closed IDs.

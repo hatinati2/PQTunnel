@@ -2,6 +2,7 @@ package proxymux
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -246,6 +247,8 @@ func newStream(session *Session, id uint32, local bool) *Stream {
 		session: session, id: id, localOpen: local,
 		openPending: local, openResult: make(chan error, 1),
 		readCh: make(chan []byte, streamReadQueueFrames),
+		sendWindowFrames: streamReadQueueFrames,
+		windowChanged: make(chan struct{}),
 		readDeadlineChanged: make(chan struct{}),
 		writeDeadlineChanged: make(chan struct{}),
 	}
@@ -431,6 +434,32 @@ func (s *Session) handleFrame(frame Frame) error {
 		st.endRead(openErr)
 		s.removeStream(st)
 		return nil
+	case TypeWindowUpdate:
+		st, ok := s.getStream(frame.StreamID)
+		if !ok {
+			if s.wasClosed(frame.StreamID) {
+				return nil
+			}
+			return fmt.Errorf("proxymux: WINDOW_UPDATE for unknown stream %d", frame.StreamID)
+		}
+		credit := int(binary.BigEndian.Uint32(frame.Payload))
+		st.mu.Lock()
+		if st.reset {
+			st.mu.Unlock()
+			return nil
+		}
+		if !st.ready {
+			st.mu.Unlock()
+			return fmt.Errorf("proxymux: WINDOW_UPDATE before stream %d opened", frame.StreamID)
+		}
+		if st.sendWindowFrames+credit > streamReadQueueFrames {
+			st.mu.Unlock()
+			return fmt.Errorf("proxymux: WINDOW_UPDATE exceeds stream %d send window", frame.StreamID)
+		}
+		st.sendWindowFrames += credit
+		st.signalWindowChangedLocked()
+		st.mu.Unlock()
+		return nil
 	case TypeData:
 		st, ok := s.getStream(frame.StreamID)
 		if !ok {
@@ -571,6 +600,7 @@ func (s *Session) handleRemoteReset(st *Stream) {
 	alreadyReset := st.reset
 	st.reset = true
 	st.writeClosed = true
+	st.signalWindowChangedLocked()
 	target := st.target
 	cancelOpen := st.openCancel
 	st.openCancel = nil
@@ -664,6 +694,8 @@ type Stream struct {
 
 	openResult chan error
 	readCh chan []byte
+	sendWindowFrames int
+	windowChanged chan struct{}
 	target net.Conn
 	openCancel context.CancelFunc
 	readDeadlineChanged chan struct{}
@@ -692,6 +724,11 @@ func (st *Stream) Read(p []byte) (int, error) {
 		if len(st.pending) > 0 {
 			n := copy(p, st.pending)
 			st.pending = st.pending[n:]
+			if len(st.pending) == 0 {
+				if err := st.returnReadCredit(); err != nil {
+					st.abort(err)
+				}
+			}
 			return n, nil
 		}
 		st.mu.Lock()
@@ -744,22 +781,19 @@ func (st *Stream) Write(p []byte) (int, error) {
 	defer st.writeMu.Unlock()
 	written := 0
 	for len(p) > 0 {
-		st.mu.Lock()
-		if st.reset || st.writeClosed || !st.ready {
-			st.mu.Unlock()
-			if written > 0 {
-				return written, net.ErrClosed
-			}
-			return 0, net.ErrClosed
-		}
-		st.mu.Unlock()
-
 		n := len(p)
 		if n > maxDataSize {
 			n = maxDataSize
 		}
+		if err := st.acquireSendCredit(); err != nil {
+			if written > 0 {
+				return written, err
+			}
+			return 0, err
+		}
 		payload := append([]byte(nil), p[:n]...)
 		if err := st.sendFrame(Frame{Type: TypeData, StreamID: st.id, Payload: payload}); err != nil {
+			st.restoreSendCredit()
 			if written > 0 {
 				return written, err
 			}
@@ -769,6 +803,87 @@ func (st *Stream) Write(p []byte) (int, error) {
 		p = p[n:]
 	}
 	return written, nil
+}
+
+// acquireSendCredit bounds unacknowledged DATA frames to the peer's receive
+// queue capacity. Write deadlines and remote resets also wake a blocked writer.
+func (st *Stream) acquireSendCredit() error {
+	for {
+		st.mu.Lock()
+		if st.reset || st.writeClosed || !st.ready {
+			st.mu.Unlock()
+			return net.ErrClosed
+		}
+		if st.sendWindowFrames > 0 {
+			st.sendWindowFrames--
+			st.mu.Unlock()
+			return nil
+		}
+		deadline := st.writeDeadline
+		deadlineChanged := st.writeDeadlineChanged
+		windowChanged := st.windowChanged
+		st.mu.Unlock()
+
+		var timer *time.Timer
+		var timeout <-chan time.Time
+		if !deadline.IsZero() {
+			left := time.Until(deadline)
+			if left <= 0 {
+				return os.ErrDeadlineExceeded
+			}
+			timer = time.NewTimer(left)
+			timeout = timer.C
+		}
+		select {
+		case <-windowChanged:
+			if timer != nil {
+				timer.Stop()
+			}
+			continue
+		case <-deadlineChanged:
+			if timer != nil {
+				timer.Stop()
+			}
+			continue
+		case <-st.session.done:
+			if timer != nil {
+				timer.Stop()
+			}
+			return st.session.sessionError()
+		case <-timeout:
+			return os.ErrDeadlineExceeded
+		}
+	}
+}
+
+func (st *Stream) restoreSendCredit() {
+	st.mu.Lock()
+	if st.sendWindowFrames < streamReadQueueFrames {
+		st.sendWindowFrames++
+	}
+	st.signalWindowChangedLocked()
+	st.mu.Unlock()
+}
+
+func (st *Stream) returnReadCredit() error {
+	st.mu.Lock()
+	inactive := st.reset || st.readClosed
+	st.mu.Unlock()
+	if inactive || st.session.isDone() {
+		return nil
+	}
+	var payload [4]byte
+	binary.BigEndian.PutUint32(payload[:], 1)
+	return st.session.sendFrame(Frame{
+		Type: TypeWindowUpdate, StreamID: st.id, Payload: payload[:],
+	}, time.Now().Add(st.session.writeTimeout), nil)
+}
+
+func (st *Stream) signalWindowChangedLocked() {
+	if st.windowChanged != nil {
+		close(st.windowChanged)
+	}
+	st.windowChanged = make(chan struct{})
 }
 
 // CloseWrite half-closes this stream's sending direction while leaving the
@@ -807,6 +922,7 @@ func (st *Stream) abort(err error) {
 	alreadyReset := st.reset
 	st.reset = true
 	st.writeClosed = true
+	st.signalWindowChangedLocked()
 	target := st.target
 	cancelOpen := st.openCancel
 	st.openCancel = nil
@@ -857,6 +973,7 @@ func (st *Stream) markSessionEnd(err error) {
 	st.mu.Lock()
 	st.reset = true
 	st.writeClosed = true
+	st.signalWindowChangedLocked()
 	target := st.target
 	cancelOpen := st.openCancel
 	st.openCancel = nil

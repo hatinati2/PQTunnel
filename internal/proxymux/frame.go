@@ -10,7 +10,7 @@ import (
 
 const (
 	// Version is the on-wire protocol version.
-	Version byte = 1
+	Version byte = 2
 
 	headerSize = 12
 	maxDataSize = 16 * 1024
@@ -34,6 +34,7 @@ const (
 	TypeClose
 	TypePing
 	TypePong
+	TypeWindowUpdate
 )
 
 // Frame is a single frame on the multiplexed TLS byte stream.
@@ -56,6 +57,8 @@ func (typ Type) String() string {
 		return "ping"
 	case TypePong:
 		return "pong"
+	case TypeWindowUpdate:
+		return "window-update"
 	default:
 		return "unknown"
 	}
@@ -161,6 +164,13 @@ func validateHeader(frameType Type, streamID, size uint32) error {
 		if size != 1 {
 			return fmt.Errorf("proxymux: CLOSE payload must be exactly one byte")
 		}
+	case TypeWindowUpdate:
+		if streamID == 0 {
+			return fmt.Errorf("proxymux: WINDOW_UPDATE requires a nonzero stream ID")
+		}
+		if size != 4 {
+			return fmt.Errorf("proxymux: WINDOW_UPDATE payload must be exactly 4 bytes")
+		}
 	case TypePing, TypePong:
 		if streamID != 0 {
 			return fmt.Errorf("proxymux: control frame requires stream ID zero")
@@ -181,6 +191,12 @@ func validatePayload(frame Frame) error {
 		}
 		if frame.Payload[0] != closeFlagWrite && frame.Payload[0] != closeFlagReset {
 			return fmt.Errorf("proxymux: invalid CLOSE flag %d", frame.Payload[0])
+		}
+	}
+	if frame.Type == TypeWindowUpdate {
+		credit := binary.BigEndian.Uint32(frame.Payload)
+		if credit == 0 || credit > uint32(streamReadQueueFrames) {
+			return fmt.Errorf("proxymux: WINDOW_UPDATE credit must be between 1 and %d frames", streamReadQueueFrames)
 		}
 	}
 	return nil
