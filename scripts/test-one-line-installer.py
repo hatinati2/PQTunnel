@@ -155,7 +155,7 @@ class OneLineInstallerTests(unittest.TestCase):
 
 
     def test_full_setup_hardens_existing_public_manager_before_network_checks(self) -> None:
-        secure = self.setup.index("\\n secure_existing_local_manager\\n")
+        secure = self.setup.rindex("secure_existing_local_manager")
         network_dependencies = self.setup.index("for c in curl sha256sum tar ssh scp ip nft sysctl")
         self.assertLess(secure, network_dependencies)
         self.assertIn('PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091', self.setup)
