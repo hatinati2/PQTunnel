@@ -1379,7 +1379,14 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 		reconnects       = 12
 		streamsPerSession = 8
 	)
+	runtime.GC()
 	baseline := runtime.NumGoroutine()
+	var baselineMem runtime.MemStats
+	runtime.ReadMemStats(&baselineMem)
+	heapBaseline := baselineMem.HeapAlloc
+	var maxHeapAfterGC uint64
+	var maxCleanupDuration time.Duration
+
 	broker := NewSessionBroker()
 	var sessions []*Session
 
@@ -1450,8 +1457,24 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 			_ = target.Close()
 		}
 
+		cleanupStarted := time.Now()
 		waitForStreamCount(t, left, 0)
 		waitForStreamCount(t, right, 0)
+		cleanupDuration := time.Since(cleanupStarted)
+		if cleanupDuration > maxCleanupDuration {
+			maxCleanupDuration = cleanupDuration
+		}
+		if cleanupDuration > 2*time.Second {
+			t.Fatalf("stream cleanup took %s in reconnect generation %d", cleanupDuration, generation)
+		}
+
+		runtime.GC()
+		var cycleMem runtime.MemStats
+		runtime.ReadMemStats(&cycleMem)
+		if cycleMem.HeapAlloc > maxHeapAfterGC {
+			maxHeapAfterGC = cycleMem.HeapAlloc
+		}
+		t.Logf("generation=%d live_streams=0 cleanup=%s goroutines=%d heap_after_gc=%d", generation, cleanupDuration, runtime.NumGoroutine(), cycleMem.HeapAlloc)
 
 		// One active pair accounts for six session-loop goroutines. A small
 		// allowance covers short-lived runtime/test-runner activity, while a
@@ -1491,6 +1514,17 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 		}
 		waitForStreamCount(t, session, 0)
 	}
+
+	runtime.GC()
+	var finalMem runtime.MemStats
+	runtime.ReadMemStats(&finalMem)
+	const maxRetainedHeapGrowth = 16 << 20
+	if finalMem.HeapAlloc > heapBaseline+maxRetainedHeapGrowth {
+		t.Fatalf("retained heap grew beyond allowance: baseline=%d final=%d max_cycle=%d allowance=%d",
+			heapBaseline, finalMem.HeapAlloc, maxHeapAfterGC, maxRetainedHeapGrowth)
+	}
+	t.Logf("resource soak summary: heap_baseline=%d heap_final=%d heap_growth=%d max_cycle_heap_after_gc=%d max_stream_cleanup=%s",
+		heapBaseline, finalMem.HeapAlloc, finalMem.HeapAlloc-heapBaseline, maxHeapAfterGC, maxCleanupDuration)
 
 	// Relays should terminate after their streams and transports are closed.
 	// Allow a small runtime/test-runner fluctuation, but reject a persistent
