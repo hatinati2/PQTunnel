@@ -21,10 +21,19 @@ func newTestSessionPair(t *testing.T, maxStreams int) (*Session, *Session, <-cha
 	leftConn, rightConn := net.Pipe()
 	accepted := make(chan acceptedTarget, 8)
 
+	openHandler := func(_ context.Context, typ Type, payload []byte) (net.Conn, error) {
+		if typ != TypeOpenDirect && typ != TypeOpenReverse {
+			return nil, errors.New("unexpected open type")
+		}
+		serverSide, testSide := net.Pipe()
+		accepted <- acceptedTarget{name: string(payload), conn: testSide}
+		return serverSide, nil
+	}
 	left, err := NewSession(context.Background(), leftConn, SessionOptions{
 		Initiator: true, MaxStreams: maxStreams,
 		OpenTimeout: time.Second, WriteTimeout: time.Second,
 		KeepAliveInterval: time.Hour,
+		OnOpen: openHandler,
 	})
 	if err != nil {
 		_ = leftConn.Close()
@@ -35,14 +44,7 @@ func newTestSessionPair(t *testing.T, maxStreams int) (*Session, *Session, <-cha
 		Initiator: false, MaxStreams: maxStreams,
 		OpenTimeout: time.Second, WriteTimeout: time.Second,
 		KeepAliveInterval: time.Hour,
-		OnOpen: func(_ context.Context, typ Type, payload []byte) (net.Conn, error) {
-			if typ != TypeOpenDirect && typ != TypeOpenReverse {
-				return nil, errors.New("unexpected open type")
-			}
-			serverSide, testSide := net.Pipe()
-			accepted <- acceptedTarget{name: string(payload), conn: testSide}
-			return serverSide, nil
-		},
+		OnOpen: openHandler,
 	})
 	if err != nil {
 		_ = left.Close()
