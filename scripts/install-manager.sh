@@ -66,7 +66,7 @@ fi
 TMPBIN=""
 BACKUP_DIR=""
 NEW_MANAGER_TOKEN=""
-cleanup() { [[ -z "$TMPBIN" ]] || rm -f "$TMPBIN"; unset NEW_MANAGER_TOKEN; }
+cleanup() { [[ -z "$TMPBIN" ]] || rm -f "$TMPBIN"; [[ -z "${config_tmp:-}" ]] || rm -f -- "$config_tmp"; unset NEW_MANAGER_TOKEN; }
 trap cleanup EXIT
 if [[ -f "$SOURCE/go.mod" ]]; then
   command -v go >/dev/null || fail 'Go 1.26+ is required to build from source; use the matching Linux release bundle otherwise.'
@@ -144,10 +144,17 @@ if ! systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service /etc/sy
   if (( UPGRADE )); then
     install -o root -g root -m 0755 "$BACKUP_DIR/pqtunnel-manager" /usr/local/sbin/pqtunnel-manager
     install -o root -g root -m 0644 "$BACKUP_DIR/pqtunnel-manager.service" /etc/systemd/system/pqtunnel-manager.service
-    install -o root -g root -m 0600 "$BACKUP_DIR/pqtunnel-manager.env" /etc/default/pqtunnel-manager
+    if [[ -z "$NEW_MANAGER_TOKEN" ]]; then
+      install -o root -g root -m 0600 "$BACKUP_DIR/pqtunnel-manager.env" /etc/default/pqtunnel-manager
+    fi
     systemctl daemon-reload
+    if [[ -n "$NEW_MANAGER_TOKEN" ]]; then
+      systemctl stop pqtunnel-manager >/dev/null 2>&1 || true
+      systemctl restart pqtunnel-manager || systemctl stop pqtunnel-manager >/dev/null 2>&1 || true
+      printf '\nUpgrade validation failed; previous binary/unit restored. The old public listener has been kept private. Save the rotated token if needed:\\nPQTUNNEL_MANAGER_TOKEN=%s\\n' "$NEW_MANAGER_TOKEN" >&2
+    fi
   fi
-  fail 'systemd unit validation failed; manager config/binary were restored when this was an upgrade.'
+  fail 'systemd unit validation failed; previous manager binary/unit were restored when this was an upgrade.'
 fi
 
 if (( UPGRADE )); then
@@ -155,10 +162,17 @@ if (( UPGRADE )); then
     if ! systemctl restart pqtunnel-manager; then
       install -o root -g root -m 0755 "$BACKUP_DIR/pqtunnel-manager" /usr/local/sbin/pqtunnel-manager
       install -o root -g root -m 0644 "$BACKUP_DIR/pqtunnel-manager.service" /etc/systemd/system/pqtunnel-manager.service
-      install -o root -g root -m 0600 "$BACKUP_DIR/pqtunnel-manager.env" /etc/default/pqtunnel-manager
+      if [[ -z "$NEW_MANAGER_TOKEN" ]]; then
+        install -o root -g root -m 0600 "$BACKUP_DIR/pqtunnel-manager.env" /etc/default/pqtunnel-manager
+      fi
       systemctl daemon-reload
-      systemctl restart pqtunnel-manager || true
-      fail "manager upgrade failed; previous manager binary, unit and config were restored. Backup: $BACKUP_DIR"
+      if ! systemctl restart pqtunnel-manager; then
+        systemctl stop pqtunnel-manager >/dev/null 2>&1 || true
+      fi
+      if [[ -n "$NEW_MANAGER_TOKEN" ]]; then
+        printf '\nManager restart failed; previous binary/unit restored and insecure public binding was not restored. Save the new token for recovery:\\nPQTUNNEL_MANAGER_TOKEN=%s\\n' "$NEW_MANAGER_TOKEN" >&2
+      fi
+      fail "manager upgrade failed; previous binary/unit restored. Review service status and backup: $BACKUP_DIR"
     fi
   fi
   echo "PQTunnel manager upgraded with graphical setup support."
