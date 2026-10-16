@@ -93,6 +93,62 @@ No live deployment until all tests pass in CI and an operator confirms that the 
 
 The first live test, if ever approved, should be a manually started foreground process with a loopback-only Direct proxy and one deliberately selected reverse target. It must not use systemd auto-start or change existing networking. Approval to do that test is separate from this design proposal.
 
+## Current implementation status
+
+The draft branch now contains an initial implementation of the user-space TCP proxy path:
+
+- `internal/proxymux/frame.go`: versioned and bounded frame codec.
+- `internal/proxymux/session.go`: multiplexed logical streams with odd/even stream IDs, bounded queue sizes, keepalive, deadlines, close/half-close handling, and stream cleanup.
+- `internal/proxymux/broker.go`: a reconnect-aware broker that lets listener handlers wait for an authenticated session.
+- `internal/proxymux/proxy.go`: loopback-only SOCKS5 TCP CONNECT for Direct, explicit Reverse TCP listeners with named fixed targets, target-port allowlisting, and rejection of private/reserved IP ranges for Direct outbound targets.
+- `cmd/pqtunnel-proxy/main.go`: explicit `gateway` and `dialer` roles using PQTunnel's strict TLS 1.3/mTLS configuration.
+
+CI tests exercise the frame codec, concurrent logical Direct/Reverse streams, the SOCKS5 Direct flow, the Reverse listener flow, stream limits, and bad configuration paths. These tests use local sockets and in-memory/net.Pipe peers; they are not proof of reachability through either production host's firewall or a provider firewall.
+
+### Configuration model (illustrative only)
+
+Gateway:
+
+```text
+PQTUNNEL_PROXY_ROLE=gateway
+PQTUNNEL_PROXY_LISTEN=EXPLICIT_BIND_IP:PORT
+PQTUNNEL_PROXY_CA=/secure/path/ca.crt
+PQTUNNEL_PROXY_CERT=/secure/path/server.crt
+PQTUNNEL_PROXY_KEY=/secure/path/server.key
+PQTUNNEL_PROXY_PEER_NAME=EXPECTED_CLIENT_CERT_CN
+PQTUNNEL_PROXY_DIRECT_ALLOWED_PORTS=80,443
+PQTUNNEL_PROXY_REVERSE_LISTENERS=web=127.0.0.1:14443
+PQTUNNEL_PROXY_MAX_STREAMS=128
+```
+
+Dialer:
+
+```text
+PQTUNNEL_PROXY_ROLE=dialer
+PQTUNNEL_PROXY_SERVER=GATEWAY_HOST:PORT
+PQTUNNEL_PROXY_SERVER_NAME=GATEWAY_CERTIFICATE_SAN_NAME
+PQTUNNEL_PROXY_CA=/secure/path/ca.crt
+PQTUNNEL_PROXY_CERT=/secure/path/client.crt
+PQTUNNEL_PROXY_KEY=/secure/path/client.key
+PQTUNNEL_PROXY_DIRECT_LISTEN=127.0.0.1:1080
+PQTUNNEL_PROXY_REVERSE_TARGETS=web=127.0.0.1:8080
+PQTUNNEL_PROXY_MAX_STREAMS=128
+```
+
+The Gateway listener name and Dialer target name must match exactly. Replace every placeholder with reviewed, real values; these examples are not ready-to-run config files. Keep private keys owner-readable only (mode `0600`). A public Reverse listener must only be configured on a port that is already permitted by the host/provider's existing policy; this program does not alter the firewall to open it. The Direct allowlist is an explicit destination TCP port allowlist.
+
+### Remaining release gates
+
+- Add an end-to-end TLS integration test using generated test certificates and verify exact peer identity/SAN behavior, reconnect cleanup and concurrent streams over TLS, not just over a memory pipe.
+- Test address policy and stream cancellation/backpressure under race and failure injection; compare process/resource cleanup before and after.
+- Verify that both directions can be used simultaneously under a single mTLS session across reconnects, with mismatched mapping names and unauthorized peers rejected.
+- Decide and document whether HTTP CONNECT support is needed; the first implementation supports SOCKS5 TCP CONNECT only.
+- UDP forwarding, SOCKS5 UDP ASSOCIATE and transparent system-wide L3 routing are not implemented by this proxy mode.
+- Run the listener/reverse-target setup only in disposable namespaces or isolated VMs before any production rollout.
+- Add an installer/systemd unit only after the protocol and end-to-end tests pass. The current draft is not integrated into the production bootstrap installer.
+
 ## Current decision
 
-This proposal is an alternative to transparent Layer-3 routing when firewall and route changes are prohibited. It is not implemented yet and must not be treated as an install guide. The production hosts remain untouched.
+The user-space proxy is now partially implemented on the draft branch, but it is **not ready for installation or production use**. In particular, the currently reviewed hosts have active tunnels, pre-enabled forwarding and existing netfilter rules. No command from this branch has been run on either production VPS; no services, routes, TUN devices, sysctls, NAT or firewall state has been changed. Do not bypass the existing Layer-3 helper's fail-closed checks.
+
+This design avoids host route and firewall modifications for Direct/Reverse TCP proxying, but it does not make arbitrary host traffic transparently flow through the tunnel. TLS protects payload confidentiality and peer authentication; it does not guarantee DPI invisibility.
