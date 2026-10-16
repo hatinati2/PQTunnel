@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   frame-decoder-fuzz:
-    name: bounded frame decoder fuzz
+    name: 15-second frame decoder fuzz
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -17,5 +17,5 @@ jobs:
         with:
           go-version: '1.27.x'
           cache: true
-      - name: Run bounded frame decoder fuzz campaign
-        run: go test -fuzz=FuzzReadFrame -fuzztime=3s ./internal/proxymux
+      - name: Run extended bounded frame decoder fuzz campaign
+        run: go test -fuzz=FuzzReadFrame -fuzztime=15s ./internal/proxymux
