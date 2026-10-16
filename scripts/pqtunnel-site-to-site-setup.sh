@@ -236,7 +236,7 @@ ENV
  systemctl enable --now pqtunnel-manager; systemctl restart pqtunnel-manager; systemctl --no-pager --full status pqtunnel-manager
  ssh -p "$SSH_PORT" "$REMOTE" 'systemctl --no-pager is-active pqtunneld && systemctl --no-pager is-active pqtunnel-manager'
  printf '\nSetup finished. Save these tokens privately (one-time display).\nIran/Dialer manager token: %s\nGermany/Gateway manager token: %s\nShared speed-test token: %s\n' "$DTOKEN" "$GTOKEN" "$STOKEN"
- printf '\nPanels are loopback-only. On your admin computer use:\nGermany: ssh -N -L 9091:127.0.0.1:9091 -p %s %s\nIran:    ssh -N -L 9092:127.0.0.1:9091\nThen open http://127.0.0.1:9091 (Germany) or http://127.0.0.1:9092 (Iran).\n' "$SSH_PORT" "$REMOTE"
+ printf '\nPanels are loopback-only. On your admin computer use:\nGermany: ssh -N -L 9091:127.0.0.1:9091 -p %s %s\nIran:    ssh -N -L 9092:127.0.0.1:9091 USER@IRAN_PUBLIC_IP\nReplace USER@IRAN_PUBLIC_IP with your SSH user and public address for the Iran VPS.\nThen open http://127.0.0.1:9091 (Germany) or http://127.0.0.1:9092 (Iran).\n' "$SSH_PORT" "$REMOTE"
  printf 'Via Germany: TCP %s; UDP %s. Other destination ports remain direct. Provider firewall was not changed.\n' "$TCP" "${UDP:-none}"
  ssh -p "$SSH_PORT" "$REMOTE" "rm -rf -- '$STAGE'" || fail 'Setup completed, but remote staging directory cleanup failed.'
  STAGE=""; TOKENS_SHOWN=1
