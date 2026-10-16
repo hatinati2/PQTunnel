@@ -5,7 +5,9 @@ set -Eeuo pipefail
 VERSION="v0.3.0-rc4"
 REPO="hatinati2/PQTunnel"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
-SOURCE_RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
+# Keep helper scripts on one reviewed immutable commit; binaries remain release-pinned.
+SOURCE_REF="ce5e8df485f14cf039a441a4607bc1e8737a25ef"
+SOURCE_RAW_BASE="https://raw.githubusercontent.com/${REPO}/${SOURCE_REF}"
 RELEASE_BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 TMP_DIR=""
 TOKEN=""
