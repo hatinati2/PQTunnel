@@ -199,7 +199,11 @@ func startTLSMuxSessions(t *testing.T, fixture *tlsMuxFixture) (*Session, *Sessi
 		err = tc.HandshakeContext(handshakeCtx)
 		handshakeCancel()
 		if err == nil {
-			err = tunnel.VerifyPeerCommonName(tc.ConnectionState(), "dialer.test")
+			state := tc.ConnectionState()
+			err = tunnel.VerifyPeerCommonName(state, "dialer.test")
+			if err == nil && (state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768) {
+				err = fmt.Errorf("unexpected TLS negotiation: version=%x group=%v", state.Version, state.CurveID)
+			}
 		}
 		if err != nil {
 			_ = tc.Close()
@@ -230,6 +234,13 @@ func startTLSMuxSessions(t *testing.T, fixture *tlsMuxFixture) (*Session, *Sessi
 	if err != nil {
 		_ = clientTLS.Close()
 		t.Fatalf("TLS 1.3 hybrid mTLS handshake failed: %v", err)
+	}
+	state := clientTLS.ConnectionState()
+	if state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768 {
+		t.Fatalf("unexpected TLS negotiation: version=%x group=%v", state.Version, state.CurveID)
+	}
+	if len(state.PeerCertificates) == 0 || state.PeerCertificates[0].Subject.CommonName != "gateway.test" {
+		t.Fatal("client did not receive the expected Gateway certificate identity")
 	}
 	dialerSession, err = NewSession(ctx, clientTLS, SessionOptions{
 		Initiator: true, MaxStreams: 8, KeepAliveInterval: time.Hour,
