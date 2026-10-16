@@ -17,6 +17,8 @@ class OneLineInstallerTests(unittest.TestCase):
         cls.readme_fa = (ROOT / "README.fa.md").read_text(encoding="utf-8")
         cls.manager_installer = (ROOT / "scripts/install-manager.sh").read_text(encoding="utf-8")
         cls.pki_installer = (ROOT / "scripts/prepare-site-to-site-pki.sh").read_text(encoding="utf-8")
+        cls.setup = (ROOT / "scripts/pqtunnel-site-to-site-setup.sh").read_text(encoding="utf-8")
+        cls.remote_setup = (ROOT / "scripts/pqtunnel-site-to-site-remote.sh").read_text(encoding="utf-8")
 
     def test_installer_tracks_current_rc4_release(self) -> None:
         self.assertIn('VERSION="v0.3.0-rc4"', self.script)
@@ -106,6 +108,59 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertIn('--pair', self.readme_fa)
         self.assertIn('فایروال ابری را تغییر نمی‌دهد', self.readme_fa)
 
+
+
+    def test_full_two_vps_setup_is_reachable_from_one_line_entrypoint(self) -> None:
+        self.assertIn("--site-to-site", self.script)
+        self.assertIn('MODE=site-to-site', self.script)
+        self.assertIn('scripts/pqtunnel-site-to-site-setup.sh', self.script)
+        self.assertIn('PQTUNNEL_SETUP_VERSION="$VERSION"', self.script)
+        self.assertIn('curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --site-to-site', self.script)
+
+    def test_guided_setup_requires_explicit_confirmation_and_is_selective(self) -> None:
+        self.assertIn("Type exactly INSTALL to continue", self.setup)
+        self.assertIn("selected destination ports only, not all device traffic", self.setup)
+        self.assertIn("PQTUNNEL_TCP_EGRESS_PORTS=$TCP", self.setup)
+        self.assertIn('ALLOW="$(allowlist "$TCP" "$UDP")"', self.setup)
+        self.assertNotIn('TCP="$(add_port "$TCP" 9109)"', self.setup)
+        self.assertIn("PQTUNNEL_UDP_EGRESS_PORTS=$UDP", self.setup)
+        self.assertIn("PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091", self.setup)
+        self.assertIn("PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091", self.remote_setup)
+
+    def test_existing_public_dialer_manager_is_restricted_before_long_setup(self) -> None:
+        rotate = self.setup.index("Existing Dialer manager is now restricted to loopback")
+        package_install = self.setup.index("apt-get update")
+        self.assertLess(rotate, package_install)
+        self.assertIn("PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP", self.setup)
+        self.assertIn("systemctl restart pqtunnel-manager", self.setup)
+
+    def test_full_setup_fails_closed_and_does_not_send_ca_private_key(self) -> None:
+        for fragment in ("active UFW", "already has nftables rules", "already has iptables rules",
+                         "route table 518/519 in use", "already has pqtun0"):
+            self.assertIn(fragment, self.setup)
+        self.assertIn("CA private key must stay offline", self.remote_setup)
+        self.assertIn("PQTUNNEL_MANAGER_ROLE=gateway", self.remote_setup)
+        self.assertIn("PQTUNNEL_MANAGER_ROLE=dialer", self.setup)
+        self.assertIn("chmod 0600", self.remote_setup)
+
+
+    def test_existing_gateway_manager_is_restricted_before_endpoint_install(self) -> None:
+        install_branch = self.remote_setup.index("  install)")
+        manager_config = self.remote_setup.index("    configure_manager", install_branch)
+        endpoint_install = self.remote_setup.index('bash "$BUNDLE/scripts/install-server.sh"', install_branch)
+        self.assertLess(manager_config, endpoint_install)
+        self.assertIn("systemctl restart pqtunnel-manager", self.remote_setup)
+        self.assertIn('"$REMOTE:$STAGE/gateway-manager-token"', self.setup)
+        self.assertIn('"$REMOTE:$STAGE/speedtest-token"', self.setup)
+
+
+    def test_full_setup_hardens_existing_public_manager_before_network_checks(self) -> None:
+        secure = self.setup.index("\\n secure_existing_local_manager\\n")
+        network_dependencies = self.setup.index("for c in curl sha256sum tar ssh scp ip nft sysctl")
+        self.assertLess(secure, network_dependencies)
+        self.assertIn('PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091', self.setup)
+        self.assertIn("PQTUNNEL_MANAGER_TOKEN=%s", self.setup)
+        self.assertIn("warning: setup stopped part-way", self.setup.lower())
 
 
 if __name__ == "__main__":
