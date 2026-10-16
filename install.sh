@@ -89,7 +89,7 @@ fi
 case "$MODE" in
   pair)
     [[ "$EUID" -eq 0 ]] || fail 'paired installation requires root; rerun with sudo on the Iran/Dialer VPS.'
-    need curl; need tar; need sha256sum; need awk; need uname; need grep; need python3; need ssh; need scp
+    need curl; need tar; need sha256sum; need awk; need uname; need grep
     case "$(uname -m)" in
       x86_64|amd64) ARCH=amd64 ;;
       aarch64|arm64) ARCH=arm64 ;;
