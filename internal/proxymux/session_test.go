@@ -877,3 +877,244 @@ func TestStreamWriteDeadlineWhenOutboundQueueSaturates(t *testing.T) {
 		t.Fatal("a single stream write deadline terminated the shared session")
 	}
 }
+
+
+// Stream ID allocation must wrap without using zero, colliding with a live
+// stream, or reusing one of the recently closed IDs.
+func TestSessionAllocateIDWraparoundSkipsActiveAndRecentlyClosedIDs(t *testing.T) {
+	left, right, _ := newTestSessionPair(t, 8)
+	maxID := ^uint32(0)
+	tests := []struct {
+		name     string
+		session  *Session
+		nextID   uint32
+		closed   []uint32
+		activeID uint32
+		wantID   uint32
+	}{
+		{
+			name: "initiator odd IDs",
+			session: left,
+			nextID: maxID,
+			closed: []uint32{maxID, 1},
+			activeID: 3,
+			wantID: 5,
+		},
+		{
+			name: "acceptor even IDs",
+			session: right,
+			nextID: maxID - 1,
+			closed: []uint32{maxID - 1, 2},
+			activeID: 4,
+			wantID: 6,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := tt.session
+			s.mu.Lock()
+			s.nextID = tt.nextID
+			for _, id := range tt.closed {
+				s.closedIDs[id] = struct{}{}
+			}
+			s.streams[tt.activeID] = newStream(s, tt.activeID, s.initiator)
+			got, err := s.allocateIDLocked()
+			s.mu.Unlock()
+
+			if err != nil {
+				t.Fatalf("allocateIDLocked() error = %v", err)
+			}
+			if got != tt.wantID {
+				t.Fatalf("allocateIDLocked() = %d, want %d", got, tt.wantID)
+			}
+			if got == 0 || (got%2 == 1) != s.initiator {
+				t.Fatalf("allocated stream ID %d has invalid parity for initiator=%t", got, s.initiator)
+			}
+		})
+	}
+}
+
+// The recently-closed ID cache must remain bounded as streams churn.
+func TestSessionClosedIDCacheRemainsBounded(t *testing.T) {
+	left, _, _ := newTestSessionPair(t, 4)
+	left.mu.Lock()
+	for id := uint32(1); id <= 4097; id++ {
+		left.rememberClosedIDLocked(id)
+	}
+	count := len(left.closedIDs)
+	_, firstRetained := left.closedIDs[1]
+	_, newestRetained := left.closedIDs[4097]
+	orderLen := len(left.closedOrder)
+	left.mu.Unlock()
+
+	if count != 4096 || orderLen != 4096 {
+		t.Fatalf("closed ID cache sizes = map:%d order:%d, want 4096 each", count, orderLen)
+	}
+	if firstRetained {
+		t.Fatal("oldest closed ID was not evicted from the bounded cache")
+	}
+	if !newestRetained {
+		t.Fatal("newest closed ID was unexpectedly evicted")
+	}
+}
+
+// OPEN_OK is a one-time transition. A duplicate success response for the same
+// still-open stream is a protocol violation and must close the session.
+func TestSessionRejectsDuplicateOpenOK(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true, MaxStreams: 4,
+		OpenTimeout: time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	type openResult struct {
+		stream *Stream
+		err    error
+	}
+	result := make(chan openResult, 1)
+	go func() {
+		stream, openErr := session.OpenContext(context.Background(), TypeOpenDirect, []byte("duplicate-open-ok"))
+		result <- openResult{stream: stream, err: openErr}
+	}()
+
+	_ = peerConn.SetDeadline(time.Now().Add(2 * time.Second))
+	request, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if err := WriteFrame(peerConn, Frame{Type: TypeOpenOK, StreamID: request.StreamID}); err != nil {
+		t.Fatalf("write first OPEN_OK: %v", err)
+	}
+	select {
+	case got := <-result:
+		if got.err != nil || got.stream == nil {
+			t.Fatalf("OpenContext after first OPEN_OK = (%v, %v)", got.stream, got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenContext did not complete after first OPEN_OK")
+	}
+
+	if err := WriteFrame(peerConn, Frame{Type: TypeOpenOK, StreamID: request.StreamID}); err != nil {
+		t.Fatalf("write duplicate OPEN_OK: %v", err)
+	}
+	select {
+	case <-session.Done():
+	case <-time.After(time.Second):
+		t.Fatal("duplicate OPEN_OK did not terminate the session")
+	}
+	if session.Err() == nil {
+		t.Fatal("duplicate OPEN_OK terminated the session without a protocol error")
+	}
+	waitForStreamCount(t, session, 0)
+}
+
+// A handler can ignore cancellation and return a connected target after its
+// open deadline. The session must reject that late target, close it, and reap
+// every stream. Repeat the scenario to catch target leaks across timeouts.
+func TestSessionLateTargetAfterRepeatedOpenTimeoutsIsClosed(t *testing.T) {
+	const attempts = 3
+	localConn, peerConn := net.Pipe()
+	targetPeers := make(chan net.Conn, attempts)
+	handlerTimedOut := make(chan struct{}, attempts)
+	releaseHandler := make(chan struct{}, attempts)
+
+	handler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		target, observer := net.Pipe()
+		targetPeers <- observer
+		<-ctx.Done()
+		handlerTimedOut <- struct{}{}
+		<-releaseHandler
+		return target, nil
+	}
+	local, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true, MaxStreams: 8,
+		OpenTimeout: 3 * time.Second, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession(local): %v", err)
+	}
+	remote, err := NewSession(context.Background(), peerConn, SessionOptions{
+		Initiator: false, MaxStreams: 8,
+		OpenTimeout: 75 * time.Millisecond, WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour, OnOpen: handler,
+	})
+	if err != nil {
+		_ = local.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession(remote): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = local.Close()
+		_ = remote.Close()
+	})
+
+	for i := 0; i < attempts; i++ {
+		type result struct {
+			stream *Stream
+			err    error
+		}
+		opened := make(chan result, 1)
+		go func() {
+			stream, openErr := local.OpenContext(context.Background(), TypeOpenDirect, []byte("late-target"))
+			opened <- result{stream: stream, err: openErr}
+		}()
+
+		var targetPeer net.Conn
+		select {
+		case targetPeer = <-targetPeers:
+			t.Cleanup(func() { _ = targetPeer.Close() })
+		case <-time.After(2 * time.Second):
+			t.Fatalf("attempt %d: handler did not create target", i)
+		}
+		select {
+		case <-handlerTimedOut:
+		case <-time.After(time.Second):
+			t.Fatalf("attempt %d: remote open context did not expire", i)
+		}
+		releaseHandler <- struct{}{}
+
+		select {
+		case got := <-opened:
+			if got.err == nil || got.stream != nil {
+				t.Fatalf("attempt %d: late target unexpectedly opened stream (%v, %v)", i, got.stream, got.err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("attempt %d: OpenContext remained blocked after remote timeout", i)
+		}
+
+		closed := make(chan error, 1)
+		go func(conn net.Conn) {
+			var one [1]byte
+			_, readErr := conn.Read(one[:])
+			closed <- readErr
+		}(targetPeer)
+		select {
+		case readErr := <-closed:
+			if readErr == nil {
+				t.Fatalf("attempt %d: late target connection remained open", i)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("attempt %d: target connection was leaked after open timeout", i)
+		}
+
+		waitForStreamCount(t, local, 0)
+		waitForStreamCount(t, remote, 0)
+		if local.isDone() || remote.isDone() {
+			t.Fatalf("attempt %d: one expired open terminated the shared session", i)
+		}
+	}
+}
