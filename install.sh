@@ -46,22 +46,14 @@ Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | bash -s -- --preflight dialer
 
 Modes:
-  --site-to-site / --full    Guided install for BOTH VPSes: Gateway over root SSH, Dialer locally,
-                             mutual-TLS PKI, tunnel endpoints, selective-port routing, and both local-only panels.
-  --pair                     Run the legacy paired installer on the Iran/Dialer VPS.
-                             Installs both endpoint services and both loopback-only
-                             manager panels over SSH-key access to the overseas Gateway.
-                             Tunnel/network activation requires typing APPLY-NETWORK.
-  --manager gateway|dialer   Install/start the optional local web manager.
+  --site-to-site / --full    Guided setup for both VPSes: Gateway over root SSH, Dialer locally,
+                             mutual-TLS PKI, tunnel endpoints, selective-port routing, and both panels.
+  --pair                     Legacy paired installer; requires SSH-key root access to Germany.
+  --manager gateway|dialer   Install the optional local web manager only.
   --manager-upgrade gateway|dialer
-                             Back up and upgrade a complete manager to a release
-                             containing the graphical setup wizard. Public/insecure
-                             listeners are moved to loopback and their tokens rotated.
-  # Legacy --manager details:
-  # Downloads a checksum-verified Linux release bundle,
-                             install the manager, generate a strong token when needed,
-                             configure it, validate the unit, then enable and start it.
-                             A newly generated token is displayed once after setup.
+                             Back up and upgrade a complete existing manager to a release with
+                             the graphical setup wizard. Public/insecure listeners are moved to
+                             loopback and the login token is rotated.
   --preflight gateway|dialer|both
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
