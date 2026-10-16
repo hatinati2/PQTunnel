@@ -40,28 +40,6 @@ func TestFrameRoundTrip(t *testing.T) {
 	}
 }
 
-func (typ Type) String() string {
-	switch typ {
-	case TypeOpenDirect:
-		return "open-direct"
-	case TypeOpenReverse:
-		return "open-reverse"
-	case TypeOpenOK:
-		return "open-ok"
-	case TypeOpenError:
-		return "open-error"
-	case TypeData:
-		return "data"
-	case TypeClose:
-		return "close"
-	case TypePing:
-		return "ping"
-	case TypePong:
-		return "pong"
-	default:
-		return "unknown"
-	}
-}
 
 func rawFrame(version, typ byte, streamID, size uint32, reserved uint16) []byte {
 	out := make([]byte, headerSize+int(size))
