@@ -264,6 +264,41 @@ func TestLoopbackOpaqueOriginRequiresSameOriginNavigationMetadata(t *testing.T) 
 	}
 }
 
+
+func TestPublicOpaqueOriginRequiresMatchingReferer(t *testing.T) {
+	const token = "public-opaque-origin-test-token-12345"
+	h, err := NewWithPublicAccess(token, &fakeController{}, "198.51.100.10", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := func(referer string) *httptest.ResponseRecorder {
+		values := url.Values{"token": {token}}
+		req := httptest.NewRequest(http.MethodPost, "http://198.51.100.10:9091/login", strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "null")
+		if referer != "" {
+			req.Header.Set("Referer", referer)
+		}
+		resp := httptest.NewRecorder()
+		h.ServeHTTP(resp, req)
+		return resp
+	}
+
+	if resp := request("http://198.51.100.10:9091/login"); resp.Code != http.StatusSeeOther {
+		t.Fatalf("same-host Referer status=%d, want redirect", resp.Code)
+	}
+	if resp := request(""); resp.Code != http.StatusForbidden {
+		t.Fatalf("missing Referer status=%d, want 403", resp.Code)
+	}
+	if resp := request("http://attacker.invalid/"); resp.Code != http.StatusForbidden {
+		t.Fatalf("foreign Referer status=%d, want 403", resp.Code)
+	}
+	if resp := request("https://198.51.100.10:9091/login"); resp.Code != http.StatusForbidden {
+		t.Fatalf("scheme-mismatched Referer status=%d, want 403", resp.Code)
+	}
+}
+
 func postLogin(t *testing.T, h *Handler, token, remoteAddr string) *httptest.ResponseRecorder {
 	t.Helper()
 	values := url.Values{"token": {token}}
@@ -475,6 +510,48 @@ func TestDashboardRedirectsUnauthenticatedRequests(t *testing.T) {
 }
 
 
+
+func TestDashboardHidesControlsWhenEndpointIsMissing(t *testing.T) {
+	const token = "manager-missing-endpoint-test-token-12345"
+	manager := &fakeManagerController{
+		fakeController: &fakeController{},
+		view: adminapi.ManagerSnapshot{
+			Role:        "dialer",
+			ServiceUnit: "pqtunnel-client.service",
+			ActiveState: "unknown",
+			SubState:    "unknown",
+			ConfigReady: false,
+			ConfigError: "configuration unavailable: lstat /etc/default/pqtunnel-client: no such file or directory",
+		},
+	}
+	h, err := New(token, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie, _ := managerSession(t, h, token)
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+	req.AddCookie(cookie)
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("dashboard status=%d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "Install and configure the Gateway or Dialer endpoint") {
+		t.Fatal("dashboard must explain that the endpoint unit is missing")
+	}
+	if !strings.Contains(body, "Install the Gateway or Dialer endpoint") {
+		t.Fatal("dashboard must explain that the endpoint configuration is missing")
+	}
+	if strings.Contains(body, `action="/service/action"`) {
+		t.Fatal("service controls must be hidden when the endpoint unit is unknown")
+	}
+	if strings.Contains(body, `action="/config/apply"`) {
+		t.Fatal("config editor must be hidden when endpoint configuration is unavailable")
+	}
+}
+
 func TestSecurityHeadersPresentOnLoginAndUnknownPath(t *testing.T) {
 	h, err := New(strings.Repeat("h", 32), &fakeController{})
 	if err != nil {
@@ -488,7 +565,7 @@ func TestSecurityHeadersPresentOnLoginAndUnknownPath(t *testing.T) {
 			"Cache-Control":             "no-store",
 			"X-Content-Type-Options":    "nosniff",
 			"X-Frame-Options":           "DENY",
-			"Referrer-Policy":           "no-referrer",
+			"Referrer-Policy":           "same-origin",
 			"Content-Security-Policy":   "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 		}
 		for name, want := range headers {
