@@ -101,6 +101,21 @@ main(){
  printf 'Provider firewall will not be changed. Ensure TCP/%s reaches Germany. Existing UFW/nftables/iptables/routes trigger a safe stop.\n' "$TLS_PORT"
  printf 'This will install missing packages, create PKI/tokens, start services, and apply selective routing on both VPSes.\n'
  ask 'Type exactly INSTALL to continue: ' CONFIRM; [[ "$CONFIRM" == INSTALL ]] || fail 'Cancelled; no tunnel/network changes made.'
+ manager_check dialer
+ DTOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"; GTOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"; STOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+ [[ "$DTOKEN$GTOKEN$STOKEN" =~ ^[0-9a-f]{192}$ ]] || fail 'Secure token generation failed.'
+ TOKENS_READY=1
+ # Close any existing public HTTP manager before lengthy package/endpoint setup. Rotate its token too.
+ if [[ -x /usr/local/sbin/pqtunnel-manager && -f /etc/systemd/system/pqtunnel-manager.service && -f /etc/default/pqtunnel-manager ]]; then
+  mt="$(mktemp)"
+  grep -Ev '^(PQTUNNEL_MANAGER_ROLE|PQTUNNEL_MANAGER_LISTEN|PQTUNNEL_MANAGER_TOKEN|PQTUNNEL_MANAGER_PUBLIC_HOST|PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP|PQTUNNEL_MANAGER_TLS_CERT|PQTUNNEL_MANAGER_TLS_KEY|PQTUNNEL_MANAGER_SPEEDTEST_LISTEN|PQTUNNEL_MANAGER_SPEEDTEST_PEER|PQTUNNEL_MANAGER_SPEEDTEST_TOKEN)=' /etc/default/pqtunnel-manager > "$mt" || true
+  printf 'PQTUNNEL_MANAGER_ROLE=dialer\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$DTOKEN" >> "$mt"
+  install -o root -g root -m 0600 "$mt" /etc/default/pqtunnel-manager; rm -f "$mt"
+  if systemctl is-active --quiet pqtunnel-manager; then systemctl restart pqtunnel-manager; fi
+  printf 'Existing Dialer manager is now restricted to loopback and its login token has been rotated.\n'
+ fi
+ mkdir -m 0700 "$WORK/tokens"
+ . /etc/os-release;
  . /etc/os-release; [[ "${ID:-}" == ubuntu || "${ID:-}" == debian ]] || fail 'Automatic dependency installation supports Ubuntu/Debian only.'
  missing=(); for pair in 'ip:iproute2' 'nft:nftables' 'openssl:openssl' 'sysctl:procps' 'ss:iproute2' 'systemctl:systemd' 'systemd-analyze:systemd'; do c="${pair%%:*}"; p="${pair#*:}"; command -v "$c" >/dev/null 2>&1 || missing+=("$p"); done
  if (("${#missing[@]}")); then apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar python3 "${missing[@]}"; fi
@@ -127,13 +142,11 @@ if command -v iptables-save >/dev/null 2>&1 && iptables-save 2>/dev/null | grep 
 [[ -z "$(ip -4 route show table 518)$(ip -6 route show table 518)$(ip -4 route show table 519)$(ip -6 route show table 519)" ]]
 for p in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/default/pqtunneld /etc/pqtunnel/pki/server.crt /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/ca.crt /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do [[ ! -e "$p" ]] || { echo "Existing Gateway artifact: $p" >&2; exit 1; }; done
 GUARD
- mkdir -m 0700 "$WORK/authority" "$WORK/gateway-pki" "$WORK/dialer-pki" "$WORK/tokens"
+ mkdir -m 0700 "$WORK/authority" "$WORK/gateway-pki" "$WORK/dialer-pki"
  "$BUNDLE/pqtunnel-pki" init --server-name "$NAME" --out "$WORK/authority"
  "$BUNDLE/pqtunnel-pki" issue-client --ip 10.66.0.2 --out "$WORK/authority"
  install -m 0644 "$WORK/authority/server.crt" "$WORK/gateway-pki/server.crt"; install -m 0600 "$WORK/authority/server.key" "$WORK/gateway-pki/server.key"; install -m 0644 "$WORK/authority/ca.crt" "$WORK/gateway-pki/ca.crt"
  install -m 0644 "$WORK/authority/ca.crt" "$WORK/dialer-pki/ca.crt"; install -m 0644 "$WORK/authority/client-10_66_0_2.crt" "$WORK/dialer-pki/client.crt"; install -m 0600 "$WORK/authority/client-10_66_0_2.key" "$WORK/dialer-pki/client.key"
- DTOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"; GTOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"; STOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
- [[ "$DTOKEN$GTOKEN$STOKEN" =~ ^[0-9a-f]{192}$ ]] || fail 'Secure token generation failed.'; TOKENS_READY=1
  printf '%s' "$GTOKEN" > "$WORK/tokens/gateway"; printf '%s' "$STOKEN" > "$WORK/tokens/speed"
  cat > "$WORK/gateway-app.env" <<ENV
 PQTUNNEL_LISTEN=0.0.0.0:$TLS_PORT
