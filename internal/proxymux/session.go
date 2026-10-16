@@ -230,9 +230,13 @@ func (s *Session) allocateIDLocked() (uint32, error) {
 		if id == 0 {
 			continue
 		}
-		if _, exists := s.streams[id]; !exists {
-			return id, nil
+		if _, exists := s.streams[id]; exists {
+			continue
 		}
+		if _, recentlyClosed := s.closedIDs[id]; recentlyClosed {
+			continue
+		}
+		return id, nil
 	}
 	return 0, errors.New("proxymux: could not allocate a stream ID")
 }
