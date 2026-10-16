@@ -126,6 +126,8 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertIn("PQTUNNEL_UDP_EGRESS_PORTS=$UDP", self.setup)
         self.assertIn("PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091", self.setup)
         self.assertIn("PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091", self.remote_setup)
+        self.assertIn("USER@IRAN_PUBLIC_IP", self.setup)
+        self.assertIn("Replace USER@IRAN_PUBLIC_IP", self.setup)
 
     def test_existing_public_dialer_manager_is_restricted_before_long_setup(self) -> None:
         rotate = self.setup.index("Existing Dialer manager is now restricted to loopback")
