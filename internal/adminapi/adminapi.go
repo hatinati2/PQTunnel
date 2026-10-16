@@ -123,4 +123,5 @@ type ManagerController interface {
   StartSiteToSiteSetup(ctx context.Context, request SiteToSiteSetupRequest) error
   SiteToSiteSetupStatus(ctx context.Context) (SiteToSiteSetupStatus, error)
   ConsumeSiteToSiteSetupTokens(ctx context.Context) (SiteToSiteSetupTokens, error)
+  ApproveSiteToSiteSetup(ctx context.Context) error
  }
