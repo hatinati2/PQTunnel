@@ -2,6 +2,25 @@
 
 **Scope:** targeted review of the default-branch repository trees and network-relevant code paths (configuration, routing/firewall helpers, transport/mux/reverse behavior, installer scripts, tests, and license files) in the twelve requested projects. This is design research, not a line-by-line security audit of every file in each large repository.
 
+
+**Upstream-first rule:** when a supplied fork is behind or has diverged, use the upstream default branch for current design and behavior. The fork is useful only to establish what differs in the supplied copy. This snapshot pins the upstream default-branch commits observed on 2026-10-16; the project descriptions below are based on upstream source links, not stale fork snapshots.
+
+| Project | Upstream default-branch snapshot | Review note |
+|---|---|---|
+| XRayMesh | [102b05f](https://github.com/Erfan-XRay/XRayMesh/commit/102b05f7bb271bcc734ee50eb9247293948908d4) | Main branch release commit dated 2026-10-03 |
+| WatTunnel | [d571886](https://github.com/JohnWatsoon/WatTunnel/commit/d57188673a9a3a99d2116172118adf0141c1718a) | v2.4.17 stream cleanup fix dated 2026-10-13 |
+| Tunnel-Panel | [2b5b719](https://github.com/DrSaeedHub/Tunnel-Panel/commit/2b5b7190ec0ea30b390e5abddc7073e162277958) | Main branch commit dated 2026-10-02 |
+| BackPack | [132467b](https://github.com/AminMGMT/BackPack/commit/132467bfdfb2698d74ada2992413e75bfccbfbd3) | Main branch commit dated 2026-10-11 |
+| Kariz | [1a2d636](https://github.com/Erfan-XRay/Kariz/commit/1a2d63643bdb3dbe3345713c0c9ad5d9d875d134) | Kariz 2.6.1 commit dated 2026-10-16 |
+| Golden-GRE | [cf88a2b](https://github.com/LivingG0D/Golden-GRE/commit/cf88a2b064d0e583c7f02eab1e5e2eac614d87f8) | Main branch commit dated 2026-10-14 |
+| VortexL2 | [78f2a48](https://github.com/iliya-Developer/VortexL2/commit/78f2a4878b87e86e8e64f4f4c132d457cadf1142) | Main branch v4.0.0 commit dated 2026-02-09 |
+| UDP2RAW | [cf255c0](https://github.com/amirmbn/UDP2RAW/commit/cf255c0f3904395d6c3d755b33822f4727e5a60b) | Main branch commit dated 2026-07-06 |
+| 6TO4-GRE-IPIP-SIT | [3167bf6](https://github.com/Azumi67/6TO4-GRE-IPIP-SIT/commit/3167bf61e00f1d54cfb24f333e8b80e95a388992) | Main branch commit dated 2025-07-31 |
+| Backhaul_script | [e130615](https://github.com/Azumi67/Backhaul_script/commit/e1306154a93f83baeeda8631c4259ec007dede73) | Main branch commit dated 2024-12-01 |
+| WaterWall | [5c1487a](https://github.com/radkesvat/WaterWall/commit/5c1487a2be615b7724e9223e78c6687004fa11e7) | Active upstream main; commit dated 2026-10-16. Do not use the much-staler supplied fork as the current implementation reference |
+| IPTABLE-Tunnel-multi-port | [73fe935](https://github.com/azavaxhuman/IPTABLE-Tunnel-multi-port/commit/73fe935e86b8ae74fb83901c2624204fdf6e664d) | Main branch commit dated 2024-01-04 |
+
+
 **Production safety decision:** neither `example-host-1` nor `example-ubuntu-host` is to be changed by this work. Both have existing TUN/tunnel services, netfilter rules and forwarding state. PQTunnel's existing Layer-3 helper intentionally fails closed on these hosts; do not bypass it or import scripts that mutate global routes/firewall state.
 
 ## Findings by project
@@ -15,6 +34,7 @@
 ### 2. WatTunnel
 - Sources: [user fork](https://github.com/hatinati2/WatTunnel), [upstream](https://github.com/JohnWatsoon/WatTunnel), [configuration](https://github.com/JohnWatsoon/WatTunnel/blob/main/cmd/wattun/config.go), [reverse carrier adapter](https://github.com/JohnWatsoon/WatTunnel/blob/main/wat/carrier_reverse.go).
 - Architecture: one process handles many TCP/UDP port mappings; it distinguishes a client-side listen port from the server-side target port and separately validates the server's target-port allowlist. It has multiple carriers and a reverse direction built from a listener pool plus a reconnecting dialer pool. Session limits, idle timeout, bounded queues and diagnostics are useful design references.
+- Upstream-first finding from v2.4.17 ([commit](https://github.com/JohnWatsoon/WatTunnel/commit/d57188673a9a3a99d2116172118adf0141c1718a), 2026-10-13): it fixed a lingering-stream leak when a local connection closes with buffered unread data or while the peer is still sending. Its regression tests specifically assert that both peer sessions release the stream. PQTunnel now has an independent target-disconnect stream-reaping regression test; its race/backpressure lifecycle still needs continued testing.
 - Fork state: 50 commits behind upstream and no fork-only commits in the compared mainline history. The upstream license is MIT.
 - Reuse decision: use behavior and test ideas as reference; do not add alternate carriers before the standard TLS/mTLS stream mode is complete. The ICMP carrier and the project's custom AEAD/session protocol are separate designs, not a drop-in PQTunnel transport.
 
