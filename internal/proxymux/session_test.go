@@ -1376,7 +1376,7 @@ func FuzzSessionFrameSequence(f *testing.F) {
 // relay goroutines rather than accumulating resources across reconnects.
 func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 	const (
-		reconnects       = 12
+		reconnects        = 12
 		streamsPerSession = 8
 	)
 	runtime.GC()
@@ -1384,27 +1384,65 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 	var baselineMem runtime.MemStats
 	runtime.ReadMemStats(&baselineMem)
 	heapBaseline := baselineMem.HeapAlloc
+	var stableHeapBaseline uint64
 	var maxHeapAfterGC uint64
 	var maxCleanupDuration time.Duration
 
 	broker := NewSessionBroker()
-	var sessions []*Session
-
 	var previousLeft, previousRight *Session
+	var currentLeft, currentRight *Session
+	t.Cleanup(func() {
+		if currentLeft != nil {
+			broker.Clear(currentLeft)
+			_ = currentLeft.Close()
+		}
+		if currentRight != nil {
+			_ = currentRight.Close()
+		}
+	})
+
 	for generation := 0; generation < reconnects; generation++ {
-		left, right, accepted := newTestSessionPair(t, streamsPerSession)
-		sessions = append(sessions, left, right)
+		leftConn, rightConn := net.Pipe()
+		accepted := make(chan acceptedTarget, streamsPerSession)
+		handler := func(_ context.Context, typ Type, payload []byte) (net.Conn, error) {
+			if typ != TypeOpenDirect {
+				return nil, errors.New("unexpected stream type in resource soak")
+			}
+			serverSide, testSide := net.Pipe()
+			accepted <- acceptedTarget{name: string(payload), conn: testSide}
+			return serverSide, nil
+		}
+
+		left, err := NewSession(context.Background(), leftConn, SessionOptions{
+			Initiator: true, MaxStreams: streamsPerSession,
+			OpenTimeout: 2 * time.Second, WriteTimeout: time.Second,
+			KeepAliveInterval: time.Hour,
+		})
+		if err != nil {
+			_ = leftConn.Close()
+			_ = rightConn.Close()
+			t.Fatalf("generation %d: create local session: %v", generation, err)
+		}
+		right, err := NewSession(context.Background(), rightConn, SessionOptions{
+			Initiator: false, MaxStreams: streamsPerSession,
+			OpenTimeout: 2 * time.Second, WriteTimeout: time.Second,
+			KeepAliveInterval: time.Hour, OnOpen: handler,
+		})
+		if err != nil {
+			_ = left.Close()
+			_ = rightConn.Close()
+			t.Fatalf("generation %d: create remote session: %v", generation, err)
+		}
+		currentLeft, currentRight = left, right
 		broker.Set(left)
 
 		if previousLeft != nil {
 			if !previousLeft.isDone() {
 				t.Fatalf("previous local session remained alive after reconnect %d", generation)
 			}
-			deadline := time.Now().Add(2 * time.Second)
-			for !previousRight.isDone() && time.Now().Before(deadline) {
-				time.Sleep(10 * time.Millisecond)
-			}
-			if !previousRight.isDone() {
+			select {
+			case <-previousRight.Done():
+			case <-time.After(2 * time.Second):
 				t.Fatalf("previous remote session remained alive after reconnect %d", generation)
 			}
 			waitForStreamCount(t, previousLeft, 0)
@@ -1419,41 +1457,62 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generation %d stream %d: broker open: %v", generation, index, err)
 			}
-			target := awaitTarget(t, accepted, "reconnect-soak")
+
+			var target net.Conn
+			select {
+			case got := <-accepted:
+				if got.name != "reconnect-soak" {
+					_ = got.conn.Close()
+					t.Fatalf("generation %d stream %d: target name = %q", generation, index, got.name)
+				}
+				target = got.conn
+			case <-time.After(2 * time.Second):
+				t.Fatalf("generation %d stream %d: target was not accepted", generation, index)
+			}
+
 			deadline := time.Now().Add(2 * time.Second)
 			if err := stream.SetDeadline(deadline); err != nil {
+				_ = target.Close()
 				t.Fatalf("generation %d stream %d: set stream deadline: %v", generation, index, err)
 			}
 			if err := target.SetDeadline(deadline); err != nil {
+				_ = target.Close()
 				t.Fatalf("generation %d stream %d: set target deadline: %v", generation, index, err)
 			}
 
 			request := []byte{byte(generation), byte(index), 0xa5}
 			if n, err := stream.Write(request); err != nil || n != len(request) {
+				_ = target.Close()
 				t.Fatalf("generation %d stream %d: write request = %d, %v", generation, index, n, err)
 			}
 			gotRequest := make([]byte, len(request))
 			if _, err := io.ReadFull(target, gotRequest); err != nil {
+				_ = target.Close()
 				t.Fatalf("generation %d stream %d: read request at target: %v", generation, index, err)
 			}
 			if !bytes.Equal(gotRequest, request) {
+				_ = target.Close()
 				t.Fatalf("generation %d stream %d: request = %v, want %v", generation, index, gotRequest, request)
 			}
 
 			response := []byte{0x5a, byte(index), byte(generation)}
 			if n, err := target.Write(response); err != nil || n != len(response) {
+				_ = target.Close()
 				t.Fatalf("generation %d stream %d: target write = %d, %v", generation, index, n, err)
 			}
 			gotResponse := make([]byte, len(response))
 			if _, err := io.ReadFull(stream, gotResponse); err != nil {
+				_ = target.Close()
 				t.Fatalf("generation %d stream %d: read response from stream: %v", generation, index, err)
 			}
 			if !bytes.Equal(gotResponse, response) {
+				_ = target.Close()
 				t.Fatalf("generation %d stream %d: response = %v, want %v", generation, index, gotResponse, response)
 			}
 
 			lastStreamCloseStarted = time.Now()
 			if err := stream.Close(); err != nil {
+				_ = target.Close()
 				t.Fatalf("generation %d stream %d: close stream: %v", generation, index, err)
 			}
 			_ = target.Close()
@@ -1475,11 +1534,17 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 		if cycleMem.HeapAlloc > maxHeapAfterGC {
 			maxHeapAfterGC = cycleMem.HeapAlloc
 		}
-		t.Logf("generation=%d live_streams=0 cleanup=%s goroutines=%d heap_after_gc=%d", generation, cleanupDuration, runtime.NumGoroutine(), cycleMem.HeapAlloc)
+		// After one warm-up reconnect, only the active pair and its predecessor
+		// should be reachable. Historical sessions must not accumulate linearly.
+		if generation == 1 {
+			stableHeapBaseline = cycleMem.HeapAlloc
+		} else if generation > 1 && cycleMem.HeapAlloc > stableHeapBaseline+(4<<20) {
+			t.Fatalf("heap did not plateau across reconnects: generation=%d heap=%d stable_baseline=%d allowance=%d",
+				generation, cycleMem.HeapAlloc, stableHeapBaseline, 4<<20)
+		}
+		t.Logf("generation=%d live_streams=0 cleanup=%s goroutines=%d heap_after_gc=%d",
+			generation, cleanupDuration, runtime.NumGoroutine(), cycleMem.HeapAlloc)
 
-		// One active pair accounts for eight session-loop goroutines. A small
-		// allowance covers short-lived runtime/test-runner activity, while a
-		// per-generation ceiling catches leaks that accumulate across reconnects.
 		cycleDeadline := time.Now().Add(2 * time.Second)
 		stableSamples := 0
 		var cycleCount int
@@ -1504,10 +1569,9 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 	}
 
 	broker.Clear(previousLeft)
-	for _, session := range sessions {
-		_ = session.Close()
-	}
-	for _, session := range sessions {
+	_ = previousLeft.Close()
+	_ = previousRight.Close()
+	for _, session := range []*Session{previousLeft, previousRight} {
 		select {
 		case <-session.Done():
 		case <-time.After(2 * time.Second):
@@ -1515,7 +1579,8 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 		}
 		waitForStreamCount(t, session, 0)
 	}
-
+	currentLeft, currentRight = nil, nil
+	previousLeft, previousRight = nil, nil
 	runtime.GC()
 	var finalMem runtime.MemStats
 	runtime.ReadMemStats(&finalMem)
@@ -1528,9 +1593,6 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 	t.Logf("resource soak summary: heap_baseline=%d heap_final=%d heap_growth=%d max_cycle_heap_after_gc=%d max_stream_cleanup=%s",
 		heapBaseline, finalMem.HeapAlloc, heapGrowth, maxHeapAfterGC, maxCleanupDuration)
 
-	// Relays should terminate after their streams and transports are closed.
-	// Allow a small runtime/test-runner fluctuation, but reject a persistent
-	// increase consistent with leaked per-stream goroutines.
 	deadline := time.Now().Add(3 * time.Second)
 	stableSamples := 0
 	var lastCount int
