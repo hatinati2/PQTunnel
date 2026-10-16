@@ -122,7 +122,7 @@ choose_iface() {
   count=${#_ifaces[@]}
   (( count > 0 )) || fail "no default-route interface was found on $label; no network changes were made."
   if (( count == 1 )); then default=${_ifaces[0]}; else default=; fi
-  printf '\n%s default-route interface candidates: %s\n' "$label" "${_ifaces[*]}"
+  printf '\n%s default-route interface candidates: %s\n' "$label" "${_ifaces[*]}" >&2
   if [[ -n "$default" ]]; then
     prompt "$label WAN interface [${default}]: " choice
     choice=${choice:-$default}
