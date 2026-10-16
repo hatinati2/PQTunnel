@@ -1,0 +1,23 @@
+[Unit]
+Description=PQTunnel authenticated graphical two-VPS setup worker (experimental)
+Wants=network-online.target
+After=network-online.target
+Documentation=https://github.com/hatinati2/PQTunnel/docs/TWO-VPS-DEPLOYMENT.md
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/var/lib/pqtunnel-manager/setup.env
+ExecStart=/usr/local/lib/pqtunnel/pqtunnel-setup-worker.sh
+TimeoutStartSec=0
+TimeoutStopSec=20
+UMask=0077
+StateDirectory=pqtunnel-manager
+StateDirectoryMode=0700
+PrivateTmp=true
+ProtectHome=read-only
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

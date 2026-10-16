@@ -1,6 +1,6 @@
 # PQTunnel
 
-**Version:** 0.3.0-rc4 · **Status:** experimental release candidate, not production-ready.
+**Version:** 0.3.0-rc5 · **Status:** experimental release candidate, not production-ready.
 
 PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
 
@@ -71,7 +71,30 @@ The menu offers read-only host checks or installation of the standalone manager 
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
 ```
 
-The installer verifies the v0.3.0-rc4 Linux archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go. On first setup it generates a random 256-bit `PQTUNNEL_MANAGER_TOKEN`, stores it in root-only `/etc/default/pqtunnel-manager`, validates the unit, enables and starts the manager, then displays the newly created token once in the terminal. Save it securely; rerunning the installer preserves an existing token and does not print it again. The manager listens on loopback (`127.0.0.1:9091`); use SSH forwarding for remote access. This command installs the **web manager only**, not the tunnel endpoint.
+The installer verifies the v0.3.0-rc5 Linux archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go. On first setup it generates a random 256-bit `PQTUNNEL_MANAGER_TOKEN`, stores it in root-only `/etc/default/pqtunnel-manager`, validates the unit, enables and starts the manager, then displays the newly created token once in the terminal. Save it securely; rerunning the installer preserves an existing token and does not print it again. The manager listens on loopback (`127.0.0.1:9091`); use SSH forwarding for remote access. This command installs the **web manager only**, not the tunnel endpoint.
+
+### Graphical two-VPS setup wizard (experimental)
+
+For an existing manager from an older release, first upgrade it on the **Iran/Dialer VPS** after the matching wizard release is published:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager-upgrade dialer
+```
+
+The upgrader verifies the release archive, makes a root-only backup under `/var/lib/pqtunnel-manager/backups`, and preserves the existing role/config. If the old listener was public or allowed insecure HTTP, it changes the listener to `127.0.0.1:9091`, rotates its token, and prints that new token once. Save it before continuing.
+
+From your admin computer, open an SSH forward to the Iran VPS:
+
+```sh
+ssh -N -L 9091:127.0.0.1:9091 root@IRAN_PUBLIC_IP
+```
+
+Open `http://127.0.0.1:9091`, log in with the Dialer manager token, then select **Setup wizard**. The Iran root account must already have key-based SSH access to `root@GERMANY_IP`, and the Gateway's SSH host key must have been independently verified and recorded in root's `known_hosts`. The wizard never asks for an SSH password or transfers your SSH private key.
+
+Submit the endpoint details to start checks. The preparation stage may install missing OS prerequisite packages and may secure an old public manager, but it does not yet install tunnel certificates or apply tunnel routing. If both hosts pass the guards, the panel displays the selected WAN interfaces, TLS port, and selected TCP/UDP destination ports. Review that plan and the provider firewall first, then use the separate **Approve plan and apply network changes** button. Keep console/out-of-band recovery access on both hosts.
+
+Both manager panels remain loopback-only. The wizard refuses hosts with incompatible existing firewall/routing state or existing endpoint artifacts; do not bypass those protections. It routes only the selected destination ports (defaults TCP/443 and UDP/53,123), not every packet from every device. The Gateway provider firewall is not modified. Newly generated Gateway and speed-test tokens can be revealed once from the authenticated wizard; save them privately. A successful installer exit still does not prove real-world connectivity—verify both service states and the connected peer afterward. PQTunnel remains experimental and has not had an independent security audit.
+
 
 This is not a one-command tunnel configuration: Gateway/Dialer setup still requires reviewed certificates and role-specific environment files. Use [the first-time installation flow](docs/INSTALLATION-FLOW.md) to prepare role-specific PKI and distinguish endpoint installation from the optional manager. The tunnel install/start commands are separate because they can change services or network state. The current release remains experimental and is not independently security-audited.
 

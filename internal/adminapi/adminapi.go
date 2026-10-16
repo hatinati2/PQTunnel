@@ -86,3 +86,42 @@ type ManagerController interface {
 	RunSpeedTest(ctx context.Context, sizeMiB int) (SpeedTestResult, error)
 	RecentLogs(ctx context.Context) (string, error)
 }
+
+ // SiteToSiteSetupRequest is a constrained, validated request for the guided
+ // two-VPS setup. It intentionally contains no private keys, passwords, shell
+ // fragments, or arbitrary command-line arguments.
+ type SiteToSiteSetupRequest struct {
+  GatewaySSHTarget string
+  SSHPort int
+  GatewayName string
+  TLSPort int
+  TCPPorts string
+  UDPPorts string
+  DialerWAN string
+  GatewayWAN string
+  Confirm string
+ }
+
+ // SiteToSiteSetupStatus exposes only redacted logs and state for the fixed
+ // site-to-site setup worker. Tokens can be consumed separately exactly once.
+ type SiteToSiteSetupStatus struct {
+  Available bool
+  State string
+  Running bool
+  Success bool
+  TokensAvailable bool
+  Output string
+ }
+
+ type SiteToSiteSetupTokens struct {
+  Dialer string
+  Gateway string
+  SpeedTest string
+ }
+
+ type SetupWizardController interface {
+  StartSiteToSiteSetup(ctx context.Context, request SiteToSiteSetupRequest) error
+  SiteToSiteSetupStatus(ctx context.Context) (SiteToSiteSetupStatus, error)
+  ConsumeSiteToSiteSetupTokens(ctx context.Context) (SiteToSiteSetupTokens, error)
+  ApproveSiteToSiteSetup(ctx context.Context) error
+ }
