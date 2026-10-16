@@ -19,6 +19,25 @@ if [[ -n "${PQTUNNEL_SETUP_INPUT_FILE:-}" ]]; then
 fi
 ask(){
  if [[ -n "${PQTUNNEL_SETUP_INPUT_FILE:-}" ]]; then
+  if [[ "$1" == "Type exactly INSTALL to continue: " ]]; then
+   [[ -n "${PQTUNNEL_SETUP_STATE_FILE:-}" && -n "${PQTUNNEL_SETUP_APPROVAL_FILE:-}" ]] || fail 'Graphical approval channel is not configured.'
+   printf 'awaiting-confirmation\n' > "$PQTUNNEL_SETUP_STATE_FILE"
+   chmod 0600 "$PQTUNNEL_SETUP_STATE_FILE"
+   printf '\nWaiting for explicit approval in the authenticated management panel. No tunnel configuration or network rules have been applied yet.\n'
+   local waited=0 approval=""
+   while (( waited < 900 )); do
+    if [[ -f "$PQTUNNEL_SETUP_APPROVAL_FILE" && ! -L "$PQTUNNEL_SETUP_APPROVAL_FILE" ]]; then
+     approval="$(cat "$PQTUNNEL_SETUP_APPROVAL_FILE")"
+     rm -f "$PQTUNNEL_SETUP_APPROVAL_FILE"
+     [[ "$approval" == INSTALL ]] || fail 'The web approval value was invalid.'
+     printf -v "$2" '%s' INSTALL
+     return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+   done
+   fail 'Timed out waiting for web approval; no tunnel configuration or network rules were applied.'
+  fi
   (( SETUP_INPUT_INDEX < ${#SETUP_INPUTS[@]} )) || fail 'Graphical setup input ended unexpectedly.'
   printf -v "$2" '%s' "${SETUP_INPUTS[$SETUP_INPUT_INDEX]}"
   SETUP_INPUT_INDEX=$((SETUP_INPUT_INDEX + 1))
@@ -164,22 +183,14 @@ main(){
  [[ -x "$BUNDLE/pqtunnel-client" && -x "$BUNDLE/pqtunnel-pki" && -x "$BUNDLE/pqtunnel-manager" ]] || fail 'Release bundle lacks a required binary.'
  fetch_bundle "$REMOTE_ARCH"
  curl -fsSL "$RAW/scripts/pqtunnel-site-to-site-remote.sh" -o "$WORK/remote-setup.sh"; bash -n "$WORK/remote-setup.sh"
- printf '\nPlan: Iran/Dialer -> %s:%s; TCP %s; UDP %s. Panels listen on loopback only.\n' "$NAME" "$TLS_PORT" "$TCP" "${UDP:-none}"
- printf 'Provider firewall will not be changed. Ensure TCP/%s reaches Germany. Existing UFW/nftables/iptables/routes trigger a safe stop.\n' "$TLS_PORT"
- printf 'This will install missing packages, create PKI/tokens, start services, and apply selective routing on both VPSes.\n'
- ask 'Type exactly INSTALL to continue: ' CONFIRM; [[ "$CONFIRM" == INSTALL ]] || fail 'Cancelled; no tunnel/network changes made.'
+ . /etc/os-release; [[ "${ID:-}" == ubuntu || "${ID:-}" == debian ]] || fail 'Automatic dependency installation supports Ubuntu/Debian only.';
  manager_check dialer
- [[ -n "$DTOKEN" ]] || DTOKEN="$(openssl rand -hex 32)"
- GTOKEN="$(openssl rand -hex 32)"; STOKEN="$(openssl rand -hex 32)"
- [[ "$DTOKEN$GTOKEN$STOKEN" =~ ^[0-9a-f]{192}$ ]] || fail 'Secure token generation failed.'
- mkdir -m 0700 "$WORK/tokens"
+ for p in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/pqtunnel/pki/ca.crt /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh /usr/local/lib/pqtunnel/run-client.sh /usr/local/lib/pqtunnel/stop-client-network.sh; do [[ ! -e "$p" ]] || fail "Existing Dialer artifact at $p; refusing overwrite."; done
  . /etc/os-release;
  . /etc/os-release; [[ "${ID:-}" == ubuntu || "${ID:-}" == debian ]] || fail 'Automatic dependency installation supports Ubuntu/Debian only.'
  missing=(); for pair in 'ip:iproute2' 'nft:nftables' 'openssl:openssl' 'sysctl:procps' 'ss:iproute2' 'systemctl:systemd' 'systemd-analyze:systemd'; do c="${pair%%:*}"; p="${pair#*:}"; command -v "$c" >/dev/null 2>&1 || missing+=("$p"); done
  if (("${#missing[@]}")); then apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar python3 "${missing[@]}"; fi
  ssh -p "$SSH_PORT" "$REMOTE" 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar openssl iproute2 nftables procps systemd'
- manager_check dialer
- for p in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/pqtunnel/pki/ca.crt /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh /usr/local/lib/pqtunnel/run-client.sh /usr/local/lib/pqtunnel/stop-client-network.sh; do [[ ! -e "$p" ]] || fail "Existing Dialer artifact at $p; refusing overwrite."; done
  bash "$BUNDLE/scripts/site-to-site-preflight.sh" --role dialer
  WAN="$(ip -o route get "$GATEWAY_IP" | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1);exit}}')"; [[ -n "$WAN" ]] || WAN="$(ip -o route show default | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1);exit}}')"
  ask "Iran WAN interface [$WAN]: " tmp; WAN="${tmp:-$WAN}"; ifname "$WAN" && ip link show dev "$WAN" >/dev/null 2>&1 || fail 'Invalid Iran WAN interface.'
@@ -200,6 +211,15 @@ if command -v iptables-save >/dev/null 2>&1 && iptables-save 2>/dev/null | grep 
 [[ -z "$(ip -4 route show table 518)$(ip -6 route show table 518)$(ip -4 route show table 519)$(ip -6 route show table 519)" ]]
 for p in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/default/pqtunneld /etc/pqtunnel/pki/server.crt /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/ca.crt /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do [[ ! -e "$p" ]] || { echo "Existing Gateway artifact: $p" >&2; exit 1; }; done
 GUARD
+ printf '\nPreflight plan: Iran/Dialer -> %s:%s; Iran WAN=%s; Germany WAN=%s; TCP destinations=%s; UDP destinations=%s.\n' "$NAME" "$TLS_PORT" "$WAN" "$GW_WAN" "$TCP" "${UDP:-none}"
+ printf 'Both hosts passed local network guards and endpoint-artifact checks. Missing OS packages may already have been installed. No tunnel network rules have been applied yet.\n'
+ printf 'The Gateway provider firewall is not modified. Confirm TCP/%s is allowed there before continuing.\n' "$TLS_PORT"
+ ask 'Type exactly INSTALL to continue: ' CONFIRM; [[ "$CONFIRM" == INSTALL ]] || fail 'Cancelled before PKI creation or tunnel/network activation.'
+ manager_check dialer
+ [[ -n "$DTOKEN" ]] || DTOKEN="$(openssl rand -hex 32)"
+ GTOKEN="$(openssl rand -hex 32)"; STOKEN="$(openssl rand -hex 32)"
+ [[ "$DTOKEN$GTOKEN$STOKEN" =~ ^[0-9a-f]{192}$ ]] || fail 'Secure token generation failed.'
+ mkdir -m 0700 "$WORK/tokens"
  mkdir -m 0700 "$WORK/authority" "$WORK/gateway-pki" "$WORK/dialer-pki"
  "$BUNDLE/pqtunnel-pki" init --server-name "$NAME" --out "$WORK/authority"
  "$BUNDLE/pqtunnel-pki" issue-client --ip 10.66.0.2 --out "$WORK/authority"
