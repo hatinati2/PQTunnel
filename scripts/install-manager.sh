@@ -65,7 +65,8 @@ fi
 
 TMPBIN=""
 BACKUP_DIR=""
-cleanup() { [[ -z "$TMPBIN" ]] || rm -f "$TMPBIN"; }
+NEW_MANAGER_TOKEN=""
+cleanup() { [[ -z "$TMPBIN" ]] || rm -f "$TMPBIN"; unset NEW_MANAGER_TOKEN; }
 trap cleanup EXIT
 if [[ -f "$SOURCE/go.mod" ]]; then
   command -v go >/dev/null || fail 'Go 1.26+ is required to build from source; use the matching Linux release bundle otherwise.'
@@ -100,8 +101,20 @@ install -o root -g root -m 0750 "$SOURCE/scripts/pqtunnel-site-to-site-setup.sh"
 
 if (( UPGRADE )); then
   config_tmp="$(mktemp /etc/default/pqtunnel-manager.XXXXXX)"
-  awk '!/^PQTUNNEL_SETUP_VERSION=/' /etc/default/pqtunnel-manager > "$config_tmp"
-  printf '\nPQTUNNEL_SETUP_VERSION=%s\n' "$SOURCE_VERSION" >> "$config_tmp"
+  awk '!/^(PQTUNNEL_SETUP_VERSION|PQTUNNEL_MANAGER_LISTEN|PQTUNNEL_MANAGER_TOKEN|PQTUNNEL_MANAGER_PUBLIC_HOST|PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP|PQTUNNEL_MANAGER_TLS_CERT|PQTUNNEL_MANAGER_TLS_KEY)=/' /etc/default/pqtunnel-manager > "$config_tmp"
+  old_listen="$(sed -n 's/^PQTUNNEL_MANAGER_LISTEN=//p' /etc/default/pqtunnel-manager | head -n1)"
+  old_insecure="$(sed -n 's/^PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=//p' /etc/default/pqtunnel-manager | head -n1)"
+  if [[ "$old_insecure" == true || ! "$old_listen" =~ ^(127\.0\.0\.1:[0-9]+|\[::1\]:[0-9]+)$ ]]; then
+    NEW_MANAGER_TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+    [[ "$NEW_MANAGER_TOKEN" =~ ^[0-9a-f]{64}$ ]] || fail 'could not generate a replacement manager token; upgrade stopped.'
+    printf 'PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$NEW_MANAGER_TOKEN" >> "$config_tmp"
+  else
+    printf 'PQTUNNEL_MANAGER_LISTEN=%s\n' "$old_listen" >> "$config_tmp"
+    old_token="$(sed -n 's/^PQTUNNEL_MANAGER_TOKEN=//p' /etc/default/pqtunnel-manager | head -n1)"
+    [[ "$old_token" =~ ^[A-Za-z0-9_.,:/=\-\[\]]{32,}$ ]] || fail 'existing manager token is missing or invalid; repair it locally before upgrading.'
+    printf 'PQTUNNEL_MANAGER_TOKEN=%s\n' "$old_token" >> "$config_tmp"
+  fi
+  printf 'PQTUNNEL_SETUP_VERSION=%s\n' "$SOURCE_VERSION" >> "$config_tmp"
   chown root:root "$config_tmp"
   chmod 0600 "$config_tmp"
   mv -f "$config_tmp" /etc/default/pqtunnel-manager
@@ -148,9 +161,15 @@ if (( UPGRADE )); then
       fail "manager upgrade failed; previous manager binary, unit and config were restored. Backup: $BACKUP_DIR"
     fi
   fi
-  echo "PQTunnel manager upgraded with graphical setup support. Existing manager token and role were preserved."
+  echo "PQTunnel manager upgraded with graphical setup support."
   echo "Protected backup: $BACKUP_DIR"
   echo "Setup wizard worker is installed but not enabled as a daemon; it is invoked only for an authenticated setup request."
+  if [[ -n "$NEW_MANAGER_TOKEN" ]]; then
+    printf '\nThe previous manager listener was public or insecure. It is now loopback-only and its login token was rotated. Save this new token exactly once:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$NEW_MANAGER_TOKEN"
+    unset NEW_MANAGER_TOKEN
+  else
+    echo "Existing loopback-only manager token and role were preserved."
+  fi
 else
   echo 'PQTunnel manager installed, but not enabled or started.'
   echo 'Review /etc/default/pqtunnel-manager and set a strong PQTUNNEL_MANAGER_TOKEN first.'
