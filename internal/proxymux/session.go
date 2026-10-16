@@ -800,6 +800,8 @@ func (st *Stream) abort(err error) {
 	if target != nil {
 		_ = target.Close()
 	}
+	// Wake OpenContext callers when a stream is reset before OPEN_OK.
+	st.resolveOpen(err)
 	st.endRead(err)
 	st.session.removeStream(st)
 	if !alreadyReset && !st.session.isDone() {
