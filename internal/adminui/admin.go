@@ -103,15 +103,20 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 <div class="detail"><span class="kicker">{{tr .Lang "وضعیت systemd" "systemd status"}}</span><b>{{.Manager.ActiveState}} / {{.Manager.SubState}} · PID {{if .Manager.MainPID}}{{.Manager.MainPID}}{{else}}—{{end}}</b></div>
 </div>
 <p class="sub">{{tr .Lang "استارت/استاپ/ری‌استارت اتصال فعال را قطع می‌کند. این عملیات فقط واحد ثابتِ نقش انتخاب‌شده را کنترل می‌کند؛ برای اعمال تغییر روی سرور عملیاتی، ابتدا مسیر بازیابی خارج از تونل را آماده کن." "Start/stop/restart interrupts active connections. This controls only the fixed unit for the selected role. Ensure you have an out-of-band recovery path before using it on a live server."}}</p>
+{{if eq .Manager.ActiveState "unknown"}}
+<div class="empty">{{tr .Lang "واحد سرویس تونل نصب نیست یا وضعیت آن از systemd قابل خواندن نیست. پیش از استفاده از کنترل‌ها، endpoint مربوط به Gateway یا Dialer را نصب و پیکربندی کن." "The selected tunnel unit is not installed or its state cannot be read from systemd. Install and configure the Gateway or Dialer endpoint before using service controls."}}</div>
+{{else}}
 <div class="header-actions">
 <details class="disconnect"><summary>{{tr .Lang "شروع" "Start"}}</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="start"><input type="hidden" name="confirm" value="yes"><button type="submit">{{tr .Lang "تأیید راه‌اندازی" "Confirm start"}}</button></form></details>
 <details class="disconnect"><summary>{{tr .Lang "توقف" "Stop"}}</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="stop"><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">{{tr .Lang "تأیید توقف" "Confirm stop"}}</button></form></details>
 <details class="disconnect"><summary>{{tr .Lang "راه‌اندازی مجدد" "Restart"}}</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="restart"><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">{{tr .Lang "تأیید راه‌اندازی مجدد" "Confirm restart"}}</button></form></details>
 </div>
+{{end}}
 </section>
 <section class="section"><h2>{{tr .Lang "ویرایش تنظیمات تونل" "Edit tunnel settings"}}</h2>
 {{if .Manager.ConfigError}}<div class="notice">{{.Manager.ConfigError}}</div>{{end}}
-{{if .Manager.ConfigReady}}<p class="sub">{{tr .Lang "آخرین تنظیمات خوانده‌شده از فایل سرویس. مسیر گواهی‌ها، کلیدها، توکن‌ها و متغیرهای مدیریتی از این فرم قابل تغییر نیستند." "Latest settings read from the service file. Certificate paths, keys, tokens, and management variables cannot be changed here."}}</p>{{else}}<p class="sub">{{tr .Lang "فایل تنظیمات قابل خواندن نیست یا هنوز برای site-to-site کامل نشده است. مقادیر معتبر وارد کن؛ قبل از اعمال، اعتبارسنجی انجام می‌شود." "The configuration file is unreadable or incomplete for site-to-site. Enter valid values; they will be validated before applying."}}</p>{{end}}
+{{if .Manager.ConfigReady}}<p class="sub">{{tr .Lang "آخرین تنظیمات خوانده‌شده از فایل سرویس. مسیر گواهی‌ها، کلیدها، توکن‌ها و متغیرهای مدیریتی از این فرم قابل تغییر نیستند." "Latest settings read from the service file. Certificate paths, keys, tokens, and management variables cannot be changed here."}}</p>{{else}}<div class="empty">{{tr .Lang "فایل تنظیمات endpoint موجود نیست یا معتبر نیست. ابتدا سرویس Gateway یا Dialer و فایل تنظیمات محافظت‌شدهٔ آن را نصب و آماده کن؛ فرم خالی اعمال نمی‌شود." "The endpoint configuration is missing or invalid. Install the Gateway or Dialer endpoint and its protected environment file before editing settings here. A blank configuration will not be submitted."}}</div>{{end}}
+{{if .Manager.ConfigReady}}
 <form method="post" action="/config/apply" class="configform">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 {{if eq .Manager.Role "gateway"}}
@@ -129,6 +134,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 <p class="sub">{{tr .Lang "تغییرات با اعتبارسنجی و تهیهٔ نسخهٔ پشتیبان ذخیره می‌شود. اگر سرویس فعال باشد، پنل آن را restart می‌کند؛ در صورت ناموفق‌بودن، تنظیم قبلی بازگردانده می‌شود. انتخاب default route یا CIDR هم‌پوشان رد می‌شود یا نیازمند بازبینی جداگانه است." "Changes are validated and backed up before saving. If the service is active, the panel restarts it; if restart fails, the previous settings are restored. Default-route or overlapping CIDR changes are rejected or require separate review."}}</p>
 <details class="disconnect"><summary>{{tr .Lang "بررسی و اعمال تنظیمات" "Review and apply settings"}}</summary><p>{{tr .Lang "اعمال ممکن است تونل را برای چند لحظه قطع کند. فقط وقتی دسترسی کنسول/SSH مستقل داری تأیید کن." "Applying changes may briefly interrupt the tunnel. Confirm only when you have independent console/SSH access."}}</p><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">{{tr .Lang "تأیید اعتبارسنجی و اعمال" "Validate and apply"}}</button></details>
 </form>
+{{end}}
 </section>
 <section class="section"><h2>{{tr .Lang "تست سرعت داخل تونل" "Tunnel speed test"}}</h2>
 {{if .Manager.SpeedTestReady}}
@@ -698,9 +704,31 @@ func sameOrigin(r *http.Request, allowedPublicHost string, allowInsecurePublicHT
 	// only for loopback requests whose browser Fetch Metadata explicitly says
 	// same-origin navigation. Never use this fallback for public listeners.
 	if origin == "null" {
-		return isLoopbackHost(r.Host) &&
-			strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "same-origin") &&
-			strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate")
+		if isLoopbackHost(r.Host) {
+			return strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "same-origin") &&
+				strings.EqualFold(r.Header.Get("Sec-Fetch-Mode"), "navigate")
+		}
+
+		if !allowInsecurePublicHTTP || r.TLS != nil || allowedPublicHost == "" {
+			return false
+		}
+		ref, err := url.Parse(r.Referer())
+		if err != nil || ref.User != nil ||
+			!strings.EqualFold(ref.Scheme, "http") ||
+			!strings.EqualFold(ref.Host, r.Host) {
+			return false
+		}
+
+		host := r.Host
+		if parsed, _, err := net.SplitHostPort(r.Host); err == nil {
+			host = parsed
+		}
+		ip, err := netip.ParseAddr(strings.Trim(host, "[]"))
+		if err != nil {
+			return false
+		}
+		allowed, err := netip.ParseAddr(allowedPublicHost)
+		return err == nil && ip == allowed
 	}
 	if origin == "" {
 		return false
@@ -830,6 +858,6 @@ func setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 }
