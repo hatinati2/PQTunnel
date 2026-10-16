@@ -2,6 +2,8 @@ package adminui
 
 import (
 	"context"
+	"crypto/tls"
+	"regexp"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -141,9 +143,33 @@ func TestSetupWizardCannotRunFromPublicManagerConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie, _ := managerSession(t, h, strings.Repeat("p", 64))
-	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/setup", nil)
-	req.AddCookie(cookie)
+	token := strings.Repeat("p", 64)
+	loginValues := url.Values{"token": {token}}
+	loginReq := httptest.NewRequest(http.MethodPost, "https://203.0.113.20/login", strings.NewReader(loginValues.Encode()))
+	loginReq.TLS = &tls.ConnectionState{}
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginReq.Header.Set("Origin", "https://203.0.113.20")
+	loginResp := httptest.NewRecorder()
+	h.ServeHTTP(loginResp, loginReq)
+	if loginResp.Code != http.StatusSeeOther {
+		t.Fatalf("public manager test login status=%d body=%s", loginResp.Code, loginResp.Body.String())
+	}
+	cookies := loginResp.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("public manager test login cookie missing")
+	}
+	dashboardReq := httptest.NewRequest(http.MethodGet, "https://203.0.113.20/", nil)
+	dashboardReq.TLS = &tls.ConnectionState{}
+	dashboardReq.AddCookie(cookies[0])
+	dashboardResp := httptest.NewRecorder()
+	h.ServeHTTP(dashboardResp, dashboardReq)
+	csrf := regexp.MustCompile("name=\\"csrf\\" value=\\"([^\\"]+)\\"").FindStringSubmatch(dashboardResp.Body.String())
+	if dashboardResp.Code != http.StatusOK || len(csrf) != 2 {
+		t.Fatalf("public manager dashboard unavailable: status=%d", dashboardResp.Code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "https://203.0.113.20/setup", nil)
+	req.TLS = &tls.ConnectionState{}
+	req.AddCookie(cookies[0])
 	resp := httptest.NewRecorder()
 	h.ServeHTTP(resp, req)
 	if resp.Code != http.StatusForbidden {
