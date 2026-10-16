@@ -51,7 +51,7 @@ func TestValidateSiteToSiteSetupRequestRejectsUnsafeValues(t *testing.T) {
 		{"URI is not a TLS host", func(r *adminapi.SiteToSiteSetupRequest) { r.GatewayName = "https://vpn.example.test" }},
 		{"invalid TLS host", func(r *adminapi.SiteToSiteSetupRequest) { r.GatewayName = "bad name.example.test" }},
 		{"invalid listener port", func(r *adminapi.SiteToSiteSetupRequest) { r.TLSPort = 0 }},
-		{"TCP list empty", func(r *adminapi.SiteToSiteSetupRequest) { r.TCPPorts = "" }},
+		{"both port lists empty", func(r *adminapi.SiteToSiteSetupRequest) { r.TCPPorts = ""; r.UDPPorts = "none" }},
 		{"port out of range", func(r *adminapi.SiteToSiteSetupRequest) { r.TCPPorts = "443,65536" }},
 		{"duplicate TCP port", func(r *adminapi.SiteToSiteSetupRequest) { r.TCPPorts = "443,443" }},
 		{"command in port list", func(r *adminapi.SiteToSiteSetupRequest) { r.TCPPorts = "443;id" }},
