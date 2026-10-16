@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -52,7 +51,7 @@ func main() {
 	flag.StringVar(&cfg.CertPath, "cert", env("PQTUNNEL_PROXY_CERT", ""), "role-specific certificate PEM")
 	flag.StringVar(&cfg.KeyPath, "key", env("PQTUNNEL_PROXY_KEY", ""), "role-specific private key PEM")
 	flag.StringVar(&cfg.PeerName, "peer-name", env("PQTUNNEL_PROXY_PEER_NAME", ""), "exact client certificate Common Name (Gateway only)")
-	flag.StringVar(&cfg.DirectListen, "direct-listen", env("PQTUNNEL_PROXY_DIRECT_LISTEN", "127.0.0.1:1080"), "loopback SOCKS5 listener (Dialer only; empty disables Direct)")
+	flag.StringVar(&cfg.DirectListen, "direct-listen", env("PQTUNNEL_PROXY_DIRECT_LISTEN", "127.0.0.1:1080"), "required loopback SOCKS5 listener (Dialer only)")
 	flag.StringVar(&cfg.DirectAllowedPort, "direct-allowed-ports", env("PQTUNNEL_PROXY_DIRECT_ALLOWED_PORTS", ""), "required Gateway TCP destination allowlist, e.g. 80,443")
 	flag.StringVar(&cfg.ReverseListeners, "reverse-listeners", env("PQTUNNEL_PROXY_REVERSE_LISTENERS", ""), "Gateway listeners, name=host:port,name2=host:port")
 	flag.StringVar(&cfg.ReverseTargets, "reverse-targets", env("PQTUNNEL_PROXY_REVERSE_TARGETS", ""), "Dialer targets, name=host:port,name2=host:port")
