@@ -3,12 +3,14 @@ set -Eeuo pipefail
 
 usage() {
   cat <<'USAGE'
-Install the optional standalone PQTunnel web manager. This installer does not
-start the manager or change tunnel, route, firewall, NAT, or forwarding state.
+Install the optional standalone PQTunnel web manager and its fixed setup worker.
+A first install does not start the manager. --upgrade backs up and upgrades a
+complete existing manager and restarts it only when it was already active.
 
 Usage:
   sudo bash ./scripts/install-manager.sh --source /path/to/source-or-Linux-bundle --role gateway
   sudo bash ./scripts/install-manager.sh --source /path/to/source-or-Linux-bundle --role dialer
+  sudo bash ./scripts/install-manager.sh --source /path/to/Linux-bundle --role dialer --upgrade
 
 The role is fixed in /etc/default/pqtunnel-manager:
   gateway -> pqtunneld.service and /etc/default/pqtunneld
