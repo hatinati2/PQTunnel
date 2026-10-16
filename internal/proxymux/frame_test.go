@@ -133,15 +133,16 @@ func TestWriteFrameRejectsInvalidFrame(t *testing.T) {
 	}
 }
 
-type shortWriter struct {
-	limit int
+type partialBufferWriter struct {
+	buffer bytes.Buffer
+	limit  int
 }
 
-func (w shortWriter) Write(p []byte) (int, error) {
-	if len(p) > w.limit {
+func (w *partialBufferWriter) Write(p []byte) (int, error) {
+	if w.limit > 0 && len(p) > w.limit {
 		p = p[:w.limit]
 	}
-	return len(p), nil
+	return w.buffer.Write(p)
 }
 
 type zeroWriter struct{}
@@ -150,31 +151,19 @@ func (zeroWriter) Write([]byte) (int, error) { return 0, nil }
 
 func TestWriteFrameHandlesShortWriters(t *testing.T) {
 	want := Frame{Type: TypeData, StreamID: 1, Payload: []byte("short-write-test")}
-	var wire bytes.Buffer
-	writer := multiWriter{writers: []io.Writer{shortWriter{limit: 2}, &wire}}
-	// The first writer consumes each Write call; use a dedicated writer that
-	// forwards only a prefix to avoid depending on Writer behavior.
-	_ = writer
-
-	var got bytes.Buffer
-	if err := WriteFrame(&got, want); err != nil {
-		t.Fatalf("WriteFrame() error = %v", err)
-	}
-	if err := WriteFrame(shortWriter{limit: 2}, want); err != nil {
+	wire := &partialBufferWriter{limit: 2}
+	if err := WriteFrame(wire, want); err != nil {
 		t.Fatalf("WriteFrame() should loop over short writes: %v", err)
 	}
+	got, err := ReadFrame(&wire.buffer)
+	if err != nil {
+		t.Fatalf("ReadFrame() after short writes: %v", err)
+	}
+	if got.Type != want.Type || got.StreamID != want.StreamID || !bytes.Equal(got.Payload, want.Payload) {
+		t.Fatalf("short-write round trip mismatch: got %#v, want %#v", got, want)
+	}
+
 	if err := WriteFrame(zeroWriter{}, want); !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("WriteFrame() error = %v, want io.ErrShortWrite", err)
 	}
-}
-
-type multiWriter struct {
-	writers []io.Writer
-}
-
-func (m multiWriter) Write(p []byte) (int, error) {
-	if len(m.writers) == 0 {
-		return 0, io.ErrClosedPipe
-	}
-	return m.writers[0].Write(p)
 }
