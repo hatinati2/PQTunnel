@@ -95,6 +95,8 @@ jobs:
         run: |
           python3 scripts/test-release-version.py
           python3 scripts/check-release-version.py --check-docs
+      - name: Test release proxy packaging and integration wiring
+        run: python3 scripts/test-release-workflow.py
       - name: Install nftables parser for check-only regression test
         run: |
           sudo apt-get update
