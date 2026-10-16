@@ -427,6 +427,13 @@ func TestSessionReceiveQueueSaturationReapsOnlyAffectedStream(t *testing.T) {
 
 	payload := bytes.Repeat([]byte("q"), maxDataSize)
 	for i := 0; i < streamReadQueueFrames+4; i++ {
+		// Keep the local sender's accounting correct for the initial window,
+		// then deliberately violate the protocol by sending past zero credits.
+		if i < streamReadQueueFrames {
+			stream.mu.Lock()
+			stream.sendWindowFrames--
+			stream.mu.Unlock()
+		}
 		if err := left.sendFrame(Frame{
 			Type: TypeData, StreamID: stream.id, Payload: payload,
 		}, time.Now().Add(time.Second), nil); err != nil {
