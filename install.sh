@@ -5,6 +5,7 @@ set -Eeuo pipefail
 VERSION="v0.3.0-rc4"
 REPO="hatinati2/PQTunnel"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
+SOURCE_RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 RELEASE_BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 TMP_DIR=""
 TOKEN=""
@@ -39,9 +40,14 @@ PQTunnel one-line installer (experimental release v0.3.0-rc4)
 Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --pair
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | bash -s -- --preflight dialer
 
 Modes:
+  --pair                     Run the paired first-time installer on the Iran/Dialer VPS.
+                             Installs both endpoint services and both loopback-only
+                             manager panels over SSH-key access to the overseas Gateway.
+                             Tunnel/network activation requires typing APPLY-NETWORK.
   --manager gateway|dialer   Download and checksum-verify the v0.3.0-rc4 Linux bundle,
                              install the manager, generate a strong token when needed,
                              configure it, validate the unit, then enable and start it.
@@ -50,7 +56,7 @@ Modes:
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
 
-This one-line manager mode installs and starts the web manager only. It does NOT install/configure/start the tunnel endpoint and does not change routes, firewall, NAT, or forwarding. Tunnel setup still requires reviewed PKI and role-specific config on both peers. The web manager defaults to 127.0.0.1:9091; use SSH forwarding for remote access. Public-IP access is not enabled by this installer.
+--manager installs only the local web manager. --pair configures both the Iran Dialer and overseas Gateway, generates role-specific mutual-TLS certificates, installs both endpoint services and manager panels, and automatically configures a bounded speed-test agent. It defaults to selected-port egress (TCP 80/443, UDP 53/123/443), not a full-tunnel VPN. It refuses to overwrite an existing tunnel endpoint. Services and network rules remain unactivated until the explicit APPLY-NETWORK confirmation. Provider firewalls/security groups are not modified. This project remains experimental; use out-of-band recovery access and do not use on production systems.
 USAGE
 }
 
@@ -58,6 +64,7 @@ MODE=""
 ROLE=""
 while (($#)); do
   case "$1" in
+    --pair) MODE=pair; shift ;;
     --manager) MODE=manager; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     --preflight) MODE=preflight; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     -h|--help) usage; exit 0 ;;
@@ -68,16 +75,42 @@ done
 if [[ -z "$MODE" ]]; then
   printf '\nPQTunnel %s — one-line setup\n' "$VERSION"
   printf '  1) Read-only preflight (no changes)\n'
-  printf '  2) Install and start local web manager (show a new token once)\n'
-  prompt 'Choose [1-2]: ' CHOICE
+  printf '  2) Install/start local web manager only\n'
+  printf '  3) Paired tunnel + both management panels (run on Iran; needs SSH key access to overseas VPS)\n'
+  prompt 'Choose [1-3]: ' CHOICE
   case "$CHOICE" in
     1) MODE=preflight; ROLE=both ;;
     2) MODE=manager ;;
-    *) fail 'choose 1 or 2.' ;;
+    3) MODE=pair ;;
+    *) fail 'choose 1, 2 or 3.' ;;
   esac
 fi
 
 case "$MODE" in
+  pair)
+    [[ "$EUID" -eq 0 ]] || fail 'paired installation requires root; rerun with sudo on the Iran/Dialer VPS.'
+    need curl; need tar; need sha256sum; need awk; need uname; need grep; need python3; need ssh; need scp
+    case "$(uname -m)" in
+      x86_64|amd64) ARCH=amd64 ;;
+      aarch64|arm64) ARCH=arm64 ;;
+      *) fail "unsupported architecture: $(uname -m); supported Linux architectures: amd64, arm64." ;;
+    esac
+    ASSET="PQTunnel-${VERSION}-linux-${ARCH}.tar.gz"
+    TMP_DIR="$(mktemp -d)"
+    curl --fail --silent --show-error --location "$RELEASE_BASE/$ASSET" -o "$TMP_DIR/$ASSET"
+    curl --fail --silent --show-error --location "$RELEASE_BASE/SHA256SUMS" -o "$TMP_DIR/SHA256SUMS"
+    grep -Fq "  ./$ASSET" "$TMP_DIR/SHA256SUMS" || fail "release checksum file does not list $ASSET; refusing to install."
+    (cd "$TMP_DIR" && grep -F "  ./$ASSET" SHA256SUMS | sha256sum --check -)
+    tar -xzf "$TMP_DIR/$ASSET" -C "$TMP_DIR"
+    SOURCE_DIR="$TMP_DIR/PQTunnel-${VERSION}-linux-${ARCH}"
+    [[ -x "$SOURCE_DIR/pqtunnel-pki" && -x "$SOURCE_DIR/pqtunnel-manager" ]] || fail 'release bundle is missing required Linux binaries.'
+    # The release binary bundle stays version-pinned; fetch the small orchestration scripts from main.
+    curl --fail --silent --show-error --location "$SOURCE_RAW_BASE/scripts/pqtunnel-oneclick-pair.sh" -o "$SOURCE_DIR/scripts/pqtunnel-oneclick-pair.sh"
+    curl --fail --silent --show-error --location "$SOURCE_RAW_BASE/scripts/prepare-site-to-site-pki.sh" -o "$SOURCE_DIR/scripts/prepare-site-to-site-pki.sh"
+    [[ -s "$SOURCE_DIR/scripts/pqtunnel-oneclick-pair.sh" && -s "$SOURCE_DIR/scripts/prepare-site-to-site-pki.sh" ]] || fail 'could not retrieve paired installer scripts.'
+    chmod 0700 "$SOURCE_DIR/scripts/pqtunnel-oneclick-pair.sh" "$SOURCE_DIR/scripts/prepare-site-to-site-pki.sh"
+    bash "$SOURCE_DIR/scripts/pqtunnel-oneclick-pair.sh" --source "$SOURCE_DIR" --version "$VERSION" --release-base "$RELEASE_BASE"
+    ;;
   preflight)
     [[ -n "$ROLE" ]] || ROLE=both
     [[ "$ROLE" == both || "$ROLE" == gateway || "$ROLE" == dialer ]] || fail 'preflight role must be gateway, dialer or both.'
