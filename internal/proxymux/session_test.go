@@ -553,3 +553,79 @@ func TestSessionShutdownDuringConcurrentOpensReapsAllStreams(t *testing.T) {
 	waitForStreamCount(t, left, 0)
 	waitForStreamCount(t, right, 0)
 }
+
+
+// A late OPEN_OK for a stream reset by local cancellation must trigger a
+// stream-local reset, not terminate the otherwise healthy session.
+func TestSessionLateOpenOKAfterCancellationResetsOnlyStream(t *testing.T) {
+	localConn, peerConn := net.Pipe()
+	session, err := NewSession(context.Background(), localConn, SessionOptions{
+		Initiator: true,
+		MaxStreams: 4,
+		OpenTimeout: time.Second,
+		WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	})
+	if err != nil {
+		_ = localConn.Close()
+		_ = peerConn.Close()
+		t.Fatalf("NewSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = peerConn.Close()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, openErr := session.OpenContext(ctx, TypeOpenDirect, []byte("late-open-ok"))
+		result <- openErr
+	}()
+
+	openFrame, err := ReadFrame(peerConn)
+	if err != nil {
+		cancel()
+		t.Fatalf("read OPEN request: %v", err)
+	}
+	if openFrame.Type != TypeOpenDirect || openFrame.StreamID == 0 {
+		cancel()
+		t.Fatalf("unexpected initial frame: %#v", openFrame)
+	}
+
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("OpenContext() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenContext did not return after cancellation")
+	}
+
+	reset, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read cancellation reset: %v", err)
+	}
+	if reset.Type != TypeClose || reset.StreamID != openFrame.StreamID ||
+		len(reset.Payload) != 1 || reset.Payload[0] != closeFlagReset {
+		t.Fatalf("unexpected cancellation frame: %#v", reset)
+	}
+
+	if err := WriteFrame(peerConn, Frame{Type: TypeOpenOK, StreamID: openFrame.StreamID}); err != nil {
+		t.Fatalf("write delayed OPEN_OK: %v", err)
+	}
+	lateReset, err := ReadFrame(peerConn)
+	if err != nil {
+		t.Fatalf("read reset for delayed OPEN_OK: %v", err)
+	}
+	if lateReset.Type != TypeClose || lateReset.StreamID != openFrame.StreamID ||
+		len(lateReset.Payload) != 1 || lateReset.Payload[0] != closeFlagReset {
+		t.Fatalf("unexpected response to delayed OPEN_OK: %#v", lateReset)
+	}
+
+	if session.isDone() {
+		t.Fatal("late OPEN_OK for a cancelled stream terminated the shared session")
+	}
+	waitForStreamCount(t, session, 0)
+}
