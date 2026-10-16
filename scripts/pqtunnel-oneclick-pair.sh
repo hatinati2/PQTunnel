@@ -41,7 +41,9 @@ need() { command -v "$1" >/dev/null 2>&1 || fail "missing required command '$1';
 [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || fail 'invalid release version.'
 [[ "$RELEASE_BASE" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/releases/download/$VERSION$ ]] || fail 'release base URL does not match the pinned version.'
 
-for cmd in curl tar sha256sum openssl ssh scp systemctl systemd-analyze ip nft sysctl pgrep ss awk grep sed install stat timeout python3; do need "$cmd"; done
+# Require only what is needed to prompt safely and secure the existing local manager.
+# Network/SSH dependencies are checked again after that manager has been restricted to loopback.
+for cmd in openssl systemctl systemd-analyze awk grep sed install stat cp date mktemp chown chmod mv head; do need "$cmd"; done
 [[ -d /run/systemd/system ]] || fail 'systemd is not running; no changes made.'
 
 WORK_DIR="$(mktemp -d /root/pqtunnel-pair.XXXXXX)"
@@ -221,6 +223,9 @@ prompt 'Continue to read-only checks and prepare both servers? Type PREPARE: ' C
 # before remote SSH/preflight can fail and leave plaintext HTTP exposed.
 check_local_manager_state
 install_or_check_manager dialer
+
+# Failures from this point leave the local management panel loopback-only.
+for cmd in curl tar sha256sum ssh scp ip nft sysctl pgrep ss sort timeout python3; do need "$cmd"; done
 
 SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=2)
 if ! REMOTE_UID=$(ssh "${SSH_OPTS[@]}" "$REMOTE_TARGET" 'id -u' 2>/dev/null); then
