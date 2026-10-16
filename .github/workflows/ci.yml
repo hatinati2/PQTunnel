@@ -28,7 +28,7 @@ jobs:
       - name: Repeat proxymux shutdown and delayed-open regression tests
         run: |
           go test -race -count=25 \
-            -run "^(TestSessionShutdownCancelsPendingRemoteOpen|TestSessionShutdownDuringConcurrentOpensReapsAllStreams|TestSessionLateOpenOKAfterCancellationResetsOnlyStream|TestSessionBrokerOpenRetriesAfterReplacementDuringRemoteOpen)$" \
+            -run "^(TestSessionShutdownCancelsPendingRemoteOpen|TestSessionShutdownDuringConcurrentOpensReapsAllStreams|TestSessionLateOpenOKAfterCancellationResetsOnlyStream|TestSessionBrokerOpenRetriesAfterReplacementDuringRemoteOpen|TestSessionDataBeforeOpenOKReleasesOpenCaller)$" \
             ./internal/proxymux
       - name: Test staged site-to-site PKI bundle
         run: bash scripts/test-prepare-site-to-site-pki.sh
