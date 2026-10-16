@@ -164,3 +164,47 @@ func TestWriteFrameHandlesShortWriters(t *testing.T) {
 		t.Fatalf("WriteFrame() error = %v, want io.ErrShortWrite", err)
 	}
 }
+
+
+// FuzzReadFrame checks that arbitrary wire input never panics and that every
+// accepted frame can be encoded and decoded again without changing semantics.
+// Run longer campaigns with: go test ./internal/proxymux -fuzz=FuzzReadFrame.
+func FuzzReadFrame(f *testing.F) {
+	seeds := []Frame{
+		{Type: TypeOpenDirect, StreamID: 1, Payload: []byte("example.com:443")},
+		{Type: TypeOpenReverse, StreamID: 2, Payload: []byte("web")},
+		{Type: TypeOpenOK, StreamID: 1},
+		{Type: TypeOpenError, StreamID: 2, Payload: []byte("denied")},
+		{Type: TypeData, StreamID: 1, Payload: []byte{0, 1, 2, 3, 255}},
+		{Type: TypeClose, StreamID: 2, Payload: []byte{closeFlagWrite}},
+		{Type: TypePing, Payload: []byte("nonce123")},
+	}
+	for _, seed := range seeds {
+		var wire bytes.Buffer
+		if err := WriteFrame(&wire, seed); err != nil {
+			f.Fatalf("encode fuzz seed: %v", err)
+		}
+		f.Add(wire.Bytes())
+	}
+	f.Add([]byte{})
+	f.Add(make([]byte, headerSize))
+	f.Add(rawFrame(Version, byte(TypeData), 1, maxDataSize+1, 0)[:headerSize])
+
+	f.Fuzz(func(t *testing.T, wire []byte) {
+		frame, err := ReadFrame(bytes.NewReader(wire))
+		if err != nil {
+			return
+		}
+		var encoded bytes.Buffer
+		if err := WriteFrame(&encoded, frame); err != nil {
+			t.Fatalf("accepted frame cannot be re-encoded: %v", err)
+		}
+		got, err := ReadFrame(bytes.NewReader(encoded.Bytes()))
+		if err != nil {
+			t.Fatalf("re-encoded accepted frame cannot be decoded: %v", err)
+		}
+		if got.Type != frame.Type || got.StreamID != frame.StreamID || !bytes.Equal(got.Payload, frame.Payload) {
+			t.Fatalf("round-trip mismatch: got %#v, want %#v", got, frame)
+		}
+	})
+}

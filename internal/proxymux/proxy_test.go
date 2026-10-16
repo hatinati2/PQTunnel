@@ -3,6 +3,7 @@ package proxymux
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -216,5 +217,43 @@ func exchangeConns(t *testing.T, left, right net.Conn, request, response string)
 	}
 	if err := <-writeResponseDone; err != nil {
 		t.Fatalf("target write response: %v", err)
+	}
+}
+
+
+// Cancelled DNS work must fail promptly before attempting a Direct connection.
+func TestDirectTargetHandlerHonorsCancelledDNSContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	handler := NewDirectTargetHandler(map[uint16]struct{}{443: {}})
+	conn, err := handler(ctx, TypeOpenDirect, []byte("example.invalid:443"))
+	if conn != nil {
+		_ = conn.Close()
+		t.Fatal("cancelled Direct target lookup unexpectedly returned a connection")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Direct target error = %v, want context.Canceled", err)
+	}
+}
+
+func TestReverseTargetHandlerReturnsDialFailure(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetAddress := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewReverseTargetHandler(map[string]string{"unavailable": targetAddress})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	conn, err := handler(ctx, TypeOpenReverse, []byte("unavailable"))
+	if conn != nil {
+		_ = conn.Close()
+		t.Fatal("unavailable reverse target unexpectedly connected")
+	}
+	if err == nil {
+		t.Fatal("unavailable reverse target unexpectedly succeeded")
 	}
 }
