@@ -461,6 +461,7 @@ func (s *Session) handleFrame(frame Frame) error {
 			}
 			return fmt.Errorf("proxymux: WINDOW_UPDATE for unknown stream %d", frame.StreamID)
 		}
+		credit := int(binary.BigEndian.Uint32(frame.Payload))
 		// Serialize credit validation against DATA writes. If the peer responds
 		// immediately after receiving a DATA frame, it waits until that write is
 		// accounted for; credits cannot be claimed for merely reserved frames.
