@@ -131,6 +131,9 @@ choose_iface() {
     prompt "$label WAN interface (choose exactly one listed above): " choice
   fi
   [[ "$choice" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] || fail "invalid interface name for $label."
+  local found=0 iface
+  for iface in "${_ifaces[@]}"; do [[ "$choice" == "$iface" ]] && found=1; done
+  (( found == 1 )) || fail "interface '$choice' is not among the default-route candidates listed for $label."
   printf '%s\n' "$choice"
 }
 
