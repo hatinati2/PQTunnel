@@ -83,6 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bash -n install.sh
           for script in scripts/*.sh; do bash -n "$script"; done
       - name: Test client installer completeness
         run: bash scripts/test-installer-completeness.sh
