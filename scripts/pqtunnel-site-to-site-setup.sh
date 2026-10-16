@@ -5,11 +5,28 @@ umask 077
 VERSION="${PQTUNNEL_SETUP_VERSION:-v0.3.0-rc4}"
 REPO=hatinati2/PQTunnel
 REL="https://github.com/$REPO/releases/download/$VERSION"
-RAW="https://raw.githubusercontent.com/$REPO/main"
+# Fetch the remote half from the same immutable release tag as the checked bundle.
+RAW="https://raw.githubusercontent.com/$REPO/$VERSION"
 WORK="" STAGE="" REMOTE="" SSH_PORT=22 DTOKEN="" GTOKEN="" STOKEN="" TOKENS_SHOWN=0
 fail(){ printf 'PQTunnel setup: %s\n' "$*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || fail "Missing prerequisite: $1"; }
-ask(){ [[ -r /dev/tty ]] || fail 'Run from an interactive terminal.'; read -r -p "$1" "$2" </dev/tty; }
+SETUP_INPUTS=()
+SETUP_INPUT_INDEX=0
+if [[ -n "\${PQTUNNEL_SETUP_INPUT_FILE:-}" ]]; then
+ [[ -f "$PQTUNNEL_SETUP_INPUT_FILE" && ! -L "$PQTUNNEL_SETUP_INPUT_FILE" ]] || fail 'Setup input file is missing or unsafe.'
+ [[ "$(stat -c '%a' "$PQTUNNEL_SETUP_INPUT_FILE")" == 600 ]] || fail 'Setup input file must be mode 0600.'
+ mapfile -t SETUP_INPUTS < "$PQTUNNEL_SETUP_INPUT_FILE"
+fi
+ask(){
+ if [[ -n "\${PQTUNNEL_SETUP_INPUT_FILE:-}" ]]; then
+  (( SETUP_INPUT_INDEX < \${#SETUP_INPUTS[@]} )) || fail 'Graphical setup input ended unexpectedly.'
+  printf -v "$2" '%s' "\${SETUP_INPUTS[$SETUP_INPUT_INDEX]}"
+  SETUP_INPUT_INDEX=$((SETUP_INPUT_INDEX + 1))
+ else
+  [[ -r /dev/tty ]] || fail 'Run from an interactive terminal.'
+  read -r -p "$1" "$2" </dev/tty
+ fi
+}
 cleanup(){
  local rc=$?
  if [[ -n "$STAGE" && -n "$REMOTE" ]]; then ssh -p "$SSH_PORT" -o BatchMode=yes "$REMOTE" "rm -rf -- '$STAGE'" >/dev/null 2>&1 || true; fi
