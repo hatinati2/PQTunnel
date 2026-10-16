@@ -187,3 +187,57 @@ func TestSessionRejectsRemoteOpenWithoutHandler(t *testing.T) {
 		t.Fatal("a rejected stream incorrectly terminated the shared session")
 	}
 }
+
+
+// waitForStreamCount waits until a session releases all streams expected by a test.
+func waitForStreamCount(t *testing.T, session *Session, want int) {
+	t.Helper()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		session.mu.Lock()
+		got := len(session.streams)
+		session.mu.Unlock()
+		if got == want {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("session retained %d streams, want %d", got, want)
+		case <-ticker.C:
+		}
+	}
+}
+
+// A vanished local target must not leave its logical stream in either session.
+func TestSessionReapsStreamWhenTargetClosesDuringTraffic(t *testing.T) {
+	left, right, accepted := newTestSessionPair(t, 8)
+	stream, err := left.Open(TypeOpenDirect, []byte("reap:target"))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	target := awaitTarget(t, accepted, "reap:target")
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := stream.Write(bytes.Repeat([]byte("x"), 64*1024))
+		writeDone <- err
+	}()
+
+	// The target is deliberately not read: its peer relay may be blocked
+	// writing buffered data when the local TCP connection disappears.
+	time.Sleep(25 * time.Millisecond)
+	if err := target.Close(); err != nil {
+		t.Fatalf("close target: %v", err)
+	}
+
+	select {
+	case <-writeDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("writer did not unblock after the target closed")
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+}
