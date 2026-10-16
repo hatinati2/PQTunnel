@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+# End-to-end Direct/Reverse proxy lab using only disposable network namespaces.
+# It asserts that host and namespace network state is unchanged by the proxy.
+set -Eeuo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+[[ $EUID -eq 0 ]] || { echo 'FAIL: run as root on a disposable Linux host' >&2; exit 2; }
+for cmd in ip nft iptables-save ip6tables-save openssl python3 ss diff sed grep go; do
+  command -v "$cmd" >/dev/null 2>&1 || { echo "FAIL: required command missing: $cmd" >&2; exit 2; }
+done
+
+BIN="${PQTUNNEL_PROXY_BIN:-}"
+LAB_DIR="$(mktemp -d -t pqtunnel-proxy-lab.XXXXXX)"
+SUFFIX="${BASHPID}"
+GW_NS="ptgw${SUFFIX}"
+DL_NS="ptdl${SUFFIX}"
+GW_VETH="pgw${SUFFIX}"
+DL_VETH="pdl${SUFFIX}"
+GW_PID=""
+DL_PID=""
+DIRECT_SERVER_PID=""
+REVERSE_SERVER_PID=""
+HOST_BASE="$LAB_DIR/host.before"
+HOST_AFTER="$LAB_DIR/host.after"
+GW_BASE="$LAB_DIR/gateway.before"
+DL_BASE="$LAB_DIR/dialer.before"
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+for ns in "$GW_NS" "$DL_NS"; do
+  if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
+    echo "FAIL: refusing to reuse existing namespace $ns" >&2
+    rm -rf "$LAB_DIR"
+    exit 2
+  fi
+done
+for iface in "$GW_VETH" "$DL_VETH"; do
+  if ip link show dev "$iface" >/dev/null 2>&1; then
+    echo "FAIL: refusing to reuse existing host interface $iface" >&2
+    rm -rf "$LAB_DIR"
+    exit 2
+  fi
+done
+
+snapshot_host() {
+  local out="$1" key value
+  {
+    echo '[links]'; ip -o link show
+    echo '[addresses]'; ip -o address show
+    echo '[ipv4-routes]'; ip -4 route show table all
+    echo '[ipv6-routes]'; ip -6 route show table all
+    echo '[ipv4-rules]'; ip -4 rule show
+    echo '[ipv6-rules]'; ip -6 rule show
+    echo '[selected-sysctls]'
+    for key in net.ipv4.ip_forward net.ipv6.conf.all.forwarding net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter net.ipv4.conf.all.accept_redirects net.ipv4.conf.default.accept_redirects; do
+      value="$(sysctl -n "$key" 2>/dev/null || echo unavailable)"
+      printf '%s=%s\n' "$key" "$value"
+    done
+    echo '[nftables]'
+    nft -a list ruleset 2>/dev/null | sed -E 's/counter packets [0-9]+ bytes [0-9]+/counter packets * bytes */g' || true
+    echo '[iptables]'; iptables-save 2>/dev/null || true
+    echo '[ip6tables]'; ip6tables-save 2>/dev/null || true
+  } > "$out"
+}
+
+snapshot_ns() {
+  local ns="$1" out="$2" key value
+  {
+    echo '[links]'; ip -n "$ns" -o link show
+    echo '[addresses]'; ip -n "$ns" -o address show
+    echo '[ipv4-routes]'; ip -n "$ns" -4 route show table all
+    echo '[ipv6-routes]'; ip -n "$ns" -6 route show table all
+    echo '[ipv4-rules]'; ip -n "$ns" -4 rule show
+    echo '[ipv6-rules]'; ip -n "$ns" -6 rule show
+    echo '[selected-sysctls]'
+    for key in net.ipv4.ip_forward net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter net.ipv4.conf.all.accept_redirects net.ipv4.conf.default.accept_redirects net.ipv4.conf.eth0.rp_filter net.ipv4.conf.eth0.accept_redirects net.ipv6.conf.all.forwarding net.ipv6.conf.default.forwarding net.ipv6.conf.eth0.disable_ipv6; do
+      value="$(ip netns exec "$ns" sysctl -n "$key" 2>/dev/null || echo unavailable)"
+      printf '%s=%s\n' "$key" "$value"
+    done
+    echo '[nftables]'
+    ip netns exec "$ns" nft -a list ruleset 2>/dev/null | sed -E 's/counter packets [0-9]+ bytes [0-9]+/counter packets * bytes */g' || true
+    echo '[iptables]'; ip netns exec "$ns" iptables-save 2>/dev/null || true
+    echo '[ip6tables]'; ip netns exec "$ns" ip6tables-save 2>/dev/null || true
+  } > "$out"
+}
+
+cleanup() {
+  local rc=$? ns now pair pid
+  trap - EXIT INT TERM
+  set +e
+  for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID"; do
+    [[ -z "$pid" ]] || kill -TERM "$pid" >/dev/null 2>&1
+  done
+  for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID"; do
+    [[ -z "$pid" ]] || wait "$pid" >/dev/null 2>&1
+  done
+  for pair in "$GW_NS:$GW_BASE" "$DL_NS:$DL_BASE"; do
+    ns="${pair%%:*}"; now="${pair#*:}"
+    if [[ -f "$now" ]] && ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
+      snapshot_ns "$ns" "$LAB_DIR/ns.after"
+      if ! diff -u "$now" "$LAB_DIR/ns.after" > "$LAB_DIR/ns.diff"; then
+        echo "FAIL: proxy run changed network state inside namespace $ns" >&2
+        cat "$LAB_DIR/ns.diff" >&2
+        rc=1
+      fi
+    fi
+  done
+  ip netns del "$GW_NS" >/dev/null 2>&1
+  ip netns del "$DL_NS" >/dev/null 2>&1
+  ip link del "$GW_VETH" >/dev/null 2>&1
+  ip link del "$DL_VETH" >/dev/null 2>&1
+  if [[ -f "$HOST_BASE" ]]; then
+    snapshot_host "$HOST_AFTER"
+    if ! diff -u "$HOST_BASE" "$HOST_AFTER" > "$LAB_DIR/host.diff"; then
+      echo 'FAIL: lab cleanup did not restore host network state exactly' >&2
+      cat "$LAB_DIR/host.diff" >&2
+      rc=1
+    fi
+  fi
+  if (( rc != 0 )); then
+    for log in gateway.log dialer.log direct-server.log reverse-server.log; do
+      if [[ -f "$LAB_DIR/$log" ]]; then echo "--- $log ---" >&2; cat "$LAB_DIR/$log" >&2; fi
+    done
+  fi
+  rm -rf "$LAB_DIR"
+  exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+snapshot_host "$HOST_BASE"
+if [[ -z "$BIN" ]]; then
+  BIN="$LAB_DIR/pqtunnel-proxy"
+  go build -trimpath -o "$BIN" ./cmd/pqtunnel-proxy
+fi
+[[ -x "$BIN" ]] || fail "proxy binary is not executable: $BIN"
+
+# Ephemeral identities only; no production certificates are read or written.
+mkdir -m 0700 "$LAB_DIR/pki"
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$LAB_DIR/pki/ca.key" >/dev/null 2>&1
+openssl req -x509 -new -key "$LAB_DIR/pki/ca.key" -sha256 -days 1 -subj '/CN=PQTunnel Disposable Lab CA' -out "$LAB_DIR/pki/ca.crt" >/dev/null 2>&1
+chmod 0600 "$LAB_DIR/pki/ca.key"
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$LAB_DIR/pki/gateway.key" >/dev/null 2>&1
+openssl req -new -key "$LAB_DIR/pki/gateway.key" -subj '/CN=gateway.test' -out "$LAB_DIR/pki/gateway.csr" >/dev/null 2>&1
+cat > "$LAB_DIR/pki/gateway.ext" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:gateway.test
+EOF
+openssl x509 -req -in "$LAB_DIR/pki/gateway.csr" -CA "$LAB_DIR/pki/ca.crt" -CAkey "$LAB_DIR/pki/ca.key" -CAcreateserial -days 1 -sha256 -extfile "$LAB_DIR/pki/gateway.ext" -out "$LAB_DIR/pki/gateway.crt" >/dev/null 2>&1
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$LAB_DIR/pki/dialer.key" >/dev/null 2>&1
+openssl req -new -key "$LAB_DIR/pki/dialer.key" -subj '/CN=dialer.test' -out "$LAB_DIR/pki/dialer.csr" >/dev/null 2>&1
+cat > "$LAB_DIR/pki/dialer.ext" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth
+EOF
+openssl x509 -req -in "$LAB_DIR/pki/dialer.csr" -CA "$LAB_DIR/pki/ca.crt" -CAkey "$LAB_DIR/pki/ca.key" -CAcreateserial -days 1 -sha256 -extfile "$LAB_DIR/pki/dialer.ext" -out "$LAB_DIR/pki/dialer.crt" >/dev/null 2>&1
+chmod 0600 "$LAB_DIR/pki/gateway.key" "$LAB_DIR/pki/dialer.key"
+
+# Gateway-side fake public IP is local only; both namespaces have no default
+# route, so any unexpected outbound traffic cannot reach the host or Internet.
+ip netns add "$GW_NS"
+ip netns add "$DL_NS"
+ip link add "$GW_VETH" type veth peer name "$DL_VETH"
+ip link set "$GW_VETH" netns "$GW_NS"
+ip link set "$DL_VETH" netns "$DL_NS"
+ip -n "$GW_NS" link set "$GW_VETH" name eth0
+ip -n "$DL_NS" link set "$DL_VETH" name eth0
+ip -n "$GW_NS" link set lo up
+ip -n "$DL_NS" link set lo up
+ip -n "$GW_NS" addr add 192.0.2.1/30 dev eth0
+ip -n "$DL_NS" addr add 192.0.2.2/30 dev eth0
+ip -n "$GW_NS" link set eth0 up
+ip -n "$DL_NS" link set eth0 up
+ip -n "$GW_NS" addr add 8.8.8.8/32 dev lo
+ip -n "$GW_NS" route get 8.8.8.8 | grep -q '^local 8\.8\.8\.8' || fail 'fake public address does not have a namespace-local route'
+
+# Add harmless per-namespace firewall sentinels that no test packets match.
+for ns in "$GW_NS" "$DL_NS"; do
+  ip netns exec "$ns" nft -f - <<'NFT'
+table inet pqtunnel_lab_guard {
+  chain input {
+    type filter hook input priority 300; policy accept;
+    ip saddr 203.0.113.255 counter accept comment "pqtunnel lab sentinel"
+  }
+  chain output {
+    type filter hook output priority 300; policy accept;
+    ip daddr 203.0.113.255 counter accept comment "pqtunnel lab sentinel"
+  }
+}
+NFT
+done
+snapshot_ns "$GW_NS" "$GW_BASE"
+snapshot_ns "$DL_NS" "$DL_BASE"
+
+cat > "$LAB_DIR/echo_server.py" <<'PY'
+import socketserver
+import sys
+host, port, prefix = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode()
+class Handler(socketserver.BaseRequestHandler):
+    def handle(self):
+        self.request.settimeout(5)
+        data = bytearray()
+        while len(data) < 4096:
+            chunk = self.request.recv(1024)
+            if not chunk:
+                break
+            data.extend(chunk)
+            if b"\n" in data:
+                break
+        if data:
+            self.request.sendall(prefix + bytes(data))
+        try:
+            self.request.shutdown(1)
+        except OSError:
+            pass
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+with Server((host, port), Handler) as server:
+    server.serve_forever(poll_interval=0.1)
+PY
+
+cat > "$LAB_DIR/exercise.py" <<'PY'
+import concurrent.futures
+import socket
+import struct
+import sys
+gateway_ip, reverse_port, socks_port, public_ip, direct_port = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], int(sys.argv[5])
+def recv_all(sock):
+    out = bytearray()
+    while True:
+        data = sock.recv(4096)
+        if not data:
+            return bytes(out)
+        out.extend(data)
+def direct():
+    with socket.create_connection(("127.0.0.1", socks_port), timeout=4) as s:
+        s.settimeout(4)
+        s.sendall(b"\x05\x01\x00")
+        if s.recv(2) != b"\x05\x00":
+            raise RuntimeError("SOCKS5 no-auth negotiation failed")
+        s.sendall(b"\x05\x01\x00\x01" + socket.inet_aton(public_ip) + struct.pack("!H", direct_port))
+        reply = b""
+        while len(reply) < 10:
+            part = s.recv(10 - len(reply))
+            if not part:
+                raise RuntimeError("SOCKS5 reply ended early")
+            reply += part
+        if reply[1] != 0:
+            raise RuntimeError("SOCKS5 CONNECT rejected with REP=%d" % reply[1])
+        s.sendall(b"lab-direct\n")
+        got = recv_all(s)
+    if got != b"direct-ok:lab-direct\n":
+        raise RuntimeError("Direct response mismatch: %r" % got)
+    return "Direct passed"
+def reverse():
+    with socket.create_connection((gateway_ip, reverse_port), timeout=4) as s:
+        s.settimeout(4)
+        s.sendall(b"lab-reverse\n")
+        got = recv_all(s)
+    if got != b"reverse-ok:lab-reverse\n":
+        raise RuntimeError("Reverse response mismatch: %r" % got)
+    return "Reverse passed"
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    for result in (pool.submit(direct), pool.submit(reverse)):
+        print(result.result())
+print("PASS: Direct and Reverse carried concurrent TCP payloads over one TLS session")
+PY
+
+cat > "$LAB_DIR/reject.py" <<'PY'
+import socket
+import struct
+import sys
+socks_port = int(sys.argv[1])
+def exact(sock, count):
+    out = b""
+    while len(out) < count:
+        part = sock.recv(count - len(out))
+        if not part:
+            raise RuntimeError("unexpected EOF")
+        out += part
+    return out
+def request(host, port):
+    s = socket.create_connection(("127.0.0.1", socks_port), timeout=3)
+    s.settimeout(3)
+    s.sendall(b"\x05\x01\x00")
+    if exact(s, 2) != b"\x05\x00":
+        raise RuntimeError("SOCKS negotiation failed")
+    s.sendall(b"\x05\x01\x00\x01" + socket.inet_aton(host) + struct.pack("!H", port))
+    reply = exact(s, 10)
+    s.close()
+    return reply[1]
+if request("8.8.8.8", 18445) == 0:
+    raise SystemExit("FAIL: unlisted TCP port was allowed")
+if request("192.0.2.1", 18444) == 0:
+    raise SystemExit("FAIL: reserved target address was allowed")
+print("PASS: disallowed port and reserved destination were rejected")
+PY
+
+ip netns exec "$GW_NS" python3 -u "$LAB_DIR/echo_server.py" 8.8.8.8 18444 direct-ok: > "$LAB_DIR/direct-server.log" 2>&1 &
+DIRECT_SERVER_PID=$!
+ip netns exec "$DL_NS" python3 -u "$LAB_DIR/echo_server.py" 192.0.2.2 18081 reverse-ok: > "$LAB_DIR/reverse-server.log" 2>&1 &
+REVERSE_SERVER_PID=$!
+
+wait_listener() {
+  local ns="$1" address="$2" pid="$3" i
+  for i in $(seq 1 100); do
+    kill -0 "$pid" >/dev/null 2>&1 || return 1
+    if ip netns exec "$ns" ss -ltnH 2>/dev/null | grep -Fq "$address"; then return 0; fi
+    sleep 0.1
+  done
+  return 1
+}
+wait_log_count() {
+  local file="$1" pattern="$2" want="$3" process="$4" i count
+  for i in $(seq 1 150); do
+    count=0
+    [[ ! -f "$file" ]] || count="$(grep -c "$pattern" "$file" || true)"
+    [[ "$count" -ge "$want" ]] && return 0
+    kill -0 "$process" >/dev/null 2>&1 || return 1
+    sleep 0.1
+  done
+  return 1
+}
+wait_listener "$GW_NS" '8.8.8.8:18444' "$DIRECT_SERVER_PID" || fail 'Direct test target did not start'
+wait_listener "$DL_NS" '192.0.2.2:18081' "$REVERSE_SERVER_PID" || fail 'Reverse target did not start'
+
+start_gateway() {
+  ip netns exec "$GW_NS" env \
+    PQTUNNEL_PROXY_ROLE=gateway \
+    PQTUNNEL_PROXY_LISTEN=192.0.2.1:18443 \
+    PQTUNNEL_PROXY_CA="$LAB_DIR/pki/ca.crt" \
+    PQTUNNEL_PROXY_CERT="$LAB_DIR/pki/gateway.crt" \
+    PQTUNNEL_PROXY_KEY="$LAB_DIR/pki/gateway.key" \
+    PQTUNNEL_PROXY_PEER_NAME=dialer.test \
+    PQTUNNEL_PROXY_DIRECT_ALLOWED_PORTS=18444 \
+    PQTUNNEL_PROXY_REVERSE_LISTENERS=app=192.0.2.1:18080 \
+    PQTUNNEL_PROXY_MAX_STREAMS=32 \
+    "$BIN" >> "$LAB_DIR/gateway.log" 2>&1 &
+  GW_PID=$!
+}
+start_dialer() {
+  ip netns exec "$DL_NS" env \
+    PQTUNNEL_PROXY_ROLE=dialer \
+    PQTUNNEL_PROXY_SERVER=192.0.2.1:18443 \
+    PQTUNNEL_PROXY_SERVER_NAME=gateway.test \
+    PQTUNNEL_PROXY_CA="$LAB_DIR/pki/ca.crt" \
+    PQTUNNEL_PROXY_CERT="$LAB_DIR/pki/dialer.crt" \
+    PQTUNNEL_PROXY_KEY="$LAB_DIR/pki/dialer.key" \
+    PQTUNNEL_PROXY_DIRECT_LISTEN=127.0.0.1:1080 \
+    PQTUNNEL_PROXY_REVERSE_TARGETS=app=192.0.2.2:18081 \
+    PQTUNNEL_PROXY_MAX_STREAMS=32 \
+    "$BIN" >> "$LAB_DIR/dialer.log" 2>&1 &
+  DL_PID=$!
+}
+start_gateway
+wait_listener "$GW_NS" '192.0.2.1:18443' "$GW_PID" || fail 'Gateway TLS listener did not start'
+wait_listener "$GW_NS" '192.0.2.1:18080' "$GW_PID" || fail 'Gateway Reverse listener did not start'
+start_dialer
+wait_listener "$DL_NS" '127.0.0.1:1080' "$DL_PID" || fail 'Dialer SOCKS5 listener did not start'
+wait_log_count "$LAB_DIR/dialer.log" 'authenticated transport connected' 1 "$DL_PID" || fail 'Dialer failed to establish authenticated TLS transport'
+
+ip netns exec "$DL_NS" python3 "$LAB_DIR/exercise.py" 192.0.2.1 18080 1080 8.8.8.8 18444
+ip netns exec "$DL_NS" python3 "$LAB_DIR/reject.py" 1080
+
+# Restart only the disposable Gateway process; Dialer must automatically reconnect.
+kill -TERM "$GW_PID" >/dev/null 2>&1 || true
+wait "$GW_PID" >/dev/null 2>&1 || true
+GW_PID=""
+start_gateway
+wait_listener "$GW_NS" '192.0.2.1:18443' "$GW_PID" || fail 'Gateway did not restart'
+wait_log_count "$LAB_DIR/dialer.log" 'authenticated transport connected' 2 "$DL_PID" || fail 'Dialer did not reconnect after Gateway restart'
+ip netns exec "$DL_NS" python3 "$LAB_DIR/exercise.py" 192.0.2.1 18080 1080 8.8.8.8 18444
+
+snapshot_ns "$GW_NS" "$LAB_DIR/gateway.after"
+snapshot_ns "$DL_NS" "$LAB_DIR/dialer.after"
+diff -u "$GW_BASE" "$LAB_DIR/gateway.after" > "$LAB_DIR/gateway.diff" || {
+  cat "$LAB_DIR/gateway.diff" >&2
+  fail 'Gateway routes, rules, sysctls, addresses, interfaces or firewall rules changed'
+}
+diff -u "$DL_BASE" "$LAB_DIR/dialer.after" > "$LAB_DIR/dialer.diff" || {
+  cat "$LAB_DIR/dialer.diff" >&2
+  fail 'Dialer routes, rules, sysctls, addresses, interfaces or firewall rules changed'
+}
+echo 'PASS: Direct and Reverse TCP passed concurrently over strict TLS 1.3/mTLS.'
+echo 'PASS: disallowed Direct destinations were rejected.'
+echo 'PASS: Dialer reconnected after Gateway restart.'
+echo 'PASS: namespace routes, rules, selected sysctls and firewall rules stayed unchanged.'
+echo 'PASS: host routes, rules, selected sysctls and firewall rules were unchanged after cleanup.'
