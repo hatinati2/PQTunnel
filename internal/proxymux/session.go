@@ -501,34 +501,47 @@ func (s *Session) handleRemoteOpen(frame Frame) error {
 
 func (s *Session) runRemoteOpen(st *Stream, frameType Type, payload []byte) {
 	ctx, cancel := context.WithTimeout(s.ctx, s.openTimeout)
+	st.mu.Lock()
+	if st.reset || s.isDone() {
+		st.mu.Unlock()
+		cancel()
+		return
+	}
+	st.openCancel = cancel
+	st.mu.Unlock()
+
 	target, err := s.onOpen(ctx, frameType, payload)
 	cancel()
+
+	st.mu.Lock()
+	st.openCancel = nil
+	if s.isDone() || st.reset {
+		st.mu.Unlock()
+		if target != nil {
+			_ = target.Close()
+		}
+		return
+	}
 	if err == nil && target == nil {
 		err = errors.New("proxymux: open handler returned a nil target")
 	}
 	if err != nil {
+		st.reset = true
+		st.writeClosed = true
+		st.mu.Unlock()
 		if target != nil {
 			_ = target.Close()
 		}
 		_ = s.sendFrame(Frame{Type: TypeOpenError, StreamID: st.id, Payload: []byte("open failed")}, time.Now().Add(s.writeTimeout), nil)
-		st.mu.Lock()
-		st.reset = true
-		st.writeClosed = true
-		st.mu.Unlock()
 		st.endRead(err)
 		s.removeStream(st)
-		return
-	}
-	st.mu.Lock()
-	if s.isDone() || st.reset {
-		st.mu.Unlock()
-		_ = target.Close()
 		return
 	}
 	st.target = target
 	st.ready = true
 	st.openPending = false
 	st.mu.Unlock()
+
 	if err := s.sendFrame(Frame{Type: TypeOpenOK, StreamID: st.id}, time.Now().Add(s.writeTimeout), nil); err != nil {
 		_ = target.Close()
 		st.abort(err)
@@ -543,7 +556,12 @@ func (s *Session) handleRemoteReset(st *Stream) {
 	st.reset = true
 	st.writeClosed = true
 	target := st.target
+	cancelOpen := st.openCancel
+	st.openCancel = nil
 	st.mu.Unlock()
+	if cancelOpen != nil {
+		cancelOpen()
+	}
 	if target != nil {
 		_ = target.Close()
 	}
@@ -630,6 +648,7 @@ type Stream struct {
 	openResult chan error
 	readCh chan []byte
 	target net.Conn
+	openCancel context.CancelFunc
 	readDeadlineChanged chan struct{}
 	writeDeadlineChanged chan struct{}
 	readCloseOnce sync.Once
@@ -772,7 +791,12 @@ func (st *Stream) abort(err error) {
 	st.reset = true
 	st.writeClosed = true
 	target := st.target
+	cancelOpen := st.openCancel
+	st.openCancel = nil
 	st.mu.Unlock()
+	if cancelOpen != nil {
+		cancelOpen()
+	}
 	if target != nil {
 		_ = target.Close()
 	}
@@ -815,7 +839,12 @@ func (st *Stream) markSessionEnd(err error) {
 	st.reset = true
 	st.writeClosed = true
 	target := st.target
+	cancelOpen := st.openCancel
+	st.openCancel = nil
 	st.mu.Unlock()
+	if cancelOpen != nil {
+		cancelOpen()
+	}
 	if target != nil {
 		_ = target.Close()
 	}

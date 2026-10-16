@@ -16,6 +16,67 @@ type acceptedTarget struct {
 	conn net.Conn
 }
 
+func newSessionPairWithHandlers(t *testing.T, maxStreams int, leftHandler, rightHandler OpenHandler) (*Session, *Session) {
+	t.Helper()
+	leftConn, rightConn := net.Pipe()
+	opts := SessionOptions{
+		MaxStreams: maxStreams,
+		OpenTimeout: 2 * time.Second,
+		WriteTimeout: time.Second,
+		KeepAliveInterval: time.Hour,
+	}
+	leftOpts := opts
+	leftOpts.Initiator = true
+	leftOpts.OnOpen = leftHandler
+	left, err := NewSession(context.Background(), leftConn, leftOpts)
+	if err != nil {
+		_ = leftConn.Close()
+		_ = rightConn.Close()
+		t.Fatalf("NewSession(left): %v", err)
+	}
+	rightOpts := opts
+	rightOpts.Initiator = false
+	rightOpts.OnOpen = rightHandler
+	right, err := NewSession(context.Background(), rightConn, rightOpts)
+	if err != nil {
+		_ = left.Close()
+		_ = rightConn.Close()
+		t.Fatalf("NewSession(right): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = left.Close()
+		_ = right.Close()
+	})
+	return left, right
+}
+
+func newTCPConnPair() (net.Conn, net.Conn, error) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer listener.Close()
+	client, err := net.Dial("tcp4", listener.Addr().String())
+	if err != nil {
+		return nil, nil, err
+	}
+	server, err := listener.Accept()
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, err
+	}
+	return client, server, nil
+}
+
+func waitForSignal(t *testing.T, signal <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
 func newTestSessionPair(t *testing.T, maxStreams int) (*Session, *Session, <-chan acceptedTarget) {
 	t.Helper()
 	leftConn, rightConn := net.Pipe()
@@ -240,4 +301,142 @@ func TestSessionReapsStreamWhenTargetClosesDuringTraffic(t *testing.T) {
 	}
 	waitForStreamCount(t, left, 0)
 	waitForStreamCount(t, right, 0)
+}
+
+
+// Half-closing one stream direction must preserve the other direction until
+// the peer has sent its response and half-closed as well.
+func TestSessionHalfClosePreservesResponse(t *testing.T) {
+	accepted := make(chan net.Conn, 1)
+	rightHandler := func(_ context.Context, typ Type, _ []byte) (net.Conn, error) {
+		if typ != TypeOpenDirect {
+			return nil, errors.New("unexpected stream type")
+		}
+		client, server, err := newTCPConnPair()
+		if err != nil {
+			return nil, err
+		}
+		accepted <- client
+		return server, nil
+	}
+	left, right := newSessionPairWithHandlers(t, 4, nil, rightHandler)
+	stream, err := left.Open(TypeOpenDirect, []byte("half-close"))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	var target net.Conn
+	select {
+	case target = <-accepted:
+		t.Cleanup(func() { _ = target.Close() })
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for TCP test target")
+	}
+
+	const request = "request-before-fin"
+	const response = "response-after-fin"
+	if _, err := stream.Write([]byte(request)); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	if err := stream.CloseWrite(); err != nil {
+		t.Fatalf("half-close stream write side: %v", err)
+	}
+	gotRequest, err := io.ReadAll(target)
+	if err != nil {
+		t.Fatalf("read request until remote FIN: %v", err)
+	}
+	if string(gotRequest) != request {
+		t.Fatalf("target received %q, want %q", gotRequest, request)
+	}
+	if _, err := target.Write([]byte(response)); err != nil {
+		t.Fatalf("write response after receiving FIN: %v", err)
+	}
+	if err := target.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatalf("half-close target write side: %v", err)
+	}
+	gotResponse, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatalf("read response until stream EOF: %v", err)
+	}
+	if string(gotResponse) != response {
+		t.Fatalf("stream received %q, want %q", gotResponse, response)
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+	if left.isDone() || right.isDone() {
+		t.Fatal("half-close incorrectly terminated the shared session")
+	}
+}
+
+// Cancelling a local open must cancel the remote target dial/open operation and
+// remove both logical streams without taking down the shared transport.
+func TestSessionOpenContextCancellationCancelsRemoteHandler(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	rightHandler := func(ctx context.Context, _ Type, _ []byte) (net.Conn, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}
+	left, right := newSessionPairWithHandlers(t, 4, nil, rightHandler)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := left.OpenContext(ctx, TypeOpenDirect, []byte("cancel-me"))
+		result <- err
+	}()
+	waitForSignal(t, started, "remote open handler")
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("OpenContext() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("OpenContext did not return after cancellation")
+	}
+	waitForSignal(t, cancelled, "remote open handler cancellation")
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+	if left.isDone() || right.isDone() {
+		t.Fatal("cancelling one open incorrectly terminated the shared session")
+	}
+}
+
+// A blocked target makes the peer receive queue fill. The affected stream
+// must be reset and reaped while unrelated streams/session state stay alive.
+func TestSessionReceiveQueueSaturationReapsOnlyAffectedStream(t *testing.T) {
+	left, right, accepted := newTestSessionPair(t, 4)
+	stream, err := left.Open(TypeOpenDirect, []byte("queue-saturation"))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	var target net.Conn
+	select {
+	case item := <-accepted:
+		if item.name != "queue-saturation" {
+			t.Fatalf("unexpected target %q", item.name)
+		}
+		target = item.conn
+		t.Cleanup(func() { _ = target.Close() })
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for target")
+	}
+
+	writeDone := make(chan error, 1)
+	payload := bytes.Repeat([]byte("q"), maxDataSize*(streamReadQueueFrames+4))
+	go func() {
+		_, err := stream.Write(payload)
+		writeDone <- err
+	}()
+	select {
+	case <-writeDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("writer remained blocked after bounded receive queue filled")
+	}
+	waitForStreamCount(t, left, 0)
+	waitForStreamCount(t, right, 0)
+	if left.isDone() || right.isDone() {
+		t.Fatal("queue saturation terminated the shared session instead of resetting one stream")
+	}
 }
