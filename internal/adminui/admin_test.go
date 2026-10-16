@@ -532,6 +532,7 @@ func TestDashboardHidesControlsWhenEndpointIsMissing(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
 	req.AddCookie(cookie)
+	req.AddCookie(&http.Cookie{Name: languageCookieName, Value: "en"})
 	resp := httptest.NewRecorder()
 	h.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
