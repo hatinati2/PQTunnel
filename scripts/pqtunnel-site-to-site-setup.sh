@@ -48,4 +48,30 @@ fetch_bundle(){
   local a="$1" asset="PQTunnel-$VERSION-linux-$1.tar.gz"
   curl -fsSL "$RELEASE/$asset" -o "$WORK/$asset"
   [[ -s "$WORK/SHA256SUMS" ]] || curl -fsSL "$RELEASE/SHA256SUMS" -o "$WORK/SHA256SUMS"
-  grep -Fq "  ./$asset" "$WORK/SHA256SUMS" || fail "official SHA25
+  grep -Fq "  ./$asset" "$WORK/SHA256SUMS" || fail "official SHA256SUMS lacks $asset"
+  (cd "$WORK" && grep -F "  ./$asset" SHA256SUMS | sha256sum -c -)
+  [[ -d "$WORK/PQTunnel-$VERSION-linux-$a" ]] || tar -xzf "$WORK/$asset" -C "$WORK"
+}
+manager_state(){
+  local role="$1" n=0 p got
+  for p in /usr/local/sbin/pqtunnel-manager /etc/systemd/system/pqtunnel-manager.service /etc/default/pqtunnel-manager; do [[ ! -e "$p" ]] || n=$((n+1)); done
+  (( n==0 )) && return 0; (( n==3 )) || fail 'partial manager installation found; refusing overwrite.'
+  got="$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' /etc/default/pqtunnel-manager | head -n1)"
+  [[ "$got" == "$role" ]] || fail "existing manager role is $got, expected $role; resolve manually first."
+}
+network_guard(){
+  local role="$1" rules
+  command -v ip >/dev/null && command -v nft >/dev/null && command -v sysctl >/dev/null || fail "$role needs iproute2/nftables/procps"
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then fail "$role has active UFW; no network changes made."; fi
+  rules="$(nft list ruleset 2>/dev/null)" || fail "$role firewall state unreadable; refusing changes."
+  ! grep -Eq '^[[:space:]]*table[[:space:]]' <<< "$rules" || fail "$role has existing nftables tables; refusing to overwrite firewall."
+  if command -v iptables-save >/dev/null 2>&1 && iptables-save 2>/dev/null | grep -qE '^-A[[:space:]]'; then fail "$role has existing iptables rules; refusing changes."; fi
+  [[ "$(sysctl -n net.ipv4.ip_forward)" == 0 && "$(sysctl -n net.ipv6.conf.all.forwarding)" == 0 ]] || fail "$role already has IP forwarding enabled; manual review required."
+  ! ip -4 rule show | grep -Eq '^(10518|10519):' || fail "$role route priority is already used."
+  ! ip -6 rule show | grep -Eq '^(10518|10519):' || fail "$role IPv6 route priority is already used."
+  [[ -z "$(ip -4 route show table 518 2>/dev/null)$(ip -6 route show table 518 2>/dev/null)$(ip -4 route show table 519 2>/dev/null)$(ip -6 route show table 519 2>/dev/null)" ]] || fail "$role route table 518/519 already used."
+  ! ip link show dev pqtun0 >/dev/null 2>&1 || fail "$role already has pqtun0; refusing unmanaged TUN interface."
+}
+write_manager(){
+  local role="$1" token="$2" localip="$3" peerip="$4" speed="$5" temp line
+  manager_state "$r
