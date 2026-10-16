@@ -47,6 +47,44 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertLess(validate, start)
         self.assertIn("127.0.0.1:9091", self.script)
 
+    def test_pair_mode_downloads_verified_bundle_and_invokes_orchestrator(self) -> None:
+        self.assertIn("--pair", self.script)
+        self.assertIn("SOURCE_RAW_BASE/scripts/pqtunnel-oneclick-pair.sh", self.script)
+        verify = self.script.index('sha256sum --check -)')
+        extract = self.script.index('tar -xzf "$TMP_DIR/$ASSET" -C "$TMP_DIR"')
+        self.assertLess(verify, extract)
+        self.assertIn('bash "$SOURCE_DIR/scripts/pqtunnel-oneclick-pair.sh"', self.script)
+
+    def test_pair_installer_keeps_panels_private_and_requires_network_confirmation(self) -> None:
+        pair = (ROOT / "scripts/pqtunnel-oneclick-pair.sh").read_text(encoding="utf-8")
+        self.assertIn('PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091', pair)
+        self.assertIn('type APPLY-NETWORK', pair)
+        confirm = pair.index('[[ "$APPLY_CONFIRM" != APPLY-NETWORK ]]')
+        gateway_apply = pair.index('gateway-up')
+        dialer_start = pair.index('systemctl enable --now pqtunnel-client')
+        self.assertLess(confirm, gateway_apply)
+        self.assertLess(confirm, dialer_start)
+        self.assertIn('PQTUNNEL_MANAGER_SPEEDTEST_LISTEN=10.66.0.2:9109', pair)
+        self.assertIn('PQTUNNEL_MANAGER_SPEEDTEST_LISTEN=10.66.0.1:9109', pair)
+        self.assertIn('PQTUNNEL_MANAGER_SPEEDTEST_TOKEN', pair)
+        self.assertIn('127.0.0.1:9091', pair)
+
+    def test_pair_installer_transfers_gateway_credentials_only(self) -> None:
+        pair = (ROOT / "scripts/pqtunnel-oneclick-pair.sh").read_text(encoding="utf-8")
+        scp_start = pair.index('scp -P "$SSH_PORT"')
+        scp_end = pair.index('"$REMOTE_TARGET:$REMOTE_STAGE/"', scp_start)
+        payload = pair[scp_start:scp_end]
+        self.assertIn('"$WORK_DIR/pki-bundle/gateway-pki"', payload)
+        self.assertNotIn('"$WORK_DIR/pki-bundle/dialer-pki"', payload)
+        self.assertNotIn('ca-offline', payload)
+
+    def test_pair_docs_call_out_selected_port_scope_and_provider_firewall(self) -> None:
+        self.assertIn('--pair', self.readme_en)
+        self.assertIn('not a full-tunnel', self.readme_en)
+        self.assertIn('--pair', self.readme_fa)
+        self.assertIn('فایروال ابری را تغییر نمی‌دهد', self.readme_fa)
+
+
 
 if __name__ == "__main__":
     unittest.main()
