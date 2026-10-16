@@ -83,7 +83,6 @@ func NewSession(parent context.Context, conn net.Conn, opts SessionOptions) (*Se
 		opts.MaxStreams = defaultMaxStreams
 	}
 	if opts.MaxStreams > maxSessionStreams {
-		cancel()
 		_ = conn.Close()
 		return nil, fmt.Errorf("proxymux: MaxStreams exceeds hard limit of %d", maxSessionStreams)
 	}
