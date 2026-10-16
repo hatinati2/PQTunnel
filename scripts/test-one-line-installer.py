@@ -81,5 +81,14 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertIn("chmod 0600", self.remote_setup)
 
 
+    def test_existing_gateway_manager_is_restricted_before_endpoint_install(self) -> None:
+        install_branch = self.remote_setup.index("  install)")
+        manager_config = self.remote_setup.index("    configure_manager", install_branch)
+        endpoint_install = self.remote_setup.index('bash "$BUNDLE/scripts/install-server.sh"', install_branch)
+        self.assertLess(manager_config, endpoint_install)
+        self.assertIn("systemctl restart pqtunnel-manager", self.remote_setup)
+
+
+
 if __name__ == "__main__":
     unittest.main()
