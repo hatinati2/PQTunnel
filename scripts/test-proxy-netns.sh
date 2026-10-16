@@ -568,6 +568,7 @@ start_dialer() {
 start_gateway
 wait_listener "$GW_NS" '192.0.2.1:18443' "$GW_PID" || fail 'Gateway TLS listener did not start'
 wait_listener "$GW_NS" '192.0.2.1:18080' "$GW_PID" || fail 'Gateway Reverse listener did not start'
+wait_listener "$GW_NS" '192.0.2.1:18082' "$GW_PID" || fail 'Gateway throughput Reverse listener did not start'
 start_dialer
 wait_listener "$DL_NS" '127.0.0.1:1080' "$DL_PID" || fail 'Dialer SOCKS5 listener did not start'
 wait_log_count "$LAB_DIR/dialer.log" 'authenticated transport connected' 1 "$DL_PID" || fail 'Dialer failed to establish authenticated TLS transport'
