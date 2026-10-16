@@ -87,6 +87,8 @@ class OneLineInstallerTests(unittest.TestCase):
         endpoint_install = self.remote_setup.index('bash "$BUNDLE/scripts/install-server.sh"', install_branch)
         self.assertLess(manager_config, endpoint_install)
         self.assertIn("systemctl restart pqtunnel-manager", self.remote_setup)
+        self.assertIn('"$REMOTE:$STAGE/gateway-manager-token"', self.setup)
+        self.assertIn('"$REMOTE:$STAGE/speedtest-token"', self.setup)
 
 
 
