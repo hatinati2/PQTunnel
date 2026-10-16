@@ -221,7 +221,8 @@ check_local_endpoint_clean() {
     /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/default/pqtunneld \
     /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/default/pqtunnel-client \
     /etc/pqtunnel/pki/server.crt /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/pqtunnel/pki/ca.crt /etc/pqtunnel/site-to-site.env \
-    /usr/local/lib/pqtunnel/site-to-site-selective.sh /usr/local/lib/pqtunnel/run-client.sh /usr/local/lib/pqtunnel/stop-client-network.sh; do
+    /usr/local/lib/pqtunnel/site-to-site-selective.sh /usr/local/lib/pqtunnel/run-client.sh /usr/local/lib/pqtunnel/stop-client-network.sh \
+    /var/lib/pqtunnel/site-selective-dialer.state /var/lib/pqtunnel/site-selective-gateway.state; do
     [[ ! -e "$path" ]] || fail "existing endpoint artifact found at $path; refusing to overwrite it."
   done
   systemctl cat pqtunneld.service >/dev/null 2>&1 && fail 'a pqtunneld systemd unit already exists (possibly under /usr/lib/systemd); refusing to replace it.'
@@ -280,7 +281,7 @@ REMOTE_PRECHECK=$(cat <<'REMOTE_PRECHECK_SCRIPT'
 set -Eeuo pipefail
 port=$1
 systemctl cat pqtunneld.service >/dev/null 2>&1 && { echo 'a pqtunneld systemd unit already exists; refusing to replace it.' >&2; exit 1; }
-for path in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/default/pqtunneld /etc/pqtunnel/pki/server.key /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do
+for path in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/default/pqtunneld /etc/pqtunnel/pki/server.key /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh /var/lib/pqtunnel/site-selective-gateway.state; do
   [[ ! -e "$path" ]] || { echo "existing Gateway endpoint artifact at $path; refusing to overwrite." >&2; exit 1; }
 done
 count=0
@@ -493,6 +494,7 @@ REMOTE_START_SCRIPT
 if ! printf '%s\n' "$REMOTE_START" | remote_privileged; then
   remote_privileged <<'REMOTE_START_ROLLBACK'
 systemctl stop pqtunneld >/dev/null 2>&1 || true
+systemctl disable pqtunneld >/dev/null 2>&1 || true
 if [[ -f /var/lib/pqtunnel/site-selective-gateway.state ]]; then /usr/local/lib/pqtunnel/site-to-site-selective.sh gateway-down || true; fi
 REMOTE_START_ROLLBACK
   fail 'Gateway start/network apply failed. Gateway service was stopped and its recorded network state was rolled back where possible.'
@@ -503,6 +505,7 @@ if ! timeout 4 bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$SERVER_NAME" "$LISTEN_PORT
   printf 'Gateway TCP/%s is not reachable from Iran. Stopping Gateway service; check provider firewall and listener settings.\n' "$LISTEN_PORT" >&2
   remote_privileged <<'REMOTE_ROLLBACK'
 systemctl stop pqtunneld >/dev/null 2>&1 || true
+systemctl disable pqtunneld >/dev/null 2>&1 || true
 if [[ -f /var/lib/pqtunnel/site-selective-gateway.state ]]; then /usr/local/lib/pqtunnel/site-to-site-selective.sh gateway-down || true; fi
 REMOTE_ROLLBACK
   fail 'TCP listener check failed. Dialer was not started and Gateway policy state was rolled back where possible.'
@@ -512,13 +515,24 @@ printf '\n===== Starting Iran/Dialer endpoint and applying Dialer rules =====\n'
 if ! systemctl enable --now pqtunnel-client; then
   printf 'Dialer failed to start; attempting paired network rollback.\n' >&2
   systemctl stop pqtunnel-client >/dev/null 2>&1 || true
+  systemctl disable pqtunnel-client >/dev/null 2>&1 || true
   remote_privileged <<'REMOTE_ROLLBACK'
 systemctl stop pqtunneld >/dev/null 2>&1 || true
+systemctl disable pqtunneld >/dev/null 2>&1 || true
 if [[ -f /var/lib/pqtunnel/site-selective-gateway.state ]]; then /usr/local/lib/pqtunnel/site-to-site-selective.sh gateway-down || true; fi
 REMOTE_ROLLBACK
   fail 'Dialer start failed; Gateway was stopped and its recorded network state was rolled back where possible.'
 fi
-systemctl is-active --quiet pqtunnel-client || fail 'Dialer unit is not active after start.'
+if ! systemctl is-active --quiet pqtunnel-client; then
+  systemctl stop pqtunnel-client >/dev/null 2>&1 || true
+  systemctl disable pqtunnel-client >/dev/null 2>&1 || true
+  remote_privileged <<'REMOTE_ROLLBACK'
+systemctl stop pqtunneld >/dev/null 2>&1 || true
+systemctl disable pqtunneld >/dev/null 2>&1 || true
+if [[ -f /var/lib/pqtunnel/site-selective-gateway.state ]]; then /usr/local/lib/pqtunnel/site-to-site-selective.sh gateway-down || true; fi
+REMOTE_ROLLBACK
+  fail 'Dialer unit did not remain active; both services were stopped and Gateway rollback was attempted.'
+fi
 printf '\nSUCCESS: tunnel services are active. This does not prove end-to-end application connectivity or production readiness.\n'
 printf 'Check peer status in the two management panels; use SSH forwarding, never expose TCP/9091 publicly.\n'
 printf 'Iran panel forwarding from your own PC: ssh -N -L 9091:127.0.0.1:9091 USER@IRAN_PUBLIC_IP\n'
