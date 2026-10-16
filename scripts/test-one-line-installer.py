@@ -16,6 +16,7 @@ class OneLineInstallerTests(unittest.TestCase):
         cls.readme_en = (ROOT / "README.md").read_text(encoding="utf-8")
         cls.readme_fa = (ROOT / "README.fa.md").read_text(encoding="utf-8")
         cls.manager_installer = (ROOT / "scripts/install-manager.sh").read_text(encoding="utf-8")
+        cls.pki_installer = (ROOT / "scripts/prepare-site-to-site-pki.sh").read_text(encoding="utf-8")
 
     def test_installer_tracks_current_rc4_release(self) -> None:
         self.assertIn('VERSION="v0.3.0-rc4"', self.script)
@@ -69,6 +70,10 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertIn('PQTUNNEL_MANAGER_SPEEDTEST_LISTEN=10.66.0.1:9109', pair)
         self.assertIn('PQTUNNEL_MANAGER_SPEEDTEST_TOKEN', pair)
         self.assertIn('127.0.0.1:9091', pair)
+
+    def test_pki_helper_accepts_trusted_release_binary_without_go(self) -> None:
+        self.assertIn('PQTUNNEL_PKI_BIN', self.pki_installer)
+        self.assertIn('run this script from the PQTunnel repository root, or set PQTUNNEL_PKI_BIN', self.pki_installer)
 
     def test_pair_installer_transfers_gateway_credentials_only(self) -> None:
         pair = (ROOT / "scripts/pqtunnel-oneclick-pair.sh").read_text(encoding="utf-8")
