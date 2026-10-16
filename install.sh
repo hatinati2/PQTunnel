@@ -55,7 +55,7 @@ Modes:
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
 
-The --manager mode installs and starts the web manager only; it does NOT install/configure/start the tunnel endpoint or change routes, firewall, NAT, or forwarding. The --site-to-site mode is a separate guided two-host setup for the tunnel and both managers. It applies selective TCP/UDP destination-port routing only after the typed INSTALL confirmation and refuses to alter detected existing firewall/routing state. Managers are configured for loopback access; use SSH forwarding remotely. Public-IP access is not enabled by this installer.
+The --manager mode installs and starts the web manager only. It does NOT install/configure/start the tunnel endpoint and does not change routes, firewall, NAT, or forwarding. The --site-to-site mode is a separate guided two-host setup for the tunnel and both managers. It applies selective TCP/UDP destination-port routing only after the typed INSTALL confirmation and refuses to alter detected existing firewall/routing state. Managers are configured for loopback access; use SSH forwarding remotely. Public-IP access is not enabled by this installer.
 USAGE
 }
 
