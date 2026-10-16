@@ -34,13 +34,13 @@ parse_ports(){
  v="${v//[[:space:]]/}"; [[ "$v" == none || "$v" == - ]] && v=""
  [[ -z "$v" || "$v" =~ ^[0-9]+(,[0-9]+)*$ ]] || fail "$label must be comma-separated ports (or none)."
  IFS=',' read -r -a xs <<< "$v"
- for x in "$${xs[@]}"; do [[ -n "$x" ]] || continue; ((10#$x>0 && 10#$x<65536)) || fail "Invalid port: $x"; x="$((10#$x))"; [[ "$seen" != *",$x,"* ]] || fail "Duplicate port: $x"; seen+="$x,"; out+="${out:+,}$x"; done
+ for x in "${xs[@]}"; do [[ -n "$x" ]] || continue; ((10#$x>0 && 10#$x<65536)) || fail "Invalid port: $x"; x="$((10#$x))"; [[ "$seen" != *",$x,"* ]] || fail "Duplicate port: $x"; seen+="$x,"; out+="${out:+,}$x"; done
  printf '%s' "$out"
 }
-add_port(){ [[ ",$1," == *",$2,"* ]] && printf '%s' "$1" || printf '%s' "$${1:+$1,}$2"; }
+add_port(){ [[ ",$1," == *",$2,"* ]] && printf '%s' "$1" || printf '%s' "${1:+$1,}$2"; }
 allowlist(){
- local out="" x; IFS=',' read -r -a xs <<< "$1"; for x in "$${xs[@]}"; do [[ -n "$x" ]] && out+="${out:+,}tcp:$x"; done
- IFS=',' read -r -a xs <<< "$2"; for x in "$${xs[@]}"; do [[ -n "$x" ]] && out+="${out:+,}udp:$x"; done; printf '%s' "$out"
+ local out="" x; IFS=',' read -r -a xs <<< "$1"; for x in "${xs[@]}"; do [[ -n "$x" ]] && out+="${out:+,}tcp:$x"; done
+ IFS=',' read -r -a xs <<< "$2"; for x in "${xs[@]}"; do [[ -n "$x" ]] && out+="${out:+,}udp:$x"; done; printf '%s' "$out"
 }
 arch(){ case "$(uname -m)" in x86_64|amd64) printf amd64;; aarch64|arm64) printf arm64;; *) return 1;; esac; }
 ifname(){ [[ "$1" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]]; }
