@@ -48,6 +48,7 @@ WORK_DIR="$(mktemp -d /root/pqtunnel-pair.XXXXXX)"
 chmod 0700 "$WORK_DIR"
 TOKEN_DIALER=
 TOKEN_GATEWAY=
+SPEEDTEST_TOKEN=
 REMOTE_TARGET=
 SSH_PORT=22
 REMOTE_STAGE=
@@ -156,6 +157,13 @@ TCP_PORTS=$(normalize_port_list "$TCP_PORTS")
 UDP_PORTS=$(normalize_port_list "$UDP_PORTS")
 [[ -n "$TCP_PORTS$UDP_PORTS" ]] || fail 'at least one TCP/UDP egress port must be selected.'
 ALLOWED_PORTS=$(make_allowed_ports "$TCP_PORTS" "$UDP_PORTS")
+# Reserve the tunnel peer's private speed-test port in the endpoint policy only;
+# it is not added to the WAN egress-port selection.
+ALLOWED_PORTS="${ALLOWED_PORTS:+$ALLOWED_PORTS,}tcp:9109"
+SPEEDTEST_TOKEN="$(openssl rand -hex 32)"
+[[ "$SPEEDTEST_TOKEN" =~ ^[0-9a-f]{64}$ ]] || fail 'could not generate shared speed-test token.'
+printf 'PQTUNNEL_MANAGER_SPEEDTEST_TOKEN=%s\n' "$SPEEDTEST_TOKEN" > "$WORK_DIR/manager-speedtest.env"
+chmod 0600 "$WORK_DIR/manager-speedtest.env"
 
 printf '\nTopology: Iran = Dialer; %s = Gateway/Listener.\n' "$SERVER_NAME"
 printf 'Only these egress ports from the Iran VPS will be selected: TCP [%s], UDP [%s].\n' "${TCP_PORTS:-none}" "${UDP_PORTS:-none}"
@@ -224,7 +232,7 @@ check_local_manager_state() {
 }
 install_or_check_manager() {
   local role=$1
-  local count=0 p existing_role config token tmp
+  local count=0 p existing_role config token tmp speed_listen speed_peer
   config=/etc/default/pqtunnel-manager
   for p in /usr/local/sbin/pqtunnel-manager /etc/systemd/system/pqtunnel-manager.service "$config"; do [[ -e "$p" ]] && count=$((count+1)); done
   if (( count == 0 )); then
@@ -237,11 +245,16 @@ install_or_check_manager() {
   fi
   token=$(openssl rand -hex 32)
   [[ "$token" =~ ^[0-9a-f]{64}$ ]] || fail 'could not generate manager token.'
+  if [[ "$role" == dialer ]]; then
+    speed_listen=10.66.0.2:9109; speed_peer=10.66.0.1:9109
+  else
+    speed_listen=10.66.0.1:9109; speed_peer=10.66.0.2:9109
+  fi
   systemctl stop pqtunnel-manager >/dev/null 2>&1 || true
   cp -a "$config" "$config.backup.$(date +%Y%m%d-%H%M%S)"
   tmp=$(mktemp /etc/default/pqtunnel-manager.XXXXXX)
-  awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY)=/' "$config" > "$tmp"
-  printf '\nPQTUNNEL_MANAGER_ROLE=%s\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$role" "$token" >> "$tmp"
+  awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY|SPEEDTEST_LISTEN|SPEEDTEST_PEER|SPEEDTEST_TOKEN)=/' "$config" > "$tmp"
+  printf '\nPQTUNNEL_MANAGER_ROLE=%s\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_LISTEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_PEER=%s\nPQTUNNEL_MANAGER_SPEEDTEST_TOKEN=%s\n' "$role" "$token" "$speed_listen" "$speed_peer" "$SPEEDTEST_TOKEN" >> "$tmp"
   chown root:root "$tmp"; chmod 0600 "$tmp"; mv -f "$tmp" "$config"
   if [[ "$role" == dialer ]]; then TOKEN_DIALER=$token; else TOKEN_GATEWAY=$token; fi
   unset token
@@ -386,14 +399,16 @@ else
 fi
 token=$(openssl rand -hex 32)
 [[ "$token" =~ ^[0-9a-f]{64}$ ]] || fail 'failed to generate Gateway manager token.'
+speedtest_token=$(sed -n 's/^PQTUNNEL_MANAGER_SPEEDTEST_TOKEN=//p' "$STAGE/manager-speedtest.env" | head -n1)
+[[ "$speedtest_token" =~ ^[0-9a-f]{64}$ ]] || fail 'shared speed-test token is missing or invalid.'
 systemctl stop pqtunnel-manager >/dev/null 2>&1 || true
 cp -a /etc/default/pqtunnel-manager "/etc/default/pqtunnel-manager.backup.$(date +%Y%m%d-%H%M%S)"
 tmp=$(mktemp /etc/default/pqtunnel-manager.XXXXXX)
-awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY)=/' /etc/default/pqtunnel-manager > "$tmp"
-printf '\nPQTUNNEL_MANAGER_ROLE=gateway\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$token" >> "$tmp"
+awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY|SPEEDTEST_LISTEN|SPEEDTEST_PEER|SPEEDTEST_TOKEN)=/' /etc/default/pqtunnel-manager > "$tmp"
+printf '\nPQTUNNEL_MANAGER_ROLE=gateway\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_LISTEN=10.66.0.1:9109\nPQTUNNEL_MANAGER_SPEEDTEST_PEER=10.66.0.2:9109\nPQTUNNEL_MANAGER_SPEEDTEST_TOKEN=%s\n' "$token" "$speedtest_token" >> "$tmp"
 chown root:root "$tmp"; chmod 0600 "$tmp"; mv -f "$tmp" /etc/default/pqtunnel-manager
 printf 'PAIR_GATEWAY_TOKEN=%s\n' "$token"
-unset token
+unset token speedtest_token
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service
 systemctl enable --now pqtunnel-manager
@@ -430,7 +445,7 @@ grep -Fq "  ./$REMOTE_ASSET" "$WORK_DIR/SHA256SUMS" || fail 'Gateway asset is no
 REMOTE_STAGE=$(ssh "${SSH_OPTS[@]}" "$REMOTE_TARGET" 'umask 077; mktemp -d /tmp/pqtunnel-pair.XXXXXX')
 [[ "$REMOTE_STAGE" =~ ^/tmp/pqtunnel-pair\.[A-Za-z0-9]+$ ]] || fail 'remote staging path did not pass validation.'
 scp -P "$SSH_PORT" -o BatchMode=yes -r "$REMOTE_BUNDLE" "$WORK_DIR/SHA256SUMS" \
-  "$GATEWAY_APP" "$GATEWAY_NETWORK" "$WORK_DIR/pki-bundle/gateway-pki" \
+  "$GATEWAY_APP" "$GATEWAY_NETWORK" "$WORK_DIR/manager-speedtest.env" "$WORK_DIR/pki-bundle/gateway-pki" \
   "$REMOTE_TARGET:$REMOTE_STAGE/"
 
 printf '\n===== Installing Gateway endpoint and manager (services kept stopped) =====\n'
