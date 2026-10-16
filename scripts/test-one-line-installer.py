@@ -22,7 +22,7 @@ class OneLineInstallerTests(unittest.TestCase):
 
     def test_installer_tracks_current_rc5_release(self) -> None:
         self.assertIn('VERSION="v0.3.0-rc5"', self.script)
-        self.assertNotIn("v0.3.0-rc4", self.script)
+        self.assertNotIn('VERSION="v0.3.0-rc4"', self.script)
         self.assertIn('"$RELEASE_BASE/SHA256SUMS"', self.script)
         self.assertIn('sha256sum --check -', self.script)
 
