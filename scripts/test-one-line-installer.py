@@ -20,9 +20,9 @@ class OneLineInstallerTests(unittest.TestCase):
         cls.setup = (ROOT / "scripts/pqtunnel-site-to-site-setup.sh").read_text(encoding="utf-8")
         cls.remote_setup = (ROOT / "scripts/pqtunnel-site-to-site-remote.sh").read_text(encoding="utf-8")
 
-    def test_installer_tracks_current_rc4_release(self) -> None:
-        self.assertIn('VERSION="v0.3.0-rc4"', self.script)
-        self.assertNotIn("v0.3.0-rc3", self.script)
+    def test_installer_tracks_current_rc5_release(self) -> None:
+        self.assertIn('VERSION="v0.3.0-rc5"', self.script)
+        self.assertNotIn('VERSION="v0.3.0-rc4"', self.script)
         self.assertIn('"$RELEASE_BASE/SHA256SUMS"', self.script)
         self.assertIn('sha256sum --check -', self.script)
 
@@ -146,6 +146,39 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertIn("chmod 0600", self.remote_setup)
 
 
+    def test_helper_scripts_follow_the_immutable_release_bundle(self) -> None:
+        self.assertIn('SOURCE_RAW_BASE="$RAW_BASE"', self.script)
+        self.assertIn('RAW="https://raw.githubusercontent.com/$REPO/$VERSION"', self.setup)
+        self.assertNotIn('SOURCE_RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"', self.script)
+        self.assertNotIn('RAW="https://raw.githubusercontent.com/$REPO/main"', self.setup)
+    def test_manager_upgrade_installs_wizard_and_preserves_loopback_tokens(self) -> None:
+        self.assertIn("--manager-upgrade", self.script)
+        self.assertIn("--upgrade", self.manager_installer)
+        self.assertIn("Protected backup:", self.manager_installer)
+        self.assertIn("PQTUNNEL_SETUP_VERSION=", self.manager_installer)
+        self.assertIn("PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091", self.manager_installer)
+        self.assertIn("PQTUNNEL_SETUP_PRESERVE_DIALER_MANAGER_TOKEN=1", (ROOT / "scripts/pqtunnel-setup-worker.sh").read_text(encoding="utf-8"))
+
+    def test_graphical_setup_has_separate_preflight_and_approval_gates(self) -> None:
+        setup_ui = (ROOT / "internal/adminui/setup_ui.go").read_text(encoding="utf-8")
+        setup_manager = (ROOT / "internal/manager/setup.go").read_text(encoding="utf-8")
+        self.assertIn('Confirm: "CHECK"', setup_ui)
+        self.assertIn("awaiting-confirmation", self.setup)
+        self.assertIn("ApproveSiteToSiteSetup", setup_manager)
+        self.assertIn('[]byte("INSTALL\\n")', setup_manager)
+        self.assertIn("requireLoopbackSetupAccess", setup_ui)
+        self.assertIn("if h.allowedPublicHost !=", setup_ui)
+
+    def test_graphical_wizard_worker_is_fixed_and_token_logs_are_redacted(self) -> None:
+        worker = (ROOT / "scripts/pqtunnel-setup-worker.sh").read_text(encoding="utf-8")
+        unit = (ROOT / "deploy/systemd/pqtunnel-setup.service").read_text(encoding="utf-8")
+        self.assertIn("ExecStart=/usr/local/lib/pqtunnel/pqtunnel-setup-worker.sh", unit)
+        self.assertIn('bash "$SCRIPT"', worker)
+        self.assertIn("PQTUNNEL_SETUP_INPUT_B64", worker)
+        self.assertIn("sanitize_log", worker)
+        self.assertIn('rm -f "$RAW_LOG"', worker)
+        self.assertNotIn("bash -c", worker)
+
     def test_existing_gateway_manager_is_restricted_before_endpoint_install(self) -> None:
         install_branch = self.remote_setup.index("  install)")
         manager_config = self.remote_setup.index("    configure_manager", install_branch)
@@ -155,10 +188,9 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertIn('"$REMOTE:$STAGE/gateway-manager-token"', self.setup)
         self.assertIn('"$REMOTE:$STAGE/speedtest-token"', self.setup)
 
-
     def test_full_setup_hardens_existing_public_manager_before_network_checks(self) -> None:
         secure = self.setup.rindex("secure_existing_local_manager")
-        network_dependencies = self.setup.index("for c in curl sha256sum tar ssh scp ip nft sysctl")
+        network_dependencies = self.setup.index("for c in curl sha256sum tar ssh scp python3 getent")
         self.assertLess(secure, network_dependencies)
         self.assertIn('PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091', self.setup)
         self.assertIn("PQTUNNEL_MANAGER_TOKEN=%s", self.setup)

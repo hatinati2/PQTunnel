@@ -2,10 +2,10 @@
 # PQTunnel one-line entry point. Preflight is read-only; manager setup can print a new token once.
 set -Eeuo pipefail
 
-VERSION="v0.3.0-rc4"
+VERSION="v0.3.0-rc5"
 REPO="hatinati2/PQTunnel"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
-SOURCE_RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
+SOURCE_RAW_BASE="$RAW_BASE"
 RELEASE_BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 TMP_DIR=""
 TOKEN=""
@@ -35,26 +35,25 @@ prompt() {
 }
 usage() {
   cat <<'USAGE'
-PQTunnel one-line installer (experimental release v0.3.0-rc4)
+PQTunnel one-line installer (experimental release v0.3.0-rc5)
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager-upgrade dialer
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --pair
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --site-to-site
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | bash -s -- --preflight dialer
 
 Modes:
-  --site-to-site / --full    Guided install for BOTH VPSes: Gateway over root SSH, Dialer locally,
-                             mutual-TLS PKI, tunnel endpoints, selective-port routing, and both local-only panels.
-  --pair                     Run the legacy paired installer on the Iran/Dialer VPS.
-                             Installs both endpoint services and both loopback-only
-                             manager panels over SSH-key access to the overseas Gateway.
-                             Tunnel/network activation requires typing APPLY-NETWORK.
-  --manager gateway|dialer   Download and checksum-verify the v0.3.0-rc4 Linux bundle,
-                             install the manager, generate a strong token when needed,
-                             configure it, validate the unit, then enable and start it.
-                             A newly generated token is displayed once after setup.
+  --site-to-site / --full    Guided setup for both VPSes: Gateway over root SSH, Dialer locally,
+                             mutual-TLS PKI, tunnel endpoints, selective-port routing, and both panels.
+  --pair                     Legacy paired installer; requires SSH-key root access to Germany.
+  --manager gateway|dialer   Install the optional local web manager only.
+  --manager-upgrade gateway|dialer
+                             Back up and upgrade a complete existing manager to a release with
+                             the graphical setup wizard. Public/insecure listeners are moved to
+                             loopback and the login token is rotated.
   --preflight gateway|dialer|both
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
@@ -70,6 +69,7 @@ while (($#)); do
     --site-to-site|--full) MODE=site-to-site; shift ;;
     --pair) MODE=pair; shift ;;
     --manager) MODE=manager; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
+    --manager-upgrade) MODE=manager-upgrade; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     --preflight) MODE=preflight; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1 (use --help)." ;;
@@ -131,7 +131,7 @@ case "$MODE" in
     curl --fail --silent --show-error --location "$RAW_BASE/scripts/site-to-site-preflight.sh" -o "$TMP_DIR/site-to-site-preflight.sh"
     bash "$TMP_DIR/site-to-site-preflight.sh" --role "$ROLE"
     ;;
-  manager)
+  manager|manager-upgrade)
     [[ "$EUID" -eq 0 ]] || fail 'manager installation requires root; rerun with sudo.'
     if [[ -z "$ROLE" ]]; then
       prompt 'Manager role on this server [gateway/dialer]: ' ROLE
@@ -154,11 +154,16 @@ case "$MODE" in
     [[ -x "$SOURCE_DIR/pqtunnel-manager" && -f "$SOURCE_DIR/deploy/systemd/pqtunnel-manager.service" ]] || fail 'release bundle is missing manager binary or systemd unit.'
     CONFIG=/etc/default/pqtunnel-manager
     if [[ -x /usr/local/sbin/pqtunnel-manager && -f /etc/systemd/system/pqtunnel-manager.service && -f "$CONFIG" ]]; then
-      # Resume an earlier partial install safely; never overwrite the installed binary or unit.
       EXISTING_ROLE="$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' "$CONFIG" | head -n1)"
       [[ "$EXISTING_ROLE" == "$ROLE" ]] || fail "existing manager role is '$EXISTING_ROLE', not '$ROLE'; refusing to change it."
-      printf 'Existing manager installation found; keeping its binary, unit, and role.\n'
+      if [[ "$MODE" == manager-upgrade ]]; then
+        [[ -x "$SOURCE_DIR/pqtunnel-manager" && -f "$SOURCE_DIR/deploy/systemd/pqtunnel-setup.service" && -f "$SOURCE_DIR/scripts/pqtunnel-setup-worker.sh" ]] || fail "the pinned release $VERSION does not contain the graphical setup wizard yet. Do not retry this against rc4; upgrade becomes available after the wizard release is published."
+        bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE" --upgrade
+      else
+        printf 'Existing manager installation found; keeping its binary, unit, and role. Use --manager-upgrade %s to upgrade after the wizard release is published.\n' "$ROLE"
+      fi
     else
+      [[ "$MODE" != manager-upgrade ]] || fail '--manager-upgrade requires a complete existing manager installation; use --manager for a first install.'
       bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE"
     fi
 

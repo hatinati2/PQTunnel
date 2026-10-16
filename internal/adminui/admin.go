@@ -80,7 +80,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 </style></head>
 <body><main class="wrap">
 <header><div><h1>{{tr .Lang "پنل مدیریت PQTunnel" "PQTunnel Management Panel"}}</h1><p class="sub">{{tr .Lang "وضعیت سرویس و همتایان متصل · کنترل محدود و امن" "Service and connected peers · limited, secure controls"}}</p></div>
-<div class="header-actions"><nav class="language-picker"><a class="refresh" href="/language?lang=fa&amp;next=/">فارسی</a><a class="refresh" href="/language?lang=en&amp;next=/">English</a></nav>{{if .Manager}}<a class="refresh" href="/logs">{{tr .Lang "لاگ سرویس" "Service logs"}}</a>{{end}}<a class="refresh" href="/">{{tr .Lang "به‌روزرسانی وضعیت" "Refresh status"}}</a>
+<div class="header-actions"><nav class="language-picker"><a class="refresh" href="/language?lang=fa&amp;next=/">فارسی</a><a class="refresh" href="/language?lang=en&amp;next=/">English</a></nav>{{if .Manager}}{{if eq .Manager.Role "dialer"}}<a class="refresh" href="/setup">{{tr .Lang "راه‌اندازی گرافیکی" "Setup wizard"}}</a>{{end}}<a class="refresh" href="/logs">{{tr .Lang "لاگ سرویس" "Service logs"}}</a>{{end}}<a class="refresh" href="/">{{tr .Lang "به‌روزرسانی وضعیت" "Refresh status"}}</a>
 <form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">{{tr .Lang "خروج از پنل" "Log out of the panel"}}</button></form></div></header>
 {{if .Notice}}<div class="notice" role="status">{{.Notice}}{{if .Detail}} — {{.Detail}}{{end}}</div>{{end}}
 <section class="grid" aria-label="{{tr .Lang "خلاصه وضعیت" "Status summary"}}">
@@ -335,6 +335,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := dashboardTemplate.Execute(w, data); err != nil {
 			return
 		}
+	case "/setup":
+		h.serveSetupPage(w, r)
+	case "/setup/start":
+		h.startSetup(w, r)
+	case "/setup/tokens":
+		h.consumeSetupTokens(w, r)
+	case "/setup/approve":
+		h.approveSetup(w, r)
 	case "/logs":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, r, "GET")
