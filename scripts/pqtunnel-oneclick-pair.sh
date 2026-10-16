@@ -221,6 +221,8 @@ check_local_endpoint_clean() {
     /usr/local/lib/pqtunnel/site-to-site-selective.sh /usr/local/lib/pqtunnel/run-client.sh /usr/local/lib/pqtunnel/stop-client-network.sh; do
     [[ ! -e "$path" ]] || fail "existing endpoint artifact found at $path; refusing to overwrite it."
   done
+  systemctl cat pqtunneld.service >/dev/null 2>&1 && fail 'a pqtunneld systemd unit already exists (possibly under /usr/lib/systemd); refusing to replace it.'
+  systemctl cat pqtunnel-client.service >/dev/null 2>&1 && fail 'a pqtunnel-client systemd unit already exists (possibly under /usr/lib/systemd); refusing to replace it.'
 }
 check_local_manager_state() {
   local count=0 p role
@@ -274,6 +276,7 @@ install_or_check_manager dialer
 REMOTE_PRECHECK=$(cat <<'REMOTE_PRECHECK_SCRIPT'
 set -Eeuo pipefail
 port=$1
+systemctl cat pqtunneld.service >/dev/null 2>&1 && { echo 'a pqtunneld systemd unit already exists; refusing to replace it.' >&2; exit 1; }
 for path in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/default/pqtunneld /etc/pqtunnel/pki/server.key /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do
   [[ ! -e "$path" ]] || { echo "existing Gateway endpoint artifact at $path; refusing to overwrite." >&2; exit 1; }
 done
@@ -422,7 +425,6 @@ PQTUNNEL_SITE_CONFIG=/etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site
 PQTUNNEL_SITE_CONFIG=/etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh preview >/dev/null
 systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/pqtunneld.service /etc/systemd/system/pqtunnel-manager.service
-systemctl stop pqtunneld >/dev/null 2>&1 || true
 printf 'Gateway endpoint and manager installed; Gateway tunnel service remains stopped.\n'
 REMOTE_INSTALL_SCRIPT
 )
