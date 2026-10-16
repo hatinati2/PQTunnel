@@ -1411,6 +1411,7 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 			waitForStreamCount(t, previousRight, 0)
 		}
 
+		var lastStreamCloseStarted time.Time
 		for index := 0; index < streamsPerSession; index++ {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			stream, err := broker.Open(ctx, TypeOpenDirect, []byte("reconnect-soak"))
@@ -1451,16 +1452,16 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 				t.Fatalf("generation %d stream %d: response = %v, want %v", generation, index, gotResponse, response)
 			}
 
+			lastStreamCloseStarted = time.Now()
 			if err := stream.Close(); err != nil {
 				t.Fatalf("generation %d stream %d: close stream: %v", generation, index, err)
 			}
 			_ = target.Close()
 		}
 
-		cleanupStarted := time.Now()
 		waitForStreamCount(t, left, 0)
 		waitForStreamCount(t, right, 0)
-		cleanupDuration := time.Since(cleanupStarted)
+		cleanupDuration := time.Since(lastStreamCloseStarted)
 		if cleanupDuration > maxCleanupDuration {
 			maxCleanupDuration = cleanupDuration
 		}
@@ -1476,7 +1477,7 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 		}
 		t.Logf("generation=%d live_streams=0 cleanup=%s goroutines=%d heap_after_gc=%d", generation, cleanupDuration, runtime.NumGoroutine(), cycleMem.HeapAlloc)
 
-		// One active pair accounts for six session-loop goroutines. A small
+		// One active pair accounts for eight session-loop goroutines. A small
 		// allowance covers short-lived runtime/test-runner activity, while a
 		// per-generation ceiling catches leaks that accumulate across reconnects.
 		cycleDeadline := time.Now().Add(2 * time.Second)
@@ -1523,8 +1524,9 @@ func TestSessionChurnAcrossReconnectsDoesNotLeakResources(t *testing.T) {
 		t.Fatalf("retained heap grew beyond allowance: baseline=%d final=%d max_cycle=%d allowance=%d",
 			heapBaseline, finalMem.HeapAlloc, maxHeapAfterGC, maxRetainedHeapGrowth)
 	}
+	heapGrowth := int64(finalMem.HeapAlloc) - int64(heapBaseline)
 	t.Logf("resource soak summary: heap_baseline=%d heap_final=%d heap_growth=%d max_cycle_heap_after_gc=%d max_stream_cleanup=%s",
-		heapBaseline, finalMem.HeapAlloc, finalMem.HeapAlloc-heapBaseline, maxHeapAfterGC, maxCleanupDuration)
+		heapBaseline, finalMem.HeapAlloc, heapGrowth, maxHeapAfterGC, maxCleanupDuration)
 
 	// Relays should terminate after their streams and transports are closed.
 	// Allow a small runtime/test-runner fluctuation, but reject a persistent
