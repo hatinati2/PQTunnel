@@ -26,6 +26,7 @@ func (b *SessionBroker) Set(session *Session) {
 		return
 	}
 	b.mu.Lock()
+	b.ensureLocked()
 	if b.current == session {
 		b.mu.Unlock()
 		return
@@ -47,6 +48,7 @@ func (b *SessionBroker) Clear(session *Session) {
 		return
 	}
 	b.mu.Lock()
+	b.ensureLocked()
 	if b.current == session {
 		b.current = nil
 		close(b.changed)
@@ -67,6 +69,7 @@ func (b *SessionBroker) Open(ctx context.Context, frameType Type, payload []byte
 	}
 	for {
 		b.mu.Lock()
+		b.ensureLocked()
 		session, changed := b.current, b.changed
 		b.mu.Unlock()
 
@@ -89,5 +92,11 @@ func (b *SessionBroker) Open(ctx context.Context, frameType Type, payload []byte
 			return nil, ctx.Err()
 		case <-changed:
 		}
+	}
+}
+
+func (b *SessionBroker) ensureLocked() {
+	if b.changed == nil {
+		b.changed = make(chan struct{})
 	}
 }
