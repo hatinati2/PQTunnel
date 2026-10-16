@@ -96,7 +96,7 @@ cleanup() {
   for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID" "$HOLD_PID"; do
     [[ -z "$pid" ]] || kill -TERM "$pid" >/dev/null 2>&1
   done
-  for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID"; do
+  for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID" "$HOLD_PID"; do
     [[ -z "$pid" ]] || wait "$pid" >/dev/null 2>&1
   done
   for pair in "$GW_NS:$GW_BASE" "$DL_NS:$DL_BASE"; do
