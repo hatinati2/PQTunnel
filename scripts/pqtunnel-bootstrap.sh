@@ -238,6 +238,13 @@ case "$MODE" in
     [[ "$CERT_PUB" == "$KEY_PUB" ]] || fail 'client.key does not match client.crt.'
     for local_file in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh /usr/local/lib/pqtunnel/run-client.sh /usr/local/lib/pqtunnel/stop-client-network.sh; do [[ ! -e "$local_file" ]] || fail "existing artifact at $local_file; refusing to overwrite."; done
     get_source
+    for source_file in \
+      deploy/systemd/pqtunnel-client.service \
+      scripts/site-to-site-selective.sh \
+      scripts/run-pqtunnel-client.sh \
+      scripts/stop-pqtunnel-client-network.sh; do
+      [[ -s "$SOURCE_DIR/$source_file" ]] || fail "required client install file is missing: $source_file"
+    done
     echo 'Read-only preflight on this host (no network changes):'
     bash "$SOURCE_DIR/scripts/site-to-site-preflight.sh" --role dialer
     BUILD_DIR="$(mktemp -d)"
@@ -251,6 +258,7 @@ case "$MODE" in
     install -o root -g root -m 0755 "$BUILD_DIR/pqtunnel-client" /usr/local/bin/pqtunnel-client
     install -o root -g root -m 0755 "$SOURCE_DIR/scripts/site-to-site-selective.sh" /usr/local/lib/pqtunnel/site-to-site-selective.sh
     install -o root -g root -m 0755 "$SOURCE_DIR/scripts/run-pqtunnel-client.sh" /usr/local/lib/pqtunnel/run-client.sh
+    install -o root -g root -m 0755 "$SOURCE_DIR/scripts/stop-pqtunnel-client-network.sh" /usr/local/lib/pqtunnel/stop-client-network.sh
     install -o root -g root -m 0644 "$PKI_DIR/ca.crt" /etc/pqtunnel/pki/ca.crt
     install -o root -g root -m 0644 "$PKI_DIR/client.crt" /etc/pqtunnel/pki/client.crt
     install -o root -g root -m 0600 "$PKI_DIR/client.key" /etc/pqtunnel/pki/client.key

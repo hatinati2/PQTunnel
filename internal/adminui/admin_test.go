@@ -2,6 +2,7 @@ package adminui
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -217,6 +218,87 @@ func TestRejectsCrossOriginLoginAndDisconnect(t *testing.T) {
 	}
 }
 
+func TestLoopbackOpaqueOriginRequiresSameOriginNavigationMetadata(t *testing.T) {
+	const token = "loopback-opaque-origin-test-token-012345"
+	h, err := New(token, &fakeController{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	values := url.Values{"token": {token}}
+	request := func(origin, site, mode string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/login", strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Sec-Fetch-Site", site)
+		req.Header.Set("Sec-Fetch-Mode", mode)
+		resp := httptest.NewRecorder()
+		h.ServeHTTP(resp, req)
+		return resp
+	}
+
+	if resp := request("null", "same-origin", "navigate"); resp.Code != http.StatusSeeOther {
+		t.Fatalf("same-origin loopback navigation with opaque Origin status=%d, want redirect", resp.Code)
+	}
+	if resp := request("null", "cross-site", "navigate"); resp.Code != http.StatusForbidden {
+		t.Fatalf("cross-site opaque Origin status=%d, want 403", resp.Code)
+	}
+	if resp := request("null", "same-origin", "cors"); resp.Code != http.StatusForbidden {
+		t.Fatalf("non-navigation opaque Origin status=%d, want 403", resp.Code)
+	}
+
+	// Opaque Origin is never accepted as a fallback for a public listener.
+	publicHandler, err := NewWithPublicAccess(token, &fakeController{}, "198.51.100.10", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicReq := httptest.NewRequest(http.MethodPost, "http://198.51.100.10:9091/login", strings.NewReader(values.Encode()))
+	publicReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	publicReq.Header.Set("Origin", "null")
+	publicReq.Header.Set("Sec-Fetch-Site", "same-origin")
+	publicReq.Header.Set("Sec-Fetch-Mode", "navigate")
+	publicResp := httptest.NewRecorder()
+	publicHandler.ServeHTTP(publicResp, publicReq)
+	if publicResp.Code != http.StatusForbidden {
+		t.Fatalf("public listener opaque Origin status=%d, want 403", publicResp.Code)
+	}
+}
+
+
+func TestPublicOpaqueOriginRequiresMatchingReferer(t *testing.T) {
+	const token = "public-opaque-origin-test-token-12345"
+	h, err := NewWithPublicAccess(token, &fakeController{}, "198.51.100.10", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := func(referer string) *httptest.ResponseRecorder {
+		values := url.Values{"token": {token}}
+		req := httptest.NewRequest(http.MethodPost, "http://198.51.100.10:9091/login", strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "null")
+		if referer != "" {
+			req.Header.Set("Referer", referer)
+		}
+		resp := httptest.NewRecorder()
+		h.ServeHTTP(resp, req)
+		return resp
+	}
+
+	if resp := request("http://198.51.100.10:9091/login"); resp.Code != http.StatusSeeOther {
+		t.Fatalf("same-host Referer status=%d, want redirect", resp.Code)
+	}
+	if resp := request(""); resp.Code != http.StatusForbidden {
+		t.Fatalf("missing Referer status=%d, want 403", resp.Code)
+	}
+	if resp := request("http://attacker.invalid/"); resp.Code != http.StatusForbidden {
+		t.Fatalf("foreign Referer status=%d, want 403", resp.Code)
+	}
+	if resp := request("https://198.51.100.10:9091/login"); resp.Code != http.StatusForbidden {
+		t.Fatalf("scheme-mismatched Referer status=%d, want 403", resp.Code)
+	}
+}
+
 func postLogin(t *testing.T, h *Handler, token, remoteAddr string) *httptest.ResponseRecorder {
 	t.Helper()
 	values := url.Values{"token": {token}}
@@ -339,6 +421,81 @@ func TestRejectsDNSRebindingHostEvenWhenOriginMatchesHost(t *testing.T) {
 	}
 }
 
+
+func TestPublicIPOriginRequiresTLSAndExplicitHostAllowlist(t *testing.T) {
+	const token = "public-ip-manager-test-token-0123456789"
+	const publicIP = "198.51.100.10"
+	h, err := NewWithAllowedPublicHost(token, &fakeController{}, publicIP)
+	if err != nil { t.Fatal(err) }
+
+	values := url.Values{"token": {token}}
+	plain := httptest.NewRequest(http.MethodPost, "http://"+publicIP+":9091/login", strings.NewReader(values.Encode()))
+	plain.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	plain.Header.Set("Origin", "http://"+publicIP+":9091")
+	plainResp := httptest.NewRecorder()
+	h.ServeHTTP(plainResp, plain)
+	if plainResp.Code != http.StatusForbidden {
+		t.Fatalf("public plaintext login status=%d, want 403", plainResp.Code)
+	}
+
+	secure := httptest.NewRequest(http.MethodPost, "https://"+publicIP+":9091/login", strings.NewReader(values.Encode()))
+	secure.TLS = &tls.ConnectionState{}
+	secure.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	secure.Header.Set("Origin", "https://"+publicIP+":9091")
+	secureResp := httptest.NewRecorder()
+	h.ServeHTTP(secureResp, secure)
+	if secureResp.Code != http.StatusSeeOther {
+		t.Fatalf("allowlisted TLS login status=%d, want redirect", secureResp.Code)
+	}
+	cookies := secureResp.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].Secure {
+		t.Fatalf("public TLS session cookie must be Secure: %#v", cookies)
+	}
+
+	attacker := httptest.NewRequest(http.MethodPost, "https://admin.attacker.invalid:9091/login", strings.NewReader(values.Encode()))
+	attacker.TLS = &tls.ConnectionState{}
+	attacker.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	attacker.Header.Set("Origin", "https://admin.attacker.invalid:9091")
+	attackerResp := httptest.NewRecorder()
+	h.ServeHTTP(attackerResp, attacker)
+	if attackerResp.Code != http.StatusForbidden {
+		t.Fatalf("unlisted host/origin status=%d, want 403", attackerResp.Code)
+	}
+}
+
+func TestPublicHTTPOriginRequiresExplicitInsecureOptIn(t *testing.T) {
+	const token = "public-http-manager-test-token-0123456789"
+	const publicIP = "198.51.100.10"
+	h, err := NewWithPublicAccess(token, &fakeController{}, publicIP, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"token": {token}}
+	req := httptest.NewRequest(http.MethodPost, "http://"+publicIP+":9091/login", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://"+publicIP+":9091")
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("explicitly opted-in public HTTP login status=%d, want redirect", resp.Code)
+	}
+	cookies := resp.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Secure {
+		t.Fatalf("plaintext HTTP session cookie should not claim Secure: %#v", cookies)
+	}
+
+	// The default constructor must continue to reject the same public HTTP origin.
+	defaultHandler, err := NewWithAllowedPublicHost(token, &fakeController{}, publicIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultResp := httptest.NewRecorder()
+	defaultHandler.ServeHTTP(defaultResp, req.Clone(req.Context()))
+	if defaultResp.Code != http.StatusForbidden {
+		t.Fatalf("public HTTP without opt-in status=%d, want 403", defaultResp.Code)
+	}
+}
+
 func TestDashboardRedirectsUnauthenticatedRequests(t *testing.T) {
 	h, err := New(strings.Repeat("z", 32), &fakeController{})
 	if err != nil {
@@ -353,6 +510,49 @@ func TestDashboardRedirectsUnauthenticatedRequests(t *testing.T) {
 }
 
 
+
+func TestDashboardHidesControlsWhenEndpointIsMissing(t *testing.T) {
+	const token = "manager-missing-endpoint-test-token-12345"
+	manager := &fakeManagerController{
+		fakeController: &fakeController{},
+		view: adminapi.ManagerSnapshot{
+			Role:        "dialer",
+			ServiceUnit: "pqtunnel-client.service",
+			ActiveState: "unknown",
+			SubState:    "unknown",
+			ConfigReady: false,
+			ConfigError: "configuration unavailable: lstat /etc/default/pqtunnel-client: no such file or directory",
+		},
+	}
+	h, err := New(token, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie, _ := managerSession(t, h, token)
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+	req.AddCookie(cookie)
+	req.AddCookie(&http.Cookie{Name: languageCookieName, Value: "en"})
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("dashboard status=%d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "Install and configure the Gateway or Dialer endpoint") {
+		t.Fatal("dashboard must explain that the endpoint unit is missing")
+	}
+	if !strings.Contains(body, "Install the Gateway or Dialer endpoint") {
+		t.Fatal("dashboard must explain that the endpoint configuration is missing")
+	}
+	if strings.Contains(body, `action="/service/action"`) {
+		t.Fatal("service controls must be hidden when the endpoint unit is unknown")
+	}
+	if strings.Contains(body, `action="/config/apply"`) {
+		t.Fatal("config editor must be hidden when endpoint configuration is unavailable")
+	}
+}
+
 func TestSecurityHeadersPresentOnLoginAndUnknownPath(t *testing.T) {
 	h, err := New(strings.Repeat("h", 32), &fakeController{})
 	if err != nil {
@@ -366,7 +566,7 @@ func TestSecurityHeadersPresentOnLoginAndUnknownPath(t *testing.T) {
 			"Cache-Control":             "no-store",
 			"X-Content-Type-Options":    "nosniff",
 			"X-Frame-Options":           "DENY",
-			"Referrer-Policy":           "no-referrer",
+			"Referrer-Policy":           "same-origin",
 			"Content-Security-Policy":   "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 		}
 		for name, want := range headers {
@@ -558,3 +758,93 @@ func TestStandaloneManagerActionsRequireCSRFAndConfirmation(t *testing.T) {
 		t.Fatalf("missing explicit confirmation should reject action: status=%d calls=%v", resp.Code, manager.actions)
 	}
 }
+
+func TestLanguageSelectionPersistsAcrossLoginDashboardAndLogs(t *testing.T) {
+	const token = "language-selection-test-token-0123456789"
+	base := &fakeController{snapshot: adminapi.Snapshot{Running: true, ListenAddress: "127.0.0.1:8443"}}
+	manager := &fakeManagerController{
+		fakeController: base,
+		logs: "pqtunnel-client.service started",
+		view: adminapi.ManagerSnapshot{Role: "dialer", ServiceUnit: "pqtunnel-client.service", ActiveState: "active", SubState: "running"},
+	}
+	h, err := New(token, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Persian is the default and both language choices are available before login.
+	faReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/login", nil)
+	faResp := httptest.NewRecorder()
+	h.ServeHTTP(faResp, faReq)
+	if faResp.Code != http.StatusOK ||
+		!strings.Contains(faResp.Body.String(), `<html lang="fa" dir="rtl">`) ||
+		!strings.Contains(faResp.Body.String(), "ورود امن") ||
+		!strings.Contains(faResp.Body.String(), "English") {
+		t.Fatalf("Persian login page or language selector missing: status=%d", faResp.Code)
+	}
+
+	// Choose English; the preference is stored in a same-site cookie.
+	selectReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/language?lang=en&next=/login", nil)
+	selectResp := httptest.NewRecorder()
+	h.ServeHTTP(selectResp, selectReq)
+	if selectResp.Code != http.StatusSeeOther || selectResp.Header().Get("Location") != "/login" {
+		t.Fatalf("language selection status=%d location=%q", selectResp.Code, selectResp.Header().Get("Location"))
+	}
+	var languageCookie *http.Cookie
+	for _, cookie := range selectResp.Result().Cookies() {
+		if cookie.Name == languageCookieName {
+			languageCookie = cookie
+		}
+	}
+	if languageCookie == nil || languageCookie.Value != "en" || !languageCookie.HttpOnly || languageCookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("English preference cookie not hardened or missing: %#v", languageCookie)
+	}
+
+	// Login using that preference, then reuse both cookies for later pages.
+	values := url.Values{"token": {token}}
+	loginReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/login", strings.NewReader(values.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginReq.Header.Set("Origin", "http://127.0.0.1")
+	loginReq.AddCookie(languageCookie)
+	loginResp := httptest.NewRecorder()
+	h.ServeHTTP(loginResp, loginReq)
+	if loginResp.Code != http.StatusSeeOther {
+		t.Fatalf("English login status=%d", loginResp.Code)
+	}
+	cookies := loginResp.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != sessionCookieName {
+		t.Fatalf("expected one session cookie, got %#v", cookies)
+	}
+	sessionCookie := cookies[0]
+
+	dashboardReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+	dashboardReq.AddCookie(languageCookie)
+	dashboardReq.AddCookie(sessionCookie)
+	dashboardResp := httptest.NewRecorder()
+	h.ServeHTTP(dashboardResp, dashboardReq)
+	for _, expected := range []string{`<html lang="en" dir="ltr">`, "PQTunnel Management Panel", "Tunnel connection", "Effective configuration", "Connected peers"} {
+		if dashboardResp.Code != http.StatusOK || !strings.Contains(dashboardResp.Body.String(), expected) {
+			t.Errorf("English dashboard missing %q: status=%d", expected, dashboardResp.Code)
+		}
+	}
+
+	logsReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/logs", nil)
+	logsReq.AddCookie(languageCookie)
+	logsReq.AddCookie(sessionCookie)
+	logsResp := httptest.NewRecorder()
+	h.ServeHTTP(logsResp, logsReq)
+	for _, expected := range []string{`<html lang="en" dir="ltr">`, "Latest service logs:", "Back to dashboard", "Log out"} {
+		if logsResp.Code != http.StatusOK || !strings.Contains(logsResp.Body.String(), expected) {
+			t.Errorf("English logs page missing %q: status=%d", expected, logsResp.Code)
+		}
+	}
+
+	// The language endpoint must not become an open redirect.
+	badNextReq := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/language?lang=en&next=https://attacker.invalid", nil)
+	badNextResp := httptest.NewRecorder()
+	h.ServeHTTP(badNextResp, badNextReq)
+	if badNextResp.Code != http.StatusSeeOther || badNextResp.Header().Get("Location") != "/login" {
+		t.Fatalf("unexpected redirect for untrusted next parameter: status=%d location=%q", badNextResp.Code, badNextResp.Header().Get("Location"))
+	}
+}
+
