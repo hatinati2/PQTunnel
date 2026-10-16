@@ -341,6 +341,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.startSetup(w, r)
 	case "/setup/tokens":
 		h.consumeSetupTokens(w, r)
+	case "/setup/approve":
+		h.approveSetup(w, r)
 	case "/logs":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, r, "GET")
