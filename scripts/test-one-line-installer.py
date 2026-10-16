@@ -84,6 +84,13 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertLess(secure, ssh_auth)
         self.assertIn("PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091", pair)
 
+    def test_pair_installer_defers_network_dependencies_until_after_manager_security(self) -> None:
+        pair = (ROOT / "scripts/pqtunnel-oneclick-pair.sh").read_text(encoding="utf-8")
+        secure = pair.index("install_or_check_manager dialer")
+        network_need = pair.index("for cmd in curl tar sha256sum ssh scp ip nft sysctl pgrep ss sort timeout python3; do need")
+        self.assertLess(secure, network_need)
+        self.assertNotIn("need python3; need ssh; need scp", self.script)
+
     def test_pair_installer_transfers_gateway_credentials_only(self) -> None:
         pair = (ROOT / "scripts/pqtunnel-oneclick-pair.sh").read_text(encoding="utf-8")
         scp_start = pair.index('scp -P "$SSH_PORT"')
