@@ -56,8 +56,15 @@ func main() {
 	flag.StringVar(&cfg.DirectAllowedPort, "direct-allowed-ports", env("PQTUNNEL_PROXY_DIRECT_ALLOWED_PORTS", ""), "required Gateway TCP destination allowlist, e.g. 80,443")
 	flag.StringVar(&cfg.ReverseListeners, "reverse-listeners", env("PQTUNNEL_PROXY_REVERSE_LISTENERS", ""), "Gateway listeners, name=host:port,name2=host:port")
 	flag.StringVar(&cfg.ReverseTargets, "reverse-targets", env("PQTUNNEL_PROXY_REVERSE_TARGETS", ""), "Dialer targets, name=host:port,name2=host:port")
-	flag.IntVar(&cfg.MaxStreams, "max-streams", envInt("PQTUNNEL_PROXY_MAX_STREAMS", 128), "max logical streams per authenticated transport (1-512)")
+	maxStreamsText := env("PQTUNNEL_PROXY_MAX_STREAMS", "128")
+	flag.StringVar(&maxStreamsText, "max-streams", maxStreamsText, "max logical streams per authenticated transport (1-512)")
 	flag.Parse()
+	maxStreams, err := strconv.Atoi(maxStreamsText)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "pqtunnel-proxy: --max-streams must be a decimal integer")
+		os.Exit(2)
+	}
+	cfg.MaxStreams = maxStreams
 
 	if err := run(cfg); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, "pqtunnel-proxy:", err)
@@ -70,18 +77,6 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func envInt(key string, fallback int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
 }
 
 func run(cfg config) error {
@@ -98,14 +93,36 @@ func run(cfg config) error {
 	if err != nil {
 		return err
 	}
-	cert, err := tls.LoadX509KeyPair(cfg.CertPath, cfg.KeyPath)
+	cert, err := loadRoleCertificate(cfg.CertPath, cfg.KeyPath)
 	if err != nil {
-		return fmt.Errorf("load role certificate and key: %w", err)
+		return err
 	}
 	if cfg.Role == "gateway" {
 		return runGateway(ctx, cfg, cert, caPool)
 	}
 	return runDialer(ctx, cfg, cert, caPool)
+}
+
+
+func loadRoleCertificate(certPath, keyPath string) (tls.Certificate, error) {
+	if certPath == "" || keyPath == "" {
+		return tls.Certificate{}, errors.New("--cert and --key are required")
+	}
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("stat private key: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return tls.Certificate{}, errors.New("private key must be a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return tls.Certificate{}, errors.New("private key permissions are too broad; use mode 0600")
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("load role certificate and key: %w", err)
+	}
+	return cert, nil
 }
 
 func loadCAPool(path string) (*x509.CertPool, error) {
@@ -134,6 +151,9 @@ func runGateway(ctx context.Context, cfg config, cert tls.Certificate, caPool *x
 	reverseListeners, err := proxymux.ParseNamedAddresses(cfg.ReverseListeners)
 	if err != nil {
 		return fmt.Errorf("Gateway Reverse listeners: %w", err)
+	}
+	if len(reverseListeners) == 0 {
+		return errors.New("Gateway requires at least one explicit Reverse listener mapping")
 	}
 
 	broker := proxymux.NewSessionBroker()
@@ -231,12 +251,15 @@ func runDialer(ctx context.Context, cfg config, cert tls.Certificate, caPool *x5
 	if cfg.Server == "" || cfg.ServerName == "" {
 		return errors.New("Dialer requires --server and --server-name")
 	}
-	if cfg.DirectListen == "" && strings.TrimSpace(cfg.ReverseTargets) == "" {
-		return errors.New("Dialer must configure a Direct SOCKS5 listener or at least one Reverse target")
+	if cfg.DirectListen == "" {
+		return errors.New("Dialer requires an explicit loopback Direct SOCKS5 listener")
 	}
 	reverseTargets, err := proxymux.ParseNamedAddresses(cfg.ReverseTargets)
 	if err != nil {
 		return fmt.Errorf("Dialer Reverse targets: %w", err)
+	}
+	if len(reverseTargets) == 0 {
+		return errors.New("Dialer requires at least one fixed Reverse target mapping")
 	}
 
 	broker := proxymux.NewSessionBroker()
