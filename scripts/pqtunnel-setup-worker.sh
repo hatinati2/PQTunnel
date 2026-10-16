@@ -74,9 +74,11 @@ chmod 0600 "$INPUT_FILE"
 printf '%s' "$PQTUNNEL_SETUP_INPUT_B64" | base64 --decode > "$INPUT_FILE"
 [[ -s "$INPUT_FILE" ]] || { echo 'Setup input was empty.' > "$SAFE_LOG"; write_state failed; exit 1; }
 unset PQTUNNEL_SETUP_INPUT_B64
+SETUP_VERSION="$(sed -n 's/^PQTUNNEL_SETUP_VERSION=//p' /etc/default/pqtunnel-manager | head -n1)"
+[[ "$SETUP_VERSION" =~ ^v[0-9A-Za-z._-]+$ ]] || { echo 'Setup release version is missing; upgrade the manager.' > "$SAFE_LOG"; write_state failed; exit 1; }
 
 set +e
-PQTUNNEL_SETUP_INPUT_FILE="$INPUT_FILE" bash "$SCRIPT" > "$RAW_LOG" 2>&1
+PQTUNNEL_SETUP_VERSION="$SETUP_VERSION" PQTUNNEL_SETUP_PRESERVE_DIALER_MANAGER_TOKEN=1 PQTUNNEL_SETUP_INPUT_FILE="$INPUT_FILE" bash "$SCRIPT" > "$RAW_LOG" 2>&1
 rc=$?
 set -e
 extract_tokens || true
