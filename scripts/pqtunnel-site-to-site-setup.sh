@@ -96,4 +96,24 @@ main(){
   [[ "$REMOTE" =~ ^root@[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || fail 'use root@hostname or root@IPv4; IPv6 SSH targets not supported by this wizard.'
   ask 'SSH port [22]: ' tmp; SSH_PORT="${tmp:-22}"; [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] && ((10#$SSH_PORT>=1 && 10#$SSH_PORT<=65535)) || fail 'invalid SSH port.'
   ask 'Gateway certificate DNS name or IPv4 (must match the public endpoint): ' GATEWAY_NAME; valid_host "$GATEWAY_NAME" || fail 'invalid Gateway certificate identity.'
-  ask 'Gateway TLS listener port [8443]: ' tmp; TLS_PORT="${tmp:-8443}"; [[ 
+  ask 'Gateway TLS listener port [8443]: ' tmp; TLS_PORT="${tmp:-8443}"; [[ "$TLS_PORT" =~ ^[0-9]{1,5}$ ]] && ((10#$TLS_PORT>=1 && 10#$TLS_PORT<=65535)) || fail 'invalid TLS port.'
+  ask 'TCP destination ports through Germany [443]: ' tmp; TCP_PORTS="$(ports "${tmp:-443}" TCP)"
+  ask 'UDP destination ports through Germany [53,123; enter none for none]: ' tmp; UDP_PORTS="$(ports "${tmp:-53,123}" UDP)"
+  [[ -n "$TCP_PORTS$UDP_PORTS" ]] || fail 'select at least one TCP or UDP destination port.'
+  TCP_PORTS="$(addport "$TCP_PORTS" 9109)"; ALLOW="$(allowlist "$TCP_PORTS" "$UDP_PORTS")"
+  ssh -p "$SSH_PORT" -o ConnectTimeout=8 "$REMOTE" 'test "$(id -u)" = 0 && echo ROOT_OK' | grep -q ROOT_OK || fail 'root SSH failed; no tunnel/network changes made.'
+  LOCAL_ARCH="$(arch)" || fail 'unsupported local architecture.'
+  REMOTE_ARCH="$(ssh -p "$SSH_PORT" "$REMOTE" 'case "$(uname -m)" in x86_64|amd64) echo amd64;; aarch64|arm64) echo arm64;; *) exit 2;; esac')" || fail 'unsupported Gateway architecture.'
+  getent ahostsv4 "$GATEWAY_NAME" >/dev/null 2>&1 || [[ "$GATEWAY_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'Gateway name must resolve to IPv4 from the Dialer.'
+  GATEWAY_IP="$GATEWAY_NAME"; [[ "$GATEWAY_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || GATEWAY_IP="$(getent ahostsv4 "$GATEWAY_NAME" | awk 'NR==1{print $1}')"
+  fetch_bundle "$LOCAL_ARCH"; BUNDLE="$WORK/PQTunnel-$VERSION-linux-$LOCAL_ARCH"
+  [[ -x "$BUNDLE/pqtunnel-client" && -x "$BUNDLE/pqtunnel-pki" && -x "$BUNDLE/pqtunnel-manager" ]] || fail 'release bundle is incomplete.'
+  fetch_bundle "$REMOTE_ARCH"
+  curl -fsSL "$RAW/scripts/pqtunnel-site-to-site-remote.sh" -o "$WORK/pqtunnel-site-to-site-remote.sh"; bash -n "$WORK/pqtunnel-site-to-site-remote.sh"
+  printf '\nPlan: Iran Dialer -> %s:%s; selected TCP=%s; UDP=%s. Both managers will listen on 127.0.0.1:9091.\n' "$GATEWAY_NAME" "$TLS_PORT" "$TCP_PORTS" "${UDP_PORTS:-none}"
+  printf 'The provider firewall will NOT be changed. Open TCP/%s to the Gateway in the provider console if needed.\n' "$TLS_PORT"
+  printf 'This will install missing Ubuntu/Debian dependencies, generate certificates and tokens, start both tunnel services and apply selective routing/firewall on both hosts.\n'
+  ask 'Type exactly INSTALL to continue: ' CONFIRM; [[ "$CONFIRM" == INSTALL ]] || fail 'canceled; no tunnel/network changes made.'
+  . /etc/os-release; [[ ${ID:-} == ubuntu || ${ID:-} == debian ]] || fail 'automatic dependencies support Ubuntu/Debian only.'
+  missing=(); for pair in 'ip:iproute2' 'nft:nftables' 'openssl:openssl' 'sysctl:procps' 'ss:iproute2' 'systemctl:systemd' 'systemd-analyze:systemd'; do c="${pair%%:*}"; p="${pair#*:}"; command -v "$c" >/dev/null 2>&1 || missing+=("$p"); done
+  if (( ${missing[@]} )); then apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar python3 "${missing[@]}"; fi
