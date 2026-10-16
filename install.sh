@@ -5,6 +5,7 @@ set -Eeuo pipefail
 VERSION="v0.3.0-rc4"
 REPO="hatinati2/PQTunnel"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
+RAW_MAIN_BASE="https://raw.githubusercontent.com/${REPO}/main"
 RELEASE_BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 TMP_DIR=""
 TOKEN=""
@@ -39,9 +40,13 @@ PQTunnel one-line installer (experimental release v0.3.0-rc4)
 Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --site-to-site
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | bash -s -- --preflight dialer
 
 Modes:
+  --site-to-site             Guided install for BOTH VPSes: Gateway over root SSH, Dialer locally,
+                             role-specific PKI, tunnel services, selected-port networking, and both local-only managers.
+                             Requires Ubuntu/Debian, root SSH to Germany, provider firewall access, and a clean network state.
   --manager gateway|dialer   Download and checksum-verify the v0.3.0-rc4 Linux bundle,
                              install the manager, generate a strong token when needed,
                              configure it, validate the unit, then enable and start it.
@@ -50,7 +55,7 @@ Modes:
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
 
-This one-line manager mode installs and starts the web manager only. It does NOT install/configure/start the tunnel endpoint and does not change routes, firewall, NAT, or forwarding. Tunnel setup still requires reviewed PKI and role-specific config on both peers. The web manager defaults to 127.0.0.1:9091; use SSH forwarding for remote access. Public-IP access is not enabled by this installer.
+This one-line manager mode installs and starts the web manager only. The --site-to-site mode is a separate guided two-host flow; it applies selective TCP/UDP destination-port routing only after the typed INSTALL confirmation and stops on existing firewall/routing state. It does NOT install/configure/start the tunnel endpoint and does not change routes, firewall, NAT, or forwarding. Tunnel setup still requires reviewed PKI and role-specific config on both peers. The web manager defaults to 127.0.0.1:9091; use SSH forwarding for remote access. Public-IP access is not enabled by this installer.
 USAGE
 }
 
@@ -58,6 +63,7 @@ MODE=""
 ROLE=""
 while (($#)); do
   case "$1" in
+    --site-to-site|--full) MODE=site-to-site; shift ;;
     --manager) MODE=manager; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     --preflight) MODE=preflight; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     -h|--help) usage; exit 0 ;;
@@ -68,16 +74,26 @@ done
 if [[ -z "$MODE" ]]; then
   printf '\nPQTunnel %s — one-line setup\n' "$VERSION"
   printf '  1) Read-only preflight (no changes)\n'
-  printf '  2) Install and start local web manager (show a new token once)\n'
-  prompt 'Choose [1-2]: ' CHOICE
+  printf '  2) Install and start local web manager only\n'
+  printf '  3) Guided full two-VPS setup (tunnel + both management panels)\n'
+  prompt 'Choose [1-3]: ' CHOICE
   case "$CHOICE" in
     1) MODE=preflight; ROLE=both ;;
     2) MODE=manager ;;
-    *) fail 'choose 1 or 2.' ;;
+    3) MODE=site-to-site ;;
+    *) fail 'choose 1, 2 or 3.' ;;
   esac
 fi
 
 case "$MODE" in
+  site-to-site)
+    [[ "$EUID" -eq 0 ]] || fail 'full two-VPS setup requires root; rerun through sudo.'
+    need curl
+    TMP_DIR="$(mktemp -d)"
+    curl --fail --silent --show-error --location "$RAW_MAIN_BASE/scripts/pqtunnel-site-to-site-setup.sh" -o "$TMP_DIR/pqtunnel-site-to-site-setup.sh"
+    bash -n "$TMP_DIR/pqtunnel-site-to-site-setup.sh"
+    PQTUNNEL_SETUP_VERSION="$VERSION" bash "$TMP_DIR/pqtunnel-site-to-site-setup.sh"
+    ;;
   preflight)
     [[ -n "$ROLE" ]] || ROLE=both
     [[ "$ROLE" == both || "$ROLE" == gateway || "$ROLE" == dialer ]] || fail 'preflight role must be gateway, dialer or both.'
