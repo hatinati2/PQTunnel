@@ -41,10 +41,13 @@ Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --pair
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --site-to-site
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | bash -s -- --preflight dialer
 
 Modes:
-  --pair                     Run the paired first-time installer on the Iran/Dialer VPS.
+  --site-to-site / --full    Guided install for BOTH VPSes: Gateway over root SSH, Dialer locally,
+                             mutual-TLS PKI, tunnel endpoints, selective-port routing, and both local-only panels.
+  --pair                     Run the legacy paired installer on the Iran/Dialer VPS.
                              Installs both endpoint services and both loopback-only
                              manager panels over SSH-key access to the overseas Gateway.
                              Tunnel/network activation requires typing APPLY-NETWORK.
@@ -56,7 +59,7 @@ Modes:
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
 
---manager installs only the local web manager. --pair configures both the Iran Dialer and overseas Gateway, generates role-specific mutual-TLS certificates, installs both endpoint services and manager panels, and automatically configures a bounded speed-test agent. It defaults to selected-port egress (TCP 80/443, UDP 53/123/443), not a full-tunnel VPN. It refuses to overwrite an existing tunnel endpoint. Services and network rules remain unactivated until the explicit APPLY-NETWORK confirmation. Provider firewalls/security groups are not modified. This project remains experimental; use out-of-band recovery access and do not use on production systems.
+--manager installs only the local web manager. --site-to-site/--full configures both the Iran Dialer and overseas Gateway, generates role-specific mutual-TLS certificates, installs both endpoint services and manager panels, and configures a bounded speed-test agent. --pair remains available as the legacy mode. It defaults to selected-port egress (TCP 80/443, UDP 53/123/443), not a full-tunnel VPN. It refuses to overwrite an existing tunnel endpoint. Services and network rules remain unactivated until the explicit APPLY-NETWORK confirmation. Provider firewalls/security groups are not modified. This project remains experimental; use out-of-band recovery access and do not use on production systems.
 USAGE
 }
 
@@ -64,6 +67,7 @@ MODE=""
 ROLE=""
 while (($#)); do
   case "$1" in
+    --site-to-site|--full) MODE=site-to-site; shift ;;
     --pair) MODE=pair; shift ;;
     --manager) MODE=manager; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     --preflight) MODE=preflight; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
@@ -76,17 +80,25 @@ if [[ -z "$MODE" ]]; then
   printf '\nPQTunnel %s — one-line setup\n' "$VERSION"
   printf '  1) Read-only preflight (no changes)\n'
   printf '  2) Install/start local web manager only\n'
-  printf '  3) Paired tunnel + both management panels (run on Iran; needs SSH key access to overseas VPS)\n'
+  printf '  3) Guided full two-VPS setup (tunnel + both management panels, run on Iran)\n'
   prompt 'Choose [1-3]: ' CHOICE
   case "$CHOICE" in
     1) MODE=preflight; ROLE=both ;;
     2) MODE=manager ;;
-    3) MODE=pair ;;
+    3) MODE=site-to-site ;;
     *) fail 'choose 1, 2 or 3.' ;;
   esac
 fi
 
 case "$MODE" in
+  site-to-site)
+    [[ "$EUID" -eq 0 ]] || fail 'two-VPS setup requires root; run on the Iran/Dialer VPS.'
+    need curl; need mktemp; need bash
+    TMP_DIR="$(mktemp -d)"
+    curl --fail --silent --show-error --location "$SOURCE_RAW_BASE/scripts/pqtunnel-site-to-site-setup.sh" -o "$TMP_DIR/pqtunnel-site-to-site-setup.sh"
+    bash -n "$TMP_DIR/pqtunnel-site-to-site-setup.sh"
+    PQTUNNEL_SETUP_VERSION="$VERSION" bash "$TMP_DIR/pqtunnel-site-to-site-setup.sh"
+    ;;
   pair)
     [[ "$EUID" -eq 0 ]] || fail 'paired installation requires root; rerun with sudo on the Iran/Dialer VPS.'
     need curl; need tar; need sha256sum; need awk; need uname; need grep
