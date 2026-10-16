@@ -1233,3 +1233,139 @@ func TestSessionInboundOpenFloodIsBoundedAndReaped(t *testing.T) {
 	waitForStreamCount(t, left, 0)
 	waitForStreamCount(t, right, 0)
 }
+
+
+// FuzzSessionFrameSequence exercises the multiplexing control state machine
+// with wire-valid frames in arbitrary order, without starting transport loops.
+func FuzzSessionFrameSequence(f *testing.F) {
+	f.Add([]byte{
+		0, 2, 0, 0, 0, 1, // OPEN_DIRECT on a remote-owned even ID
+		2, 1, 0, 0, 0, 2, // OPEN_OK on a pending local stream
+		4, 3, 0, 0, 0, 3, // DATA on an active stream
+		5, 3, 0, 0, 0, 1, // CLOSE_WRITE
+	})
+	f.Add([]byte{
+		2, 1, 0, 0, 0, 0, // OPEN_OK
+		3, 1, 0, 0, 0, 1, // out-of-order OPEN_ERROR
+	})
+	f.Add(make([]byte, 96))
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		// Bound per-input work and outbound buffering so mutations stay cheap.
+		if len(raw) > 768 {
+			raw = raw[:768]
+		}
+		localConn, peerConn := net.Pipe()
+		ctx, cancel := context.WithCancel(context.Background())
+		s := &Session{
+			conn: localConn, ctx: ctx, cancel: cancel, done: make(chan struct{}),
+			initiator: true, nextID: 5, maxStreams: 8,
+			openTimeout: time.Second, writeTimeout: time.Second,
+			keepAliveInterval: time.Hour,
+			outbound: make(chan Frame, 512),
+			streams: make(map[uint32]*Stream),
+			closedIDs: make(map[uint32]struct{}),
+		}
+		s.lastPong.Store(time.Now().UnixNano())
+		pending := newStream(s, 1, true)
+		s.streams[pending.id] = pending
+		active := newStream(s, 3, true)
+		active.openPending = false
+		active.ready = true
+		s.streams[active.id] = active
+		t.Cleanup(func() {
+			_ = s.Close()
+			_ = peerConn.Close()
+		})
+
+		for offset := 0; offset+6 <= len(raw); offset += 6 {
+			chunk := raw[offset : offset+6]
+			frameType := Type(chunk[0]%8 + 1)
+			id := uint32(chunk[1]) |
+				uint32(chunk[2])<<8 |
+				uint32(chunk[3])<<16 |
+				uint32(chunk[4])<<24
+			selector := chunk[5]
+			frame := Frame{Type: frameType}
+
+			switch frameType {
+			case TypeOpenDirect, TypeOpenReverse:
+				id &= ^uint32(1) // the remote endpoint owns even IDs
+				if id == 0 {
+					id = 2
+				}
+				frame.StreamID = id
+				frame.Payload = []byte{selector}
+			case TypeOpenOK:
+				frame.StreamID = 1
+				if selector&1 != 0 {
+					frame.StreamID = 3
+				}
+			case TypeOpenError:
+				frame.StreamID = 1
+				if selector&1 != 0 {
+					frame.StreamID = 3
+				}
+				frame.Payload = []byte{selector}
+			case TypeData:
+				switch selector % 3 {
+				case 0:
+					frame.StreamID = 1
+				case 1:
+					frame.StreamID = 3
+				default:
+					frame.StreamID = id
+					if frame.StreamID == 0 {
+						frame.StreamID = 5
+					}
+				}
+				frame.Payload = []byte{selector}
+			case TypeClose:
+				switch selector % 3 {
+				case 0:
+					frame.StreamID = 1
+				case 1:
+					frame.StreamID = 3
+				default:
+					frame.StreamID = id
+					if frame.StreamID == 0 {
+						frame.StreamID = 5
+					}
+				}
+				flag := closeFlagWrite
+				if selector&1 != 0 {
+					flag = closeFlagReset
+				}
+				frame.Payload = []byte{flag}
+			case TypePing, TypePong:
+				frame.StreamID = 0
+				frame.Payload = make([]byte, 8)
+				for i := range frame.Payload {
+					frame.Payload[i] = selector ^ byte(i)
+				}
+			}
+
+			if err := validateHeader(frame.Type, frame.StreamID, uint32(len(frame.Payload))); err != nil {
+				break
+			}
+			if err := validatePayload(frame); err != nil {
+				break
+			}
+			if err := s.handleFrame(frame); err != nil {
+				// The real read loop shuts down the session on the same error.
+				break
+			}
+
+			s.mu.Lock()
+			streamCount := len(s.streams)
+			closedCount := len(s.closedIDs)
+			s.mu.Unlock()
+			if streamCount > s.maxStreams {
+				t.Fatalf("session retained %d streams beyond limit %d", streamCount, s.maxStreams)
+			}
+			if closedCount > 4096 {
+				t.Fatalf("closed stream ID cache grew to %d entries", closedCount)
+			}
+		}
+	})
+}
