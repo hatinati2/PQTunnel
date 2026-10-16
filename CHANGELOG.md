@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0-rc5
+
+- Added an authenticated, Persian/English graphical two-VPS setup wizard to the standalone Dialer manager, with constrained inputs and a separate final approval gate after both hosts pass preflight.
+- Added a fixed systemd setup worker, protected state/log handling, one-time token handoff, output redaction, and release-pinned helper scripts; management panels remain loopback-only and the wizard is disabled on public manager listener configurations.
+- Added safe manager upgrade support with protected backups, role/config preservation, and hardening/token rotation when upgrading an existing public or insecure HTTP listener.
+- Added regression tests for wizard input validation, public-listener denial, CSRF-protected install approval, one-time token handoff, and shell installer invariants.
+- This release candidate remains experimental and has not undergone an independent security audit or validated a production two-VPS deployment.
+
 ## 0.3.0-rc4
 
 - Added an experimental user-space Direct/Reverse TCP proxy (`pqtunnel-proxy`) with bounded flow control and regression coverage for rejecting WINDOW_UPDATE credits for DATA that has not been sent.
