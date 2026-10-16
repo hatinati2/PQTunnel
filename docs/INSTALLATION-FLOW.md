@@ -95,6 +95,56 @@ production firewall. Use a separately reviewed integration plan if network chang
 are not permitted. This installation flow never enables UFW or modifies the host
 firewall merely to install files.
 
+## 7. Optional paired one-line installer
+
+For a first-time two-VPS setup, the interactive paired entry point can run from the
+Iran/Dialer VPS, provided SSH key authentication and non-interactive sudo already
+work for the overseas Gateway:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --pair
+```
+
+It downloads the architecture-matching Linux release and verifies its archive
+against the release `SHA256SUMS`, then fetches the current orchestration and PKI
+scripts. It prompts for the Gateway SSH target, certificate DNS name/IP, TCP
+listener port, both WAN interfaces and selected TCP/UDP egress ports. It builds
+mutual-TLS role credentials, transfers only Gateway credentials to the Gateway
+and keeps the Dialer private key on Iran. The CA signing key is kept only in
+the temporary root-owned work directory and removed on exit; this is convenient
+for a disposable setup but not a replacement for an offline, backed-up CA if
+certificates must later be renewed.
+
+Both standalone managers are configured to listen on `127.0.0.1:9091` with
+new, separate manager login tokens. A third, separate speed-test token is
+configured for the private tunnel addresses `10.66.0.1:9109` and
+`10.66.0.2:9109`. The manager tokens are printed once when the installer exits;
+save them securely. The panels are accessed remotely through SSH forwarding
+(`9091` for the Iran panel and local `9092` forwarded to remote `9091` for
+the Gateway panel).
+
+The default profile is **selected-port egress, not a full tunnel**: TCP 80/443
+and UDP 53/123/443 from the Iran VPS are selected for routing through the
+Gateway. TCP/9109 is allowed only for the private speed-test agent, not added
+to the WAN egress port list. The external provider firewall/security group is
+not edited by the script; the Gateway listener port (default TCP/8443) must
+already be reachable from Iran.
+
+The installer checks for existing endpoint artifacts and refuses to overwrite
+them. It installs both endpoints and managers with tunnel services stopped,
+validates the generated configs, and asks the operator to type exactly
+`APPLY-NETWORK` before it starts services and applies the selective policy
+routing/nftables/forwarding rules. Do not confirm without independent console
+or recovery access on both VPSes. Existing UFW, existing firewall tables, or
+pre-existing forwarding/policy-routing state may cause the network helper to
+refuse activation; do not bypass these guards. The script does not modify
+provider firewalls and does not automatically test general internet reachability
+or prove production readiness.
+
+This mode still changes live Linux network state after explicit confirmation and
+has not been validated on the specific customer VPS pair. Treat PQTunnel as
+experimental; use in a disposable/lab environment first.
+
 ## 6. Attach the manager after the endpoint exists
 
 The optional `pqtunnel-manager` is a control panel, not a tunnel installer. Set
