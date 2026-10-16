@@ -20,6 +20,8 @@ GW_PID=""
 DL_PID=""
 DIRECT_SERVER_PID=""
 REVERSE_SERVER_PID=""
+SPEED_SERVER_GW_PID=""
+SPEED_SERVER_DL_PID=""
 HOLD_PID=""
 HOST_BASE="$LAB_DIR/host.before"
 HOST_AFTER="$LAB_DIR/host.after"
@@ -93,10 +95,10 @@ cleanup() {
   local rc=$? ns now pair pid
   trap - EXIT INT TERM
   set +e
-  for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID" "$HOLD_PID"; do
+  for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID" "$SPEED_SERVER_GW_PID" "$SPEED_SERVER_DL_PID" "$HOLD_PID"; do
     [[ -z "$pid" ]] || kill -TERM "$pid" >/dev/null 2>&1
   done
-  for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID" "$HOLD_PID"; do
+  for pid in "$DL_PID" "$GW_PID" "$DIRECT_SERVER_PID" "$REVERSE_SERVER_PID" "$SPEED_SERVER_GW_PID" "$SPEED_SERVER_DL_PID" "$HOLD_PID"; do
     [[ -z "$pid" ]] || wait "$pid" >/dev/null 2>&1
   done
   for pair in "$GW_NS:$GW_BASE" "$DL_NS:$DL_BASE"; do
@@ -123,7 +125,7 @@ cleanup() {
     fi
   fi
   if (( rc != 0 )); then
-    for log in gateway.log dialer.log direct-server.log reverse-server.log hold.log; do
+    for log in gateway.log dialer.log direct-server.log reverse-server.log speed-gateway.log speed-dialer.log speed-benchmark.log hold.log; do
       if [[ -f "$LAB_DIR/$log" ]]; then echo "--- $log ---" >&2; cat "$LAB_DIR/$log" >&2; fi
     done
   fi
@@ -237,6 +239,141 @@ class Server(socketserver.ThreadingTCPServer):
     daemon_threads = True
 with Server((host, port), Handler) as server:
     server.serve_forever(poll_interval=0.1)
+PY
+
+cat > "$LAB_DIR/speed_server.py" <<'PY'
+import socketserver
+import sys
+host, port = sys.argv[1], int(sys.argv[2])
+chunk = bytes(64 * 1024)
+class Handler(socketserver.BaseRequestHandler):
+    def handle(self):
+        self.request.settimeout(120)
+        line = bytearray()
+        while len(line) < 128 and not line.endswith(b"\n"):
+            part = self.request.recv(1)
+            if not part:
+                return
+            line.extend(part)
+        try:
+            op, raw_size = line.decode("ascii").strip().split()
+            size = int(raw_size)
+            if size <= 0 or size > 64 * 1024 * 1024:
+                raise ValueError("invalid transfer size")
+            if op == "UPLOAD":
+                remaining = size
+                while remaining:
+                    data = self.request.recv(min(len(chunk), remaining))
+                    if not data:
+                        raise ConnectionError("upload ended early")
+                    remaining -= len(data)
+                self.request.sendall(("OK %d\n" % size).encode("ascii"))
+            elif op == "DOWNLOAD":
+                remaining = size
+                while remaining:
+                    n = min(len(chunk), remaining)
+                    self.request.sendall(chunk[:n])
+                    remaining -= n
+            else:
+                raise ValueError("unknown operation")
+            try:
+                self.request.shutdown(1)
+            except OSError:
+                pass
+        except (ValueError, ConnectionError) as exc:
+            try:
+                self.request.sendall(("ERR %s\n" % str(exc)).encode("ascii"))
+            except OSError:
+                pass
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+with Server((host, port), Handler) as server:
+    server.serve_forever(poll_interval=0.1)
+PY
+
+cat > "$LAB_DIR/benchmark.py" <<'PY'
+import socket
+import statistics
+import struct
+import sys
+import time
+mode = sys.argv[1]
+gateway_ip, reverse_port, socks_port, direct_ip, direct_port = sys.argv[2:7]
+reverse_port, socks_port, direct_port = int(reverse_port), int(socks_port), int(direct_port)
+size, rounds = int(sys.argv[7]), int(sys.argv[8])
+def read_line(sock):
+    out = bytearray()
+    while len(out) < 128:
+        part = sock.recv(1)
+        if not part:
+            raise RuntimeError("peer closed before a complete status line")
+        if part == b"\n":
+            return bytes(out)
+        out.extend(part)
+    raise RuntimeError("status line too long")
+def read_exact(sock, count):
+    total = 0
+    while total < count:
+        part = sock.recv(min(65536, count - total))
+        if not part:
+            raise RuntimeError("download ended early: %d of %d bytes" % (total, count))
+        total += len(part)
+    return total
+def connect():
+    if mode == "direct":
+        sock = socket.create_connection(("127.0.0.1", socks_port), timeout=10)
+        sock.settimeout(10)
+        sock.sendall(b"\x05\x01\x00")
+        if sock.recv(2) != b"\x05\x00":
+            sock.close()
+            raise RuntimeError("SOCKS5 negotiation failed")
+        sock.sendall(b"\x05\x01\x00\x01" + socket.inet_aton(direct_ip) + struct.pack("!H", direct_port))
+        reply = bytearray()
+        while len(reply) < 10:
+            part = sock.recv(10 - len(reply))
+            if not part:
+                sock.close()
+                raise RuntimeError("SOCKS5 CONNECT reply ended early")
+            reply.extend(part)
+        if reply[1] != 0:
+            sock.close()
+            raise RuntimeError("SOCKS5 CONNECT failed with REP=%d" % reply[1])
+    elif mode == "reverse":
+        sock = socket.create_connection((gateway_ip, reverse_port), timeout=10)
+    else:
+        raise RuntimeError("mode must be direct or reverse")
+    sock.settimeout(120)
+    return sock
+def measure(operation):
+    sock = connect()
+    payload = bytes(64 * 1024)
+    start = time.perf_counter()
+    sock.sendall(("%s %d\n" % (operation.upper(), size)).encode("ascii"))
+    if operation == "upload":
+        remaining = size
+        while remaining:
+            n = min(len(payload), remaining)
+            sock.sendall(payload[:n])
+            remaining -= n
+        response = read_line(sock).decode("ascii").strip()
+        if response != "OK %d" % size:
+            sock.close()
+            raise RuntimeError("upload response was %r" % response)
+    else:
+        read_exact(sock, size)
+    elapsed = time.perf_counter() - start
+    sock.close()
+    if elapsed <= 0:
+        raise RuntimeError("invalid elapsed time")
+    return size * 8 / elapsed / 1000000
+upload = [measure("upload") for _ in range(rounds)]
+download = [measure("download") for _ in range(rounds)]
+print("BENCHMARK mode=%s payload_mib=%.1f rounds=%d upload_mbps_median=%.2f download_mbps_median=%.2f upload_samples_mbps=%s download_samples_mbps=%s" % (
+    mode.capitalize(), size / (1024 * 1024), rounds,
+    statistics.median(upload), statistics.median(download),
+    ",".join("%.2f" % value for value in upload),
+    ",".join("%.2f" % value for value in download)))
 PY
 
 cat > "$LAB_DIR/exercise.py" <<'PY'
@@ -370,6 +507,10 @@ ip netns exec "$GW_NS" python3 -u "$LAB_DIR/echo_server.py" 8.8.8.8 18444 direct
 DIRECT_SERVER_PID=$!
 ip netns exec "$DL_NS" python3 -u "$LAB_DIR/echo_server.py" 192.0.2.2 18081 reverse-ok: > "$LAB_DIR/reverse-server.log" 2>&1 &
 REVERSE_SERVER_PID=$!
+ip netns exec "$GW_NS" python3 -u "$LAB_DIR/speed_server.py" 8.8.8.8 18446 > "$LAB_DIR/speed-gateway.log" 2>&1 &
+SPEED_SERVER_GW_PID=$!
+ip netns exec "$DL_NS" python3 -u "$LAB_DIR/speed_server.py" 192.0.2.2 18083 > "$LAB_DIR/speed-dialer.log" 2>&1 &
+SPEED_SERVER_DL_PID=$!
 
 wait_listener() {
   local ns="$1" address="$2" pid="$3" i
@@ -393,6 +534,8 @@ wait_log_count() {
 }
 wait_listener "$GW_NS" '8.8.8.8:18444' "$DIRECT_SERVER_PID" || fail 'Direct test target did not start'
 wait_listener "$DL_NS" '192.0.2.2:18081' "$REVERSE_SERVER_PID" || fail 'Reverse target did not start'
+wait_listener "$GW_NS" '8.8.8.8:18446' "$SPEED_SERVER_GW_PID" || fail 'Direct throughput target did not start'
+wait_listener "$DL_NS" '192.0.2.2:18083' "$SPEED_SERVER_DL_PID" || fail 'Reverse throughput target did not start'
 
 start_gateway() {
   ip netns exec "$GW_NS" env \
@@ -402,8 +545,8 @@ start_gateway() {
     PQTUNNEL_PROXY_CERT="$LAB_DIR/pki/gateway.crt" \
     PQTUNNEL_PROXY_KEY="$LAB_DIR/pki/gateway.key" \
     PQTUNNEL_PROXY_PEER_NAME=dialer.test \
-    PQTUNNEL_PROXY_DIRECT_ALLOWED_PORTS=18444 \
-    PQTUNNEL_PROXY_REVERSE_LISTENERS=app=192.0.2.1:18080 \
+    PQTUNNEL_PROXY_DIRECT_ALLOWED_PORTS=18444,18446 \
+    PQTUNNEL_PROXY_REVERSE_LISTENERS=app=192.0.2.1:18080,speed=192.0.2.1:18082 \
     PQTUNNEL_PROXY_MAX_STREAMS=32 \
     "$BIN" >> "$LAB_DIR/gateway.log" 2>&1 &
   GW_PID=$!
@@ -417,7 +560,7 @@ start_dialer() {
     PQTUNNEL_PROXY_CERT="$LAB_DIR/pki/dialer.crt" \
     PQTUNNEL_PROXY_KEY="$LAB_DIR/pki/dialer.key" \
     PQTUNNEL_PROXY_DIRECT_LISTEN=127.0.0.1:1080 \
-    PQTUNNEL_PROXY_REVERSE_TARGETS=app=192.0.2.2:18081 \
+    PQTUNNEL_PROXY_REVERSE_TARGETS=app=192.0.2.2:18081,speed=192.0.2.2:18083 \
     PQTUNNEL_PROXY_MAX_STREAMS=32 \
     "$BIN" >> "$LAB_DIR/dialer.log" 2>&1 &
   DL_PID=$!
@@ -454,6 +597,13 @@ wait_listener "$GW_NS" '192.0.2.1:18443' "$GW_PID" || fail 'Gateway did not rest
 wait_log_count "$LAB_DIR/dialer.log" 'authenticated transport connected' 2 "$DL_PID" || fail 'Dialer did not reconnect after Gateway restart'
 ip netns exec "$DL_NS" python3 "$LAB_DIR/exercise.py" 192.0.2.1 18080 1080 8.8.8.8 18444
 
+# Measure real proxied TCP transfers after the reconnect test. The client starts
+# timing after the SOCKS/Reverse connection is established, so connection setup
+# is excluded. Traffic remains inside disposable namespaces over the TLS session.
+# Three 16 MiB rounds per direction are measurements, not hard CI performance gates.
+ip netns exec "$DL_NS" python3 "$LAB_DIR/benchmark.py" direct 192.0.2.1 18082 1080 8.8.8.8 18446 16777216 3 | tee "$LAB_DIR/speed-benchmark.log"
+ip netns exec "$GW_NS" python3 "$LAB_DIR/benchmark.py" reverse 192.0.2.1 18082 1080 8.8.8.8 18446 16777216 3 | tee -a "$LAB_DIR/speed-benchmark.log"
+
 snapshot_ns "$GW_NS" "$LAB_DIR/gateway.after"
 snapshot_ns "$DL_NS" "$LAB_DIR/dialer.after"
 diff -u "$GW_BASE" "$LAB_DIR/gateway.after" > "$LAB_DIR/gateway.diff" || {
@@ -468,5 +618,6 @@ echo 'PASS: Direct and Reverse TCP passed concurrently over strict TLS 1.3/mTLS 
 echo 'PASS: disallowed Direct destinations were rejected.'
 echo 'PASS: active Direct and Reverse streams closed after Gateway transport loss.'
 echo 'PASS: Dialer reconnected after Gateway restart.'
+echo 'PASS: Direct and Reverse throughput benchmark completed; see BENCHMARK lines above.'
 echo 'PASS: namespace routes, rules, selected sysctls and firewall rules stayed unchanged.'
 echo 'PASS: host routes, rules, selected sysctls and firewall rules were unchanged after cleanup.'
