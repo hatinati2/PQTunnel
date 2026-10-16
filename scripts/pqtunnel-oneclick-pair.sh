@@ -138,6 +138,47 @@ choose_iface() {
 }
 
 # Ask for and validate the remote target before touching files or services.
+check_local_manager_state() {
+  local count=0 p role
+  for p in /usr/local/sbin/pqtunnel-manager /etc/systemd/system/pqtunnel-manager.service /etc/default/pqtunnel-manager; do [[ -e "$p" ]] && count=$((count+1)); done
+  if (( count == 0 )); then return 0; fi
+  (( count == 3 )) || fail 'partial manager installation found on Iran; repair/review it first.'
+  role=$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' /etc/default/pqtunnel-manager | head -n1)
+  [[ "$role" == dialer ]] || fail "existing Iran manager role is '$role', not 'dialer'; refusing to change roles."
+}
+install_or_check_manager() {
+  local role=$1
+  local count=0 p existing_role config token tmp speed_listen speed_peer
+  config=/etc/default/pqtunnel-manager
+  for p in /usr/local/sbin/pqtunnel-manager /etc/systemd/system/pqtunnel-manager.service "$config"; do [[ -e "$p" ]] && count=$((count+1)); done
+  if (( count == 0 )); then
+    bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$role"
+  elif (( count != 3 )); then
+    fail "partial manager installation found for role $role."
+  else
+    existing_role=$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' "$config" | head -n1)
+    [[ "$existing_role" == "$role" ]] || fail "manager role is '$existing_role', expected '$role'."
+  fi
+  token=$(openssl rand -hex 32)
+  [[ "$token" =~ ^[0-9a-f]{64}$ ]] || fail 'could not generate manager token.'
+  if [[ "$role" == dialer ]]; then
+    speed_listen=10.66.0.2:9109; speed_peer=10.66.0.1:9109
+  else
+    speed_listen=10.66.0.1:9109; speed_peer=10.66.0.2:9109
+  fi
+  systemctl stop pqtunnel-manager >/dev/null 2>&1 || true
+  cp -a "$config" "$config.backup.$(date +%Y%m%d-%H%M%S)"
+  tmp=$(mktemp /etc/default/pqtunnel-manager.XXXXXX)
+  awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY|SPEEDTEST_LISTEN|SPEEDTEST_PEER|SPEEDTEST_TOKEN)=/' "$config" > "$tmp"
+  printf '\nPQTUNNEL_MANAGER_ROLE=%s\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_LISTEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_PEER=%s\nPQTUNNEL_MANAGER_SPEEDTEST_TOKEN=%s\n' "$role" "$token" "$speed_listen" "$speed_peer" "$SPEEDTEST_TOKEN" >> "$tmp"
+  chown root:root "$tmp"; chmod 0600 "$tmp"; mv -f "$tmp" "$config"
+  if [[ "$role" == dialer ]]; then TOKEN_DIALER=$token; else TOKEN_GATEWAY=$token; fi
+  unset token
+  systemctl daemon-reload
+  systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service
+  systemctl enable --now pqtunnel-manager
+}
+
 prompt 'Overseas Gateway SSH target (user@IPv4-or-DNS; SSH key login required): ' REMOTE_TARGET
 [[ "$REMOTE_TARGET" =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$ ]] || fail 'SSH target must be user@IPv4-or-DNS (IPv6 SSH targets are not supported by this wizard).'
 prompt 'SSH port [22]: ' SSH_PORT
@@ -175,6 +216,11 @@ printf 'The listener uses TCP/%s. The provider firewall/security group must perm
 printf 'Both managers will be restricted to loopback and new manager tokens will replace existing ones, if present.\n\n'
 prompt 'Continue to read-only checks and prepare both servers? Type PREPARE: ' CONFIRM
 [[ "$CONFIRM" == PREPARE ]] || fail 'cancelled by operator; no installation changes were made.'
+
+# Secure the exposed local manager immediately after explicit operator consent,
+# before remote SSH/preflight can fail and leave plaintext HTTP exposed.
+check_local_manager_state
+install_or_check_manager dialer
 
 SSH_OPTS=(-p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=2)
 if ! REMOTE_UID=$(ssh "${SSH_OPTS[@]}" "$REMOTE_TARGET" 'id -u' 2>/dev/null); then
@@ -228,55 +274,10 @@ check_local_endpoint_clean() {
   systemctl cat pqtunneld.service >/dev/null 2>&1 && fail 'a pqtunneld systemd unit already exists (possibly under /usr/lib/systemd); refusing to replace it.'
   systemctl cat pqtunnel-client.service >/dev/null 2>&1 && fail 'a pqtunnel-client systemd unit already exists (possibly under /usr/lib/systemd); refusing to replace it.'
 }
-check_local_manager_state() {
-  local count=0 p role
-  for p in /usr/local/sbin/pqtunnel-manager /etc/systemd/system/pqtunnel-manager.service /etc/default/pqtunnel-manager; do [[ -e "$p" ]] && count=$((count+1)); done
-  if (( count == 0 )); then return 0; fi
-  (( count == 3 )) || fail 'partial manager installation found on Iran; repair/review it first.'
-  role=$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' /etc/default/pqtunnel-manager | head -n1)
-  [[ "$role" == dialer ]] || fail "existing Iran manager role is '$role', not 'dialer'; refusing to change roles."
-}
-install_or_check_manager() {
-  local role=$1
-  local count=0 p existing_role config token tmp speed_listen speed_peer
-  config=/etc/default/pqtunnel-manager
-  for p in /usr/local/sbin/pqtunnel-manager /etc/systemd/system/pqtunnel-manager.service "$config"; do [[ -e "$p" ]] && count=$((count+1)); done
-  if (( count == 0 )); then
-    bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$role"
-  elif (( count != 3 )); then
-    fail "partial manager installation found for role $role."
-  else
-    existing_role=$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' "$config" | head -n1)
-    [[ "$existing_role" == "$role" ]] || fail "manager role is '$existing_role', expected '$role'."
-  fi
-  token=$(openssl rand -hex 32)
-  [[ "$token" =~ ^[0-9a-f]{64}$ ]] || fail 'could not generate manager token.'
-  if [[ "$role" == dialer ]]; then
-    speed_listen=10.66.0.2:9109; speed_peer=10.66.0.1:9109
-  else
-    speed_listen=10.66.0.1:9109; speed_peer=10.66.0.2:9109
-  fi
-  systemctl stop pqtunnel-manager >/dev/null 2>&1 || true
-  cp -a "$config" "$config.backup.$(date +%Y%m%d-%H%M%S)"
-  tmp=$(mktemp /etc/default/pqtunnel-manager.XXXXXX)
-  awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY|SPEEDTEST_LISTEN|SPEEDTEST_PEER|SPEEDTEST_TOKEN)=/' "$config" > "$tmp"
-  printf '\nPQTUNNEL_MANAGER_ROLE=%s\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_LISTEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_PEER=%s\nPQTUNNEL_MANAGER_SPEEDTEST_TOKEN=%s\n' "$role" "$token" "$speed_listen" "$speed_peer" "$SPEEDTEST_TOKEN" >> "$tmp"
-  chown root:root "$tmp"; chmod 0600 "$tmp"; mv -f "$tmp" "$config"
-  if [[ "$role" == dialer ]]; then TOKEN_DIALER=$token; else TOKEN_GATEWAY=$token; fi
-  unset token
-  systemctl daemon-reload
-  systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service
-  systemctl enable --now pqtunnel-manager
-}
-
 check_local_endpoint_clean
-check_local_manager_state
 if ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:|\\])${LISTEN_PORT}$"; then
   fail "TCP port $LISTEN_PORT appears to be in use on Iran; choose another listener port."
 fi
-# Secure/rotate the current Iran panel before staging the remote server.
-install_or_check_manager dialer
-
 REMOTE_PRECHECK=$(cat <<'REMOTE_PRECHECK_SCRIPT'
 set -Eeuo pipefail
 port=$1
