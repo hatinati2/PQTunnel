@@ -1,6 +1,6 @@
 # PQTunnel
 
-**Version:** 0.3.0-rc3 · **Status:** experimental release candidate, not production-ready.
+**Version:** 0.3.0-rc4 · **Status:** experimental release candidate, not production-ready.
 
 PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
 
@@ -22,6 +22,7 @@ The active project source tree and CI source of truth are at the **repository ro
 - Linux client network helper for endpoint routing, IPv4 full-tunnel routing, systemd-resolved DNS routing, and blocking IPv6 default traffic while configured.
 - Privacy-preserving, read-only inventory of existing nftables/iptables firewall state. Unknown iptables options are treated conservatively as additional selectors; output excludes raw rules and selector values. See [firewall coexistence notes](docs/EXISTING-FIREWALL-COEXISTENCE.md).
 - Optional standalone Linux server-to-server web manager (`pqtunnel-manager`) with fixed-role Start/Stop/Restart controls, validated non-secret tunnel configuration editing, redacted service logs, peer disconnect and in-tunnel peer speed tests. It is disabled by default and binds to loopback by default; public-IP access requires an explicit opt-in; temporary plaintext HTTP is available only with `PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=true` and is unsafe because credentials can be intercepted. Prefer trusted TLS or SSH forwarding; see [the manager guide](docs/WEB-ADMIN-PANEL.md). The older in-process panel remains a separate, more limited feature.
+- Experimental user-space Direct/Reverse TCP proxy (`pqtunnel-proxy`) with bounded flow control. This is separate from the layer-3 TUN tunnel and is not production-ready.
 - GitHub Actions tests/cross-builds, a loopback TLS integration test, and Linux network-namespace tests using real TUN interfaces, including inbound TCP/UDP port-forward round trips and selective-vs-direct egress checks over IPv4 and IPv6.
 - Android `VpnService` scaffold and Linux/Windows TUN adapters.
 
@@ -87,7 +88,7 @@ This is not a one-command tunnel configuration: Gateway/Dialer setup still requi
 ```sh
 go test ./...
 go vet ./...
-go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki ./cmd/pqtunnel-manager
+go build ./cmd/pqtunneld ./cmd/pqtunnel-client ./cmd/pqtunnel-pki ./cmd/pqtunnel-manager ./cmd/pqtunnel-proxy
 ```
 
 CI runs unit tests, vet and Linux builds on both Ubuntu 24.04 and 26.04, cross-compiles Linux amd64/arm64 and Windows amd64, and exercises real Linux TUN devices plus IPv4/IPv6 routes between disposable network namespaces. These namespace tests cover the tunnel packet path, inbound TCP/UDP port-forward round trips, and multi-port selective egress: TCP/443 and TCP/8443 plus UDP/53 and UDP/5354 use the tunnel, while TCP/8080, TCP/9443, UDP/5353, UDP/5355 and protocol-mismatched TCP/53 or UDP/443 remain direct, over IPv4 and IPv6. They do not validate public VPS routing, provider firewalls or production NAT/firewall integration, arbitrary egress policies beyond these test cases, DNS leaks, the four cross-version pairings, Windows route management, or Android physical devices.
@@ -173,7 +174,7 @@ For Android, the initial AAR command is available through `make android-aar`, bu
 
 ## Release assets
 
-Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build Linux amd64/arm64 and Windows amd64 command-line artifacts. This workflow does not imply that the complete VPN client is production-ready.
+Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build Linux amd64/arm64 and Windows amd64 command-line bundles, including the experimental `pqtunnel-proxy` binary (plus `pqtunnel-manager` on Linux). This workflow does not imply that the complete VPN client or TCP proxy is production-ready.
 
 ## Documentation
 
