@@ -42,8 +42,33 @@ done
 [[ -n "$SERVER_NAME" ]] || fail '--server-name is required.'
 [[ -n "$CLIENT_IP" ]] || fail '--client-ip is required.'
 [[ -n "$OUT_INPUT" ]] || fail '--out is required.'
-[[ "$SERVER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] || fail '--server-name must be a DNS name or IP literal.'
-[[ "$SERVER_NAME" != *..* ]] || fail '--server-name contains an invalid DNS label.'
+command -v python3 >/dev/null 2>&1 || fail 'Python 3 is required to validate the server name.'
+if ! python3 - "$SERVER_NAME" <<'PY'
+import ipaddress
+import re
+import sys
+
+value = sys.argv[1]
+try:
+    ipaddress.ip_address(value)
+    raise SystemExit(0)
+except ValueError:
+    pass
+
+if all(char in "0123456789." for char in value):
+    raise SystemExit(1)
+
+name = value[:-1] if value.endswith(".") else value
+labels = name.split(".")
+if len(name) > 253 or not name or not all(
+    re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+    for label in labels
+):
+    raise SystemExit(1)
+PY
+then
+  fail '--server-name must be a valid DNS name or IP literal.'
+fi
 [[ "$CLIENT_IP" =~ ^[0-9.]+$ ]] || fail '--client-ip must be an IPv4 address.'
 
 command -v go >/dev/null 2>&1 || fail 'Go is required to build cmd/pqtunnel-pki.'
