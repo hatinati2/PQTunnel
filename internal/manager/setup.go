@@ -334,7 +334,8 @@ func (m *Controller) ApproveSiteToSiteSetup(ctx context.Context) error {
 		return errors.New("setup has not completed its preflight review; approval is unavailable")
 	}
 	active, err := m.runner.Run(ctx, "systemctl", "show", "--property=ActiveState", "--value", setupUnit)
-	if err != nil || strings.TrimSpace(active) != "active" {
+	activeState := strings.TrimSpace(active)
+	if err != nil || (activeState != "active" && activeState != "activating") {
 		return errors.New("setup worker is not waiting for approval")
 	}
 	return atomicWrite(setupApprovalPath, []byte("INSTALL\n"), 0600)
