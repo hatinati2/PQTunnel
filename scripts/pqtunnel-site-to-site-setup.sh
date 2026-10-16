@@ -30,6 +30,8 @@ ask(){
      approval="$(cat "$PQTUNNEL_SETUP_APPROVAL_FILE")"
      rm -f "$PQTUNNEL_SETUP_APPROVAL_FILE"
      [[ "$approval" == INSTALL ]] || fail 'The web approval value was invalid.'
+     printf 'running\n' > "$PQTUNNEL_SETUP_STATE_FILE"
+     chmod 0600 "$PQTUNNEL_SETUP_STATE_FILE"
      printf -v "$2" '%s' INSTALL
      return 0
     fi
