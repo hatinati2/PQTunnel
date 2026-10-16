@@ -20,7 +20,7 @@ PQTunnel یک تونل آزمایشی لایهٔ ۳ با encapsulation بسته�
 - اسکریپت مستقل و قابل بازگردانی برای فعال‌سازی IPv4 forwarding و NAT در `scripts/server-network.sh`؛ فقط جدول اختصاصی nftables خودش را مدیریت می‌کند و UFW را تغییر نمی‌دهد.
 - اسکریپت شبکهٔ کلاینت لینوکس در `scripts/linux-client-network.sh`: route اختصاصی IP سرور، مسیر پیش‌فرض IPv4 از TUN، DNS با systemd-resolved و blackhole برای مسیر پیش‌فرض IPv6.
 - ابزار فقط‌خواندنی و محافظ حریم خصوصی برای خلاصه‌سازی وضعیت موجود nftables/iptables؛ گزینه‌های ناشناخته را محتاطانه به‌عنوان selector اضافی دسته‌بندی می‌کند و متن خام قواعد یا مقادیر selector را چاپ نمی‌کند. [یادداشت سازگاری فایروال](docs/EXISTING-FIREWALL-COEXISTENCE.md) را ببین.
-- مدیر وب مستقل و اختیاری لینوکس برای تونل server-to-server (`pqtunnel-manager`) با Start/Stop/Restart محدود به نقش ثابت، ویرایش اعتبارسنجی‌شدهٔ تنظیمات غیرمحرمانه، گزارش‌های سرویس با حذف اطلاعات حساس، قطع اتصال همتا و تست سرعت داخل مسیر تونل. این سرویس پیش‌فرض خاموش است، فقط روی loopback گوش می‌دهد و دسترسی راه دور باید از طریق SSH باشد؛ راهنمای [مدیریت وب](docs/WEB-ADMIN-PANEL.md) را ببین. پنل قدیمی داخل daemon قابلیت جداگانه و محدودتری است.
+- مدیر وب مستقل و اختیاری لینوکس برای تونل server-to-server (`pqtunnel-manager`) با Start/Stop/Restart محدود به نقش ثابت، ویرایش اعتبارسنجی‌شدهٔ تنظیمات غیرمحرمانه، گزارش‌های سرویس با حذف اطلاعات حساس، قطع اتصال همتا و تست سرعت داخل مسیر تونل. این سرویس پیش‌فرض خاموش است و به‌صورت پیش‌فرض فقط روی loopback گوش می‌دهد؛ دسترسی مستقیم از IP عمومی نیازمند opt-in صریح است؛ HTTP موقت با `PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=true` ممکن است اما ناامن است و اطلاعات ورود قابل شنود هستند. TLS معتبر یا SSH توصیه می‌شود؛ راهنمای [مدیریت وب](docs/WEB-ADMIN-PANEL.md) را ببین. پنل قدیمی داخل daemon قابلیت جداگانه و محدودتری است.
 - محدودسازی تعداد نشست‌ها و handshakeهای هم‌زمان در سرور، صف بسته‌های محدود و backoff برای اتصال مجدد.
 - گردش‌کار CI برای تست و cross-build لینوکس و ویندوز و ساخت فایل‌های Release از روی تگ نسخه.
 - اصلاح مسیر ماژول Go به `github.com/hatinati2/PQTunnel`.
@@ -85,6 +85,23 @@ go run ./cmd/pqtunnel-pki issue-server --out ./pki --server-name iran.example.co
 امضای گواهی‌ها فعلاً Ed25519 کلاسیک است؛ پس `X25519MLKEM768` به معنی پساکوانتومی‌بودن کامل احراز هویت نیست. در حالت server-to-server تک‌peer، هر دو مقدار `PQTUNNEL_PEER_PREFIXES` (CIDRهای مجاز مبدأ peer و مسیر برگشت) و `PQTUNNEL_LOCAL_PREFIXES` (CIDRهای مقصد مجاز سمت Listener) را در `/etc/default/pqtunneld` تنظیم کن، `PQTUNNEL_PEER_NAME` را مشخص کن و `PQTUNNEL_MAX_CLIENTS=1` قرار بده؛ نام peer باید دقیقاً با Common Name گواهی صادرشده برابر باشد. هنگام جابه‌جایی نقش‌ها، مسیر گواهی و کلید Listener را می‌توان با `PQTUNNEL_TLS_CERT` و `PQTUNNEL_TLS_KEY` تعیین کرد.
 
 ## پیش‌بررسی VPS و راه‌انداز تک‌خطی
+
+برای نصب سادهٔ پنل مدیریتی مستقل (بدون نصب Go)، یک ورودی تک‌خطی اضافه شده است. منو به‌صورت پیش‌فرض فقط بین preflight فقط‌خواندنی و نصب پنل انتخاب می‌دهد:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
+```
+
+برای نصب مستقیم پنل روی سرور ایران که نقش Dialer دارد:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
+```
+
+نصاب بستهٔ لینوکس متناسب با معماری را می‌گیرد و checksum همان بسته را بررسی می‌کند. پنل نصب می‌شود ولی شروع نمی‌شود؛ ابتدا یک توکن تصادفی حداقل ۳۲ بایتی در `/etc/default/pqtunnel-manager` قرار بده و فایل را بازبینی کن. پنل به‌صورت پیش‌فرض فقط روی loopback است. دسترسی مستقیم از IP عمومی نیازمند گواهی TLS معتبر است که IP را در IP SAN داشته باشد؛ جزئیات در راهنمای پنل آمده است.
+
+**این فرمان به‌تنهایی تونل را پیکربندی یا اجرا نمی‌کند.** نصب تونل هنوز به گواهی‌ها و فایل‌های تنظیمات بازبینی‌شدهٔ هر نقش نیاز دارد. راهنمای [نصب اولیهٔ Gateway و Dialer](docs/INSTALLATION-FLOW.md) مسیر آماده‌سازی PKI و تفکیک نصب پنل از endpointها را توضیح می‌دهد؛ اسکریپت `scripts/prepare-site-to-site-pki.sh` فقط بستهٔ گواهی می‌سازد و شبکه را تغییر نمی‌دهد. چون سرور ایران تو از قبل وضعیت شبکه و فایروال دارد، نصاب نباید guardهای شبکه را دور بزند یا قواعد موجود را پاک کند.
+
 
 قبل از آماده‌سازی هر دو VPS، اسکریپت **فقط‌خواندنی** را از checkout مخزن اجرا کن:
 
@@ -155,7 +172,8 @@ REF=REPLACE_WITH_REVIEWED_40_CHAR_SHA; curl -fsSL "https://raw.githubusercontent
 - [English README](README.md)
 - [راهنمای آمادگی استقرار و بازیابی دو VPS](docs/TWO-VPS-DEPLOYMENT.fa.md)
 - [یادداشت‌های امنیتی](SECURITY.md)
-- [راهنمای پنل مدیریت وب](docs/WEB-ADMIN-PANEL.md) (اختیاری و فقط روی loopback)
+- [راهنمای پنل مدیریت وب](docs/WEB-ADMIN-PANEL.md) (اختیاری؛ پیش‌فرض loopback و حالت IP عمومی فقط با TLS)
+- [راهنمای نصب اولیهٔ Gateway و Dialer](docs/INSTALLATION-FLOW.md) (آماده‌سازی PKI و نصب مجزای endpointها)
 - [جزئیات پروتکل](docs/PROTOCOL.md)
 - [چک‌لیست پیش از انتشار](docs/RELEASE-CHECKLIST.md)
 - [راهنمای آزمایشی تونل سرور‌به‌سرور](docs/SITE-TO-SITE.fa.md)

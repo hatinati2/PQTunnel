@@ -2,11 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
+	"path/filepath"
 	"os"
+	"strconv"
+	"strings"
 	"os/signal"
 	"syscall"
 	"time"
@@ -23,7 +29,18 @@ func main() {
 		fatalIf(fmt.Errorf("PQTUNNEL_MANAGER_ROLE must be gateway or dialer"))
 	}
 	listen := envString("PQTUNNEL_MANAGER_LISTEN", "127.0.0.1:9091")
-	fatalIf(adminui.ValidateLoopbackAddress(listen))
+	publicHost := os.Getenv("PQTUNNEL_MANAGER_PUBLIC_HOST")
+	certFile := os.Getenv("PQTUNNEL_MANAGER_TLS_CERT")
+	keyFile := os.Getenv("PQTUNNEL_MANAGER_TLS_KEY")
+	isLoopback := adminui.ValidateLoopbackAddress(listen) == nil
+	allowInsecurePublicHTTP := strings.EqualFold(os.Getenv("PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP"), "true")
+	if !isLoopback {
+		if allowInsecurePublicHTTP {
+			fatalIf(validatePublicHTTPListener(listen, publicHost))
+		} else {
+			fatalIf(validatePublicTLSListener(listen, publicHost, certFile, keyFile))
+		}
+	}
 	token := os.Getenv("PQTUNNEL_MANAGER_TOKEN")
 	if len([]byte(token)) < 32 {
 		fatalIf(fmt.Errorf("PQTUNNEL_MANAGER_TOKEN must contain at least 32 bytes"))
@@ -41,7 +58,7 @@ func main() {
 		SpeedTestToken: os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_TOKEN"),
 	})
 	fatalIf(err)
-	handler, err := adminui.New(token, controller)
+	handler, err := adminui.NewWithPublicAccess(token, controller, publicHost, allowInsecurePublicHTTP)
 	fatalIf(err)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -79,10 +96,92 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
-	fmt.Printf("PQTunnel manager (%s) available at http://%s/ (loopback-only; token protected)\n", role, listen)
-	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fatalIf(err)
+	if isLoopback {
+		fmt.Printf("PQTunnel manager (%s) available at http://%s/ (loopback-only; token protected)\n", role, listen)
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fatalIf(err)
+		}
+	} else if allowInsecurePublicHTTP {
+		fmt.Fprintf(os.Stderr, "WARNING: PQTunnel manager (%s) is exposed over INSECURE plaintext HTTP at http://%s/; credentials and session cookies can be intercepted. Disable this mode as soon as HTTPS is configured.\n", role, publicHost)
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fatalIf(err)
+		}
+	} else {
+		server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		fmt.Printf("PQTunnel manager (%s) available at https://%s/ (TLS enabled; host allowlisted)\n", role, publicHost)
+		if err := server.ServeTLS(listener, certFile, keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fatalIf(err)
+		}
 	}
+}
+
+func validatePublicHTTPListener(address, publicHost string) error {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("public manager listen address must be IP:port (for example 0.0.0.0:9091)")
+	}
+	listenIP, err := netip.ParseAddr(host)
+	if err != nil {
+		return fmt.Errorf("public manager listener must use a literal IP or wildcard address")
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return fmt.Errorf("public manager listen port must be between 1 and 65535")
+	}
+	ip, err := netip.ParseAddr(publicHost)
+	if err != nil || !ip.IsValid() || ip.IsLoopback() || ip.IsUnspecified() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		return fmt.Errorf("PQTUNNEL_MANAGER_PUBLIC_HOST must be a public, non-loopback literal IP address")
+	}
+	if !listenIP.IsUnspecified() && listenIP != ip {
+		return fmt.Errorf("bind to 0.0.0.0:9091 or the same IP configured in PQTUNNEL_MANAGER_PUBLIC_HOST")
+	}
+	return nil
+}
+
+func validatePublicTLSListener(address, publicHost, certFile, keyFile string) error {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("public manager listen address must be IP:port (for example 0.0.0.0:9091)")
+	}
+	if _, err := netip.ParseAddr(host); err != nil {
+		return fmt.Errorf("public manager listener must use a literal IP or wildcard address")
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return fmt.Errorf("public manager listen port must be between 1 and 65535")
+	}
+	if publicHost == "" {
+		return fmt.Errorf("PQTUNNEL_MANAGER_PUBLIC_HOST must be the public IP address covered by the TLS certificate")
+	}
+	ip, err := netip.ParseAddr(publicHost)
+	if err != nil || !ip.IsValid() || ip.IsLoopback() || ip.IsUnspecified() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		return fmt.Errorf("PQTUNNEL_MANAGER_PUBLIC_HOST must be a public, non-loopback literal IP address")
+	}
+	listenIP, _ := netip.ParseAddr(host)
+	if !listenIP.IsUnspecified() && listenIP != ip {
+		return fmt.Errorf("bind to 0.0.0.0:9091 or the same IP configured in PQTUNNEL_MANAGER_PUBLIC_HOST")
+	}
+	if certFile == "" || keyFile == "" {
+		return fmt.Errorf("public manager access requires PQTUNNEL_MANAGER_TLS_CERT and PQTUNNEL_MANAGER_TLS_KEY; refusing plaintext HTTP")
+	}
+	if !filepath.IsAbs(certFile) || !filepath.IsAbs(keyFile) {
+		return fmt.Errorf("TLS certificate and key paths must be absolute")
+	}
+	pair, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("cannot load TLS certificate/key pair: %w", err)
+	}
+	if len(pair.Certificate) == 0 {
+		return fmt.Errorf("TLS certificate chain is empty")
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return fmt.Errorf("cannot parse TLS leaf certificate: %w", err)
+	}
+	if err := leaf.VerifyHostname(publicHost); err != nil {
+		return fmt.Errorf("TLS certificate must contain the configured public IP in its IP SAN: %w", err)
+	}
+	return nil
 }
 
 func envString(name, fallback string) string {
