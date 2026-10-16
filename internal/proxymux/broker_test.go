@@ -3,6 +3,7 @@ package proxymux
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 )
