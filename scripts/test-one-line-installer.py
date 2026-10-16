@@ -146,6 +146,53 @@ class OneLineInstallerTests(unittest.TestCase):
         self.assertIn("chmod 0600", self.remote_setup)
 
 
+    def test_manager_upgrade_installs_wizard_and_preserves_loopback_tokens(self) -> None:
+        self.assertIn("--manager-upgrade", self.script)
+        self.assertIn("--upgrade", self.manager_installer)
+        self.assertIn("Protected backup:", self.manager_installer)
+        self.assertIn("PQTUNNEL_SETUP_VERSION=", self.manager_installer)
+        self.assertIn("PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091", self.manager_installer)
+        self.assertIn("PQTUNNEL_SETUP_PRESERVE_DIALER_MANAGER_TOKEN=1", (ROOT / "scripts/pqtunnel-setup-worker.sh").read_text(encoding="utf-8"))
+
+    def test_graphical_setup_has_separate_preflight_and_approval_gates(self) -> None:
+        setup_ui = (ROOT / "internal/adminui/setup_ui.go").read_text(encoding="utf-8")
+        setup_manager = (ROOT / "internal/manager/setup.go").read_text(encoding="utf-8")
+        self.assertIn('Confirm: "CHECK"', setup_ui)
+        self.assertIn("awaiting-confirmation", self.setup)
+        self.assertIn("ApproveSiteToSiteSetup", setup_manager)
+        self.assertIn('[]byte("INSTALL\\n")', setup_manager)
+        self.assertIn("requireLoopbackSetupAccess", setup_ui)
+        self.assertIn("if h.allowedPublicHost !=", setup_ui)
+
+    def test_graphical_wizard_worker_is_fixed_and_token_logs_are_redacted(self) -> None:
+        worker = (ROOT / "scripts/pqtunnel-setup-worker.sh").read_text(encoding="utf-8")
+        unit = (ROOT / "deploy/systemd/pqtunnel-setup.service").read_text(encoding="utf-8")
+        self.assertIn('ExecStart=/usr/local/lib/pqtunnel/pqtunnel-setup-worker.sh', unit)
+        self.assertIn('bash "$SCRIPT"', worker)
+        self.assertIn("PQTUNNEL_SETUP_INPUT_B64", worker)
+        self.assertIn("sanitize_log", worker)
+        self.assertIn('rm -f "$RAW_LOG"', worker)
+        self.assertNotIn('bash -c "        install_branch = self.remote_setup.index("  install)")
+        manager_config = self.remote_setup.index("    configure_manager", install_branch)
+        endpoint_install = self.remote_setup.index('bash "$BUNDLE/scripts/install-server.sh"', install_branch)
+        self.assertLess(manager_config, endpoint_install)
+        self.assertIn("systemctl restart pqtunnel-manager", self.remote_setup)
+        self.assertIn('"$REMOTE:$STAGE/gateway-manager-token"', self.setup)
+        self.assertIn('"$REMOTE:$STAGE/speedtest-token"', self.setup)
+
+
+    def test_full_setup_hardens_existing_public_manager_before_network_checks(self) -> None:
+        secure = self.setup.rindex("secure_existing_local_manager")
+        network_dependencies = self.setup.index("for c in curl sha256sum tar ssh scp python3 getent")
+        self.assertLess(secure, network_dependencies)
+        self.assertIn('PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091', self.setup)
+        self.assertIn("PQTUNNEL_MANAGER_TOKEN=%s", self.setup)
+        self.assertIn("warning: setup stopped part-way", self.setup.lower())
+
+
+if __name__ == "__main__":
+    unittest.main()
+, worker)
     def test_existing_gateway_manager_is_restricted_before_endpoint_install(self) -> None:
         install_branch = self.remote_setup.index("  install)")
         manager_config = self.remote_setup.index("    configure_manager", install_branch)
@@ -158,7 +205,7 @@ class OneLineInstallerTests(unittest.TestCase):
 
     def test_full_setup_hardens_existing_public_manager_before_network_checks(self) -> None:
         secure = self.setup.rindex("secure_existing_local_manager")
-        network_dependencies = self.setup.index("for c in curl sha256sum tar ssh scp ip nft sysctl")
+        network_dependencies = self.setup.index("for c in curl sha256sum tar ssh scp python3 getent")
         self.assertLess(secure, network_dependencies)
         self.assertIn('PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091', self.setup)
         self.assertIn("PQTUNNEL_MANAGER_TOKEN=%s", self.setup)
