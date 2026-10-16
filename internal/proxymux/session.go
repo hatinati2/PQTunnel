@@ -419,8 +419,13 @@ func (s *Session) handleFrame(frame Frame) error {
 		}
 		openErr := errors.New("proxymux: remote rejected stream open")
 		st.mu.Lock()
+		if !st.openPending {
+			st.mu.Unlock()
+			return fmt.Errorf("proxymux: OPEN_ERROR for non-pending stream %d", frame.StreamID)
+		}
 		st.reset = true
 		st.writeClosed = true
+		st.openPending = false
 		st.mu.Unlock()
 		st.resolveOpen(openErr)
 		st.endRead(openErr)
@@ -448,6 +453,13 @@ func (s *Session) handleFrame(frame Frame) error {
 		}
 		if frame.Payload[0] == closeFlagReset {
 			s.handleRemoteReset(st)
+			return nil
+		}
+		st.mu.Lock()
+		pendingLocalOpen := st.localOpen && !st.ready
+		st.mu.Unlock()
+		if pendingLocalOpen {
+			st.abort(errors.New("proxymux: CLOSE received before OPEN_OK"))
 			return nil
 		}
 		st.endRead(io.EOF)
@@ -565,6 +577,7 @@ func (s *Session) handleRemoteReset(st *Stream) {
 	if target != nil {
 		_ = target.Close()
 	}
+	st.resolveOpen(net.ErrClosed)
 	st.endRead(net.ErrClosed)
 	s.removeStream(st)
 	if !alreadyReset {
