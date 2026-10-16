@@ -64,7 +64,7 @@ class OneLineInstallerTests(unittest.TestCase):
         dialer_start = pair.index('systemctl enable --now pqtunnel-client')
         self.assertLess(confirm, gateway_apply)
         self.assertLess(confirm, dialer_start)
-        self.assertIn('PQTUNNEL_MANAGER_SPEEDTEST_LISTEN=10.66.0.2:9109', pair)
+        self.assertIn('speed_listen=10.66.0.2:9109', pair)
         self.assertIn('PQTUNNEL_MANAGER_SPEEDTEST_LISTEN=10.66.0.1:9109', pair)
         self.assertIn('PQTUNNEL_MANAGER_SPEEDTEST_TOKEN', pair)
         self.assertIn('127.0.0.1:9091', pair)
@@ -80,7 +80,7 @@ class OneLineInstallerTests(unittest.TestCase):
 
     def test_pair_docs_call_out_selected_port_scope_and_provider_firewall(self) -> None:
         self.assertIn('--pair', self.readme_en)
-        self.assertIn('not a full-tunnel', self.readme_en)
+        self.assertIn('full-tunnel/default-route VPN', self.readme_en)
         self.assertIn('--pair', self.readme_fa)
         self.assertIn('فایروال ابری را تغییر نمی‌دهد', self.readme_fa)
 
