@@ -80,7 +80,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 </style></head>
 <body><main class="wrap">
 <header><div><h1>{{tr .Lang "پنل مدیریت PQTunnel" "PQTunnel Management Panel"}}</h1><p class="sub">{{tr .Lang "وضعیت سرویس و همتایان متصل · کنترل محدود و امن" "Service and connected peers · limited, secure controls"}}</p></div>
-<div class="header-actions"><nav class="language-picker"><a class="refresh" href="/language?lang=fa&amp;next=/">فارسی</a><a class="refresh" href="/language?lang=en&amp;next=/">English</a></nav>{{if .Manager}}{{if eq .Manager.Role "dialer"}}<a class="refresh" href="/setup">{{tr .Lang "راه‌اندازی گرافیکی" "Setup wizard"}}</a>{{end}}<a class="refresh" href="/logs">{{tr .Lang "لاگ سرویس" "Service logs"}}</a>{{end}}<a class="refresh" href="/">{{tr .Lang "به‌روزرسانی وضعیت" "Refresh status"}}</a>
+<div class="header-actions"><nav class="language-picker"><a class="refresh" href="/language?lang=fa&amp;next=/">فارسی</a><a class="refresh" href="/language?lang=en&amp;next=/">English</a></nav>{{if .Manager}}{{if eq .Manager.Role "dialer"}}<a class="refresh" href="/setup">{{tr .Lang "راه‌اندازی گرافیکی" "Setup wizard"}}</a>{{end}}<a class="refresh" href="/logs">{{tr .Lang "لاگ سرویس" "Service logs"}}</a>{{end}}<a class="refresh" href="/node-setup">{{tr .Lang "راه‌اندازی مستقل" "Node setup"}}</a><a class="refresh" href="/">{{tr .Lang "به‌روزرسانی وضعیت" "Refresh status"}}</a>
 <form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">{{tr .Lang "خروج از پنل" "Log out of the panel"}}</button></form></div></header>
 {{if .Notice}}<div class="notice" role="status">{{.Notice}}{{if .Detail}} — {{.Detail}}{{end}}</div>{{end}}
 <section class="grid" aria-label="{{tr .Lang "خلاصه وضعیت" "Status summary"}}">
@@ -103,8 +103,10 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 <div class="detail"><span class="kicker">{{tr .Lang "وضعیت systemd" "systemd status"}}</span><b>{{.Manager.ActiveState}} / {{.Manager.SubState}} · PID {{if .Manager.MainPID}}{{.Manager.MainPID}}{{else}}—{{end}}</b></div>
 </div>
 <p class="sub">{{tr .Lang "استارت/استاپ/ری‌استارت اتصال فعال را قطع می‌کند. این عملیات فقط واحد ثابتِ نقش انتخاب‌شده را کنترل می‌کند؛ برای اعمال تغییر روی سرور عملیاتی، ابتدا مسیر بازیابی خارج از تونل را آماده کن." "Start/stop/restart interrupts active connections. This controls only the fixed unit for the selected role. Ensure you have an out-of-band recovery path before using it on a live server."}}</p>
-{{if eq .Manager.ActiveState "unknown"}}
-<div class="empty">{{tr .Lang "واحد سرویس تونل نصب نیست یا وضعیت آن از systemd قابل خواندن نیست. پیش از استفاده از کنترل‌ها، endpoint مربوط به Gateway یا Dialer را نصب و پیکربندی کن." "The selected tunnel unit is not installed or its state cannot be read from systemd. Install and configure the Gateway or Dialer endpoint before using service controls."}}</div>
+{{if not .Manager.ConfigReady}}
+<div class="empty">{{tr .Lang "واحد سرویس تونل نصب نیست یا وضعیت آن نامشخص است. ابتدا endpoint مربوط به Gateway یا Dialer را در بخش راه‌اندازی مستقل نصب و پیکربندی کن؛ تا آن زمان کنترل‌ها غیرفعال می‌مانند." "The selected tunnel service unit is missing or cannot be read. Install and configure the Gateway or Dialer endpoint first. Install the Gateway or Dialer endpoint and its protected configuration before using controls; finish Node setup first."}}</div>
+{{else if eq .Manager.ActiveState "unknown"}}
+<div class="empty">{{tr .Lang "واحد سرویس تونل نصب نیست یا وضعیت آن از systemd قابل خواندن نیست. ابتدا endpoint را نصب کن." "The tunnel service unit is not installed or its state cannot be read from systemd. Install the endpoint first."}}</div>
 {{else}}
 <div class="header-actions">
 <details class="disconnect"><summary>{{tr .Lang "شروع" "Start"}}</summary><form method="post" action="/service/action" class="peerform"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="start"><input type="hidden" name="confirm" value="yes"><button type="submit">{{tr .Lang "تأیید راه‌اندازی" "Confirm start"}}</button></form></details>
@@ -343,6 +345,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.consumeSetupTokens(w, r)
 	case "/setup/approve":
 		h.approveSetup(w, r)
+	case "/node-setup":
+		h.serveNodeSetup(w, r)
+	case "/node-setup/start":
+		h.startNodeSetup(w, r)
+	case "/node-setup/import":
+		h.importNodeSetup(w, r)
+	case "/node-setup/bundle":
+		h.downloadNodeSetupBundle(w, r)
 	case "/logs":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, r, "GET")

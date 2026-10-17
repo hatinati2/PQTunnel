@@ -57,6 +57,7 @@ type Options struct {
 	IPCSocket  string
 	SpeedTestPeer string
 	SpeedTestToken string
+	EndpointMode string
 	Runner     Runner
 }
 
@@ -100,6 +101,17 @@ func New(opts Options) (*Controller, error) {
 	if opts.Role == RoleDialer {
 		unit = "pqtunnel-client.service"
 		defaultConfig = "/etc/default/pqtunnel-client"
+	}
+
+	// Standalone node mode provisions the TUN transport without applying host
+	// firewall, forwarding, or policy-routing rules. Existing paired installs
+	// retain the historical site-to-site units unless this mode is explicit.
+	if opts.EndpointMode == "transport" {
+		if opts.Role == RoleGateway {
+			unit = "pqtunneld-transport.service"
+		} else {
+			unit = "pqtunnel-client-transport.service"
+		}
 	}
 	if opts.ConfigPath == "" {
 		opts.ConfigPath = defaultConfig

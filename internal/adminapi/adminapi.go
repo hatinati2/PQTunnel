@@ -125,3 +125,31 @@ type ManagerController interface {
   ConsumeSiteToSiteSetupTokens(ctx context.Context) (SiteToSiteSetupTokens, error)
   ApproveSiteToSiteSetup(ctx context.Context) error
  }
+
+
+// NodeSetupRequest selects one fixed local-endpoint operation. It contains only
+// public endpoint metadata; private keys are always generated and retained locally.
+type NodeSetupRequest struct {
+	Operation string
+	PublicName string
+	ListenPort int
+	TCPPorts string
+	UDPPorts string
+}
+
+// NodeSetupStatus is a bounded status view for the independent, per-host pairing flow.
+type NodeSetupStatus struct {
+	Available bool
+	Role string
+	State string
+	Output string
+	BundleAvailable bool
+}
+
+// NodeSetupController exposes only fixed, validated operations and public-CA bundle transfer.
+type NodeSetupController interface {
+	StartNodeSetup(ctx context.Context, request NodeSetupRequest) error
+	NodeSetupStatus(ctx context.Context) (NodeSetupStatus, error)
+	UploadNodeSetupBundle(ctx context.Context, data []byte) error
+	ReadNodeSetupBundle(ctx context.Context) ([]byte, error)
+}
