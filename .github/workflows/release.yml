@@ -90,18 +90,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          for target in 'linux amd64' 'linux arm64' 'windows amd64'; do
+          # Publish only platforms that are currently supported by the project.
+          # Windows cross-builds remain a CI check; they are not supported release artifacts.
+          for target in 'linux amd64' 'linux arm64'; do
             read -r goos goarch <<< "$target"
             pkg="PQTunnel-${GITHUB_REF_NAME}-${goos}-${goarch}"
             mkdir -p "dist/$pkg"
             for cmd in pqtunneld pqtunnel-client pqtunnel-pki pqtunnel-proxy; do
-              ext=''
-              if [[ "$goos" == windows ]]; then ext='.exe'; fi
-              GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags='-s -w' -o "dist/$pkg/${cmd}${ext}" "./cmd/$cmd"
+              GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags='-s -w' -o "dist/$pkg/${cmd}" "./cmd/$cmd"
             done
-            if [[ "$goos" == linux ]]; then
-              GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags='-s -w' -o "dist/$pkg/pqtunnel-manager" ./cmd/pqtunnel-manager
-            fi
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags='-s -w' -o "dist/$pkg/pqtunnel-manager" ./cmd/pqtunnel-manager
             cp README.md README.fa.md SECURITY.md LICENSE CHANGELOG.md "dist/$pkg/"
             cp -R scripts deploy docs "dist/$pkg/"
             tar -C dist -czf "dist/${pkg}.tar.gz" "$pkg"
