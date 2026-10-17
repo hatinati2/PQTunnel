@@ -41,7 +41,8 @@ class ReleaseProxyWorkflowTests(unittest.TestCase):
     def test_release_assets_are_limited_to_supported_linux_targets(self) -> None:
         self.assertIn("for goarch in amd64 arm64; do", self.bundle_builder)
         self.assertNotIn("GOOS=windows", self.bundle_builder)
-        self.assertNotIn("windows-amd64.tar.gz", self.bundle_builder)
+        self.assertIn('[[ ! -e "$DIST_DIR/PQTunnel-${VERSION}-windows-amd64.tar.gz" ]]',
+                      self.bundle_builder)
 
     def test_release_workflow_uses_the_verified_bundle_builder(self) -> None:
         build_step = 'bash scripts/build-release-bundles.sh "$GITHUB_REF_NAME" dist'
