@@ -355,6 +355,22 @@ make_gateway_nft() {
   } > "$out"
 }
 
+gateway_preflight() {
+  need_root
+  load_config 1; validate_config
+  [[ "$PQTUNNEL_ROLE" == gateway ]] || fail 'set PQTUNNEL_ROLE=gateway in the config for gateway-preflight'
+  command -v ip >/dev/null && command -v nft >/dev/null && command -v sysctl >/dev/null || fail 'iproute2, nftables and procps/sysctl are required'
+  [[ ! -e "$GATEWAY_STATE" ]] || fail "state exists at $GATEWAY_STATE; inspect it before retrying"
+  check_no_existing_firewall
+  check_rule_tables_free
+  ip link show dev "$PQTUNNEL_WAN_IF" >/dev/null 2>&1 || fail 'WAN interface was not found'
+  [[ "$(cat /proc/sys/net/ipv4/ip_forward)" == 0 && "$(cat /proc/sys/net/ipv6/conf/all/forwarding)" == 0 ]] || fail 'IP forwarding is already enabled; refusing a host that may already route traffic'
+  if ip link show dev "$PQTUNNEL_TUN" >/dev/null 2>&1; then
+    fail "TUN interface $PQTUNNEL_TUN already exists; refusing to claim an unmanaged interface"
+  fi
+  echo 'PASS: Gateway network preflight passed; no service, route, interface, forwarding, or firewall state was changed.'
+}
+
 apply_gateway() {
   need_root
   load_config 1; validate_config
@@ -438,6 +454,7 @@ case "$MODE" in
     nft list table inet "$NFT_GATEWAY" 2>/dev/null || true
     ;;
   dialer-up) apply_dialer ;;
+  gateway-preflight) gateway_preflight ;;
   gateway-up) apply_gateway ;;
   dialer-down) bring_down dialer "$DIALER_STATE" ;;
   gateway-down) bring_down gateway "$GATEWAY_STATE" ;;
