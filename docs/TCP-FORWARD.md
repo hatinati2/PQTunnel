@@ -15,7 +15,7 @@ For a service already listening on the Gateway TUN address, this optional helper
 
 ## Preview and install
 
-Run on the Dialer from a checked-out copy of the repository or the matching release bundle. Replace example addresses and ports with your own.
+Run on the Dialer from a checked-out copy of the repository or the matching release bundle. Replace example addresses and ports with your own. The example address `192.0.2.10` is reserved for documentation; substitute the IPv4 address actually assigned to the Dialer when installing the relay. The dry-run mode does not require the sample listen address to be assigned.
 
 Preview the generated systemd unit first. This is read-only and does not start the service:
 

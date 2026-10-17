@@ -8,7 +8,7 @@ SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pqtunnel-tcp-forward.sh"
 
 cat > "$ROOT/bin/ip" <<'EOF'
 #!/usr/bin/env bash
-printf '2: ens192 inet 192.0.2.10/32 scope global ens192\n'
+printf '2: ens192 inet 192.0.2.20/32 scope global ens192\n'
 EOF
 cat > "$ROOT/bin/ss" <<'EOF'
 #!/usr/bin/env bash
