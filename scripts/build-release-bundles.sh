@@ -81,7 +81,7 @@ validate_archive() {
   if grep -Fq "${pkg}/PQTunnel/" <<<"$archive_list"; then
     fail "$arch bundle contains the stale nested PQTunnel/ tree"
   fi
-  if grep -Eq '\\.exe$' <<<"$archive_list"; then
+  if grep -Fq '.exe' <<<"$archive_list"; then
     fail "$arch bundle unexpectedly contains Windows executables"
   fi
   echo "PASS: ${arch} release archive contains required Linux binaries and documentation."
