@@ -25,4 +25,25 @@ grep -Fq 'scripts/run-pqtunnel-client.sh' "$BOOTSTRAP"
 grep -Fq 'scripts/stop-pqtunnel-client-network.sh' "$BOOTSTRAP"
 grep -Fq ' /usr/local/lib/pqtunnel/stop-client-network.sh' "$BOOTSTRAP"
 
+
+
+# The module's Go directive is the minimum build toolchain. Every source-building
+# installer must reject older local toolchains before invoking go build.
+GO_DIRECTIVE="$(sed -n 's/^go //p' go.mod | head -n1)"
+if [[ ! "$GO_DIRECTIVE" =~ ^1\.([0-9]+)\.[0-9]+$ ]]; then
+  echo "Unexpected Go directive in go.mod: $GO_DIRECTIVE" >&2
+  exit 1
+fi
+MIN_GO_MINOR="${BASH_REMATCH[1]}"
+for installer in scripts/install-server.sh scripts/install-manager.sh scripts/pqtunnel-bootstrap.sh; do
+  grep -Fq "Go 1.${MIN_GO_MINOR}+ is required" "$installer" || {
+    echo "Toolchain error message is out of sync with go.mod: $installer" >&2
+    exit 1
+  }
+  grep -Fq "a[2]+0)>=${MIN_GO_MINOR}" "$installer" || {
+    echo "Toolchain version guard is out of sync with go.mod: $installer" >&2
+    exit 1
+  }
+done
+
 echo "PASS: client installer stages every helper referenced by its systemd unit."
