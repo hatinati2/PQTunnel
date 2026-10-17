@@ -104,7 +104,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 </div>
 <p class="sub">{{tr .Lang "استارت/استاپ/ری‌استارت اتصال فعال را قطع می‌کند. این عملیات فقط واحد ثابتِ نقش انتخاب‌شده را کنترل می‌کند؛ برای اعمال تغییر روی سرور عملیاتی، ابتدا مسیر بازیابی خارج از تونل را آماده کن." "Start/stop/restart interrupts active connections. This controls only the fixed unit for the selected role. Ensure you have an out-of-band recovery path before using it on a live server."}}</p>
 {{if not .Manager.ConfigReady}}
-<div class="empty">{{tr .Lang "ابتدا در بخش راه‌اندازی مستقل، پروفایل‌ها و پیکربندی endpoint را کامل کن؛ تا آن زمان کنترل سرویس تونل غیرفعال است." "Complete the endpoint profile exchange and configuration in Node setup first. Tunnel service controls stay disabled until configuration is ready."}}</div>
+<div class="empty">{{tr .Lang "واحد سرویس تونل نصب نیست یا وضعیت آن نامشخص است. ابتدا endpoint مربوط به Gateway یا Dialer را در بخش راه‌اندازی مستقل نصب و پیکربندی کن؛ تا آن زمان کنترل‌ها غیرفعال می‌مانند." "The selected tunnel service unit is missing or cannot be read. Install and configure the Gateway or Dialer endpoint first. Install the Gateway or Dialer endpoint and its protected configuration before using controls; finish Node setup first."}}</div>
 {{else if eq .Manager.ActiveState "unknown"}}
 <div class="empty">{{tr .Lang "واحد سرویس تونل نصب نیست یا وضعیت آن از systemd قابل خواندن نیست. ابتدا endpoint را نصب کن." "The tunnel service unit is not installed or its state cannot be read from systemd. Install the endpoint first."}}</div>
 {{else}}
