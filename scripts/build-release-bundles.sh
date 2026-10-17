@@ -68,7 +68,8 @@ release_archives=("$DIST_DIR"/"PQTunnel-${VERSION}-"*.tar.gz)
 [[ ! -e "$DIST_DIR/PQTunnel-${VERSION}-windows-amd64.tar.gz" ]] || fail "unsupported Windows release archive was created"
 
 validate_archive() {
-  local arch="$1" pkg="$2" archive="$DIST_DIR/${pkg}.tar.gz" archive_list relative
+  local arch="$1" pkg="$2" archive archive_list relative
+  archive="$DIST_DIR/${pkg}.tar.gz"
   [[ -s "$archive" ]] || fail "missing or empty archive: $archive"
   archive_list="$(tar -tzf "$archive")" || fail "cannot inspect archive: $archive"
   for relative in \
