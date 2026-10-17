@@ -2,6 +2,7 @@ package adminui
 
 import (
 	"context"
+	"html/template"
 	"io"
 	"net/http"
 	"net/url"
