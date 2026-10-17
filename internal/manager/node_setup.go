@@ -198,7 +198,7 @@ func (m *Controller) ReadNodeSetupBundle(ctx context.Context) ([]byte, error) {
 		return nil, errors.New("no public profile bundle is available; generate or import the matching endpoint profile first")
 	}
 	data, err := os.ReadFile(filepath.Clean(nodeSetupBundlePath))
-	if err != nil || len(data) == 0 || len(data) > maxNodeBundleBytes || data[0] != 0x1f || data[1] != 0x8b {
+	if err != nil || len(data) < 2 || len(data) > maxNodeBundleBytes || data[0] != 0x1f || data[1] != 0x8b {
 		return nil, errors.New("the saved endpoint profile bundle is invalid")
 	}
 	return data, nil
