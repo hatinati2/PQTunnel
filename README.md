@@ -6,6 +6,18 @@ PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets usin
 
 > **Security notice:** This repository has not undergone an independent security audit. Do not use it to protect sensitive activity or deploy it on a production server. The key exchange is post-quantum hybrid; certificate signatures are currently Ed25519 (classical), so the entire authentication system is not post-quantum. No cryptographic construction is unbreakable by definition.
 
+
+
+## Platform support status
+
+PQTunnel is being stabilized as a Linux-first MVP. The project is still experimental.
+
+- **Linux server-to-server (Ubuntu 24.04/26.04; amd64/arm64):** target scope of the MVP; not production-ready until the [Linux MVP release gates](docs/LINUX-MVP-RELEASE-GATE.md) have been completed and the evidence reviewed.
+- **Windows:** unsupported. A cross-build does not constitute support; Wintun provisioning and tested address, route, DNS, firewall/kill-switch, crash cleanup, and reboot lifecycle are not complete.
+- **Android:** unsupported. The current `VpnService` code is a scaffold; certificate onboarding, lifecycle/error handling, and physical-device validation remain incomplete.
+
+A green CI run or passing namespace test is not proof of end-to-end operation between separate VPS hosts. Do not deploy this release on production infrastructure.
+
 ## Repository layout notice
 
 The active project source tree and CI source of truth are at the **repository root**. The nested `PQTunnel/` directory is a stale legacy copy retained pending a separate cleanup decision; it is not the active development or release source, and the root CI workflow does not test that nested copy. Do not build, package, or deploy from `PQTunnel/`.
@@ -244,6 +256,7 @@ Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build L
 - [Protocol notes](docs/PROTOCOL.md)
 - [Experimental server-to-server guide (Persian)](docs/SITE-TO-SITE.fa.md)
 - [Pre-release checklist](docs/RELEASE-CHECKLIST.md)
+- [Linux MVP release gates](docs/LINUX-MVP-RELEASE-GATE.md)
 
 ## License
 
