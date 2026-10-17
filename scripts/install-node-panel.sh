@@ -120,6 +120,7 @@ PQTUNNEL_PEER_PREFIXES=10.66.0.2/32,fd42:7061:7475::2/128
 PQTUNNEL_LOCAL_PREFIXES=0.0.0.0/0,::/0
 PQTUNNEL_PEER_NAME=pqtunnel-dialer
 PQTUNNEL_ALLOWED_DST_PORTS=tcp:443,udp:53,udp:123
+PQTUNNEL_MANAGER_NETWORK_HOOKS=1
 ENV
     chown root:root /etc/default/pqtunneld
     chmod 0640 /etc/default/pqtunneld
