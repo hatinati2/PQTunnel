@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing version tag to validate and publish
+        description: Version tag to publish; if absent, it is created only after tests pass
         required: true
         type: string
       linux_mvp_gates_passed:
@@ -30,11 +30,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ github.sha }}
       - name: Reject tags that disagree with documented versions
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: python3 scripts/check-release-version.py "$RELEASE_TAG"
+      - name: Ensure an existing tag points at this tested commit
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          TARGET_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+            existing_sha="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+            if [[ "$existing_sha" != "$TARGET_SHA" ]]; then
+              echo "Release tag ${RELEASE_TAG} already points to ${existing_sha}, not tested commit ${TARGET_SHA}." >&2
+              exit 1
+            fi
+          else
+            echo "Release tag ${RELEASE_TAG} does not exist; it will be created from the tested commit after all gates pass."
+          fi
 
   integration-test:
     needs: validate-release-version
@@ -49,7 +66,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ github.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.x'
@@ -86,7 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ github.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.x'
@@ -118,6 +135,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag }}
+          target_commitish: ${{ github.sha }}
           name: ${{ contains(inputs.release_tag, '-') && format('PQTunnel {0} — Experimental VPS Test', inputs.release_tag) || format('PQTunnel {0}', inputs.release_tag) }}
           files: |
             dist/*.tar.gz
