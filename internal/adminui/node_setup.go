@@ -102,7 +102,6 @@ input[type=file]{display:block;margin-top:10px;max-width:100%;font:inherit}pre{w
 <li>{{tr .Lang "پروفایل‌های عمومی از طریق HTTP قابل جعل هستند؛ برای تست از محیط مورد اعتماد استفاده کن و پیش از استفاده حساس، HTTPS را فعال و اثرانگشت گواهی‌ها را خارج از همین مسیر تأیید کن." "Public profiles can be tampered with over HTTP. Use a trusted environment for testing; before sensitive use, enable HTTPS and verify certificate fingerprints out-of-band."}}</li>
 </ul>
 </section>
-{{end}}
 </main></body></html>`))
 
 type nodeSetupPageData struct {
