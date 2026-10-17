@@ -261,7 +261,11 @@ if (( UPGRADE )); then
   echo "Protected backup: $BACKUP_DIR"
   echo "Setup wizard worker is installed but not enabled as a daemon; it is invoked only for an authenticated setup request."
   if [[ -n "$NEW_MANAGER_TOKEN" ]]; then
-    printf '\nThe previous manager listener was public or insecure. It is now loopback-only and its login token was rotated. Save this new token exactly once:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$NEW_MANAGER_TOKEN"
+    if (( PUBLIC_HTTP )); then
+      printf '\nPublic HTTP is configured at http://%s:9091. Save the replacement login token exactly once:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$PUBLIC_HOST" "$NEW_MANAGER_TOKEN"
+    else
+      printf '\nThe manager is now loopback-only and its login token was rotated. Save this new token exactly once:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$NEW_MANAGER_TOKEN"
+    fi
     unset NEW_MANAGER_TOKEN
   else
     echo "Existing manager token and role were preserved."
