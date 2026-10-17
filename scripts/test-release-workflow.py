@@ -72,7 +72,7 @@ class ReleaseProxyWorkflowTests(unittest.TestCase):
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
         self.assertIn("**Version:** 0.3.0-rc8", readme)
         self.assertIn("**نسخه: 0.3.0-rc8", readme_fa)
-        self.assertTrue(changelog.startswith("# Changelog\\n\\n## 0.3.0-rc8"))
+        self.assertEqual(changelog.splitlines()[:3], ["# Changelog", "", "## 0.3.0-rc8"])
         self.assertIn('VERSION="v0.3.0-rc8"', installer)
 
     def test_release_workflow_uses_the_verified_bundle_builder(self) -> None:
