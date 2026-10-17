@@ -57,6 +57,7 @@ class ReleaseProxyWorkflowTests(unittest.TestCase):
         self.assertIn("needs: integration-test", release_job)
         self.assertIn("ref: ${{ inputs.release_tag }}", release_job)
         self.assertIn("tag_name: ${{ inputs.release_tag }}", release_job)
+        self.assertIn("name: ${{ contains(inputs.release_tag, '-') && format('PQTunnel {0} — Experimental VPS Test', inputs.release_tag) || format('PQTunnel {0}', inputs.release_tag) }}", release_job)
         self.assertIn("contents: write", release_job)
         self.assertIn("prerelease: ${{ contains(inputs.release_tag, '-') }}", release_job)
         self.assertLess(
