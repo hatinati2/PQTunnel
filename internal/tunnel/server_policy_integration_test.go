@@ -146,6 +146,12 @@ func TestServerHandleAuthenticatesPeerAndEnforcesCIDRPolicy(t *testing.T) {
 	if err := clientConn.Handshake(); err != nil {
 		t.Fatalf("mutual TLS handshake failed: %v", err)
 	}
+	if got := clientConn.ConnectionState().CurveID; got != tls.X25519MLKEM768 {
+		t.Fatalf("client negotiated key exchange group %v, want X25519MLKEM768", got)
+	}
+	if got := serverConn.ConnectionState().CurveID; got != tls.X25519MLKEM768 {
+		t.Fatalf("server negotiated key exchange group %v, want X25519MLKEM768", got)
+	}
 
 	disallowedDst := policyTestIPv4Packet("192.0.2.7", "198.51.100.9")
 	allowed := policyTestIPv4Packet("192.0.2.8", "10.66.0.2")
@@ -222,4 +228,43 @@ func TestServerHandleRejectsWrongPeerIdentity(t *testing.T) {
 	}
 	_ = clientConn.Close()
 	_ = dev.Close()
+}
+
+func TestStrictTLSRejectsClassicalOnlyPeer(t *testing.T) {
+	ca, caKey, roots := createPolicyTestCA(t)
+	serverCert := createPolicyTestCert(t, ca, caKey, "gateway", "gateway.example.test", x509.ExtKeyUsageServerAuth)
+	peerCert := createPolicyTestCert(t, ca, caKey, "iran", "", x509.ExtKeyUsageClientAuth)
+
+	serverRaw, clientRaw := net.Pipe()
+	serverConn := tls.Server(serverRaw, ServerTLSConfig(serverCert, roots))
+	clientConn := tls.Client(clientRaw, &tls.Config{
+		MinVersion:       tls.VersionTLS13,
+		MaxVersion:       tls.VersionTLS13,
+		CurvePreferences: []tls.CurveID{tls.X25519},
+		RootCAs:          roots,
+		ServerName:       "gateway.example.test",
+		Certificates:     []tls.Certificate{peerCert},
+	})
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	serverDone := make(chan error, 1)
+	clientDone := make(chan error, 1)
+	go func() { serverDone <- serverConn.Handshake() }()
+	go func() { clientDone <- clientConn.Handshake() }()
+
+	var clientErr, serverErr error
+	timeout := time.NewTimer(2 * time.Second)
+	defer timeout.Stop()
+	for completed := 0; completed < 2; completed++ {
+		select {
+		case clientErr = <-clientDone:
+		case serverErr = <-serverDone:
+		case <-timeout.C:
+			t.Fatal("classical-only TLS handshake did not fail promptly")
+		}
+	}
+	if clientErr == nil || serverErr == nil {
+		t.Fatalf("strict hybrid-only TLS unexpectedly negotiated without a shared hybrid group: client=%v server=%v", clientErr, serverErr)
+	}
 }
