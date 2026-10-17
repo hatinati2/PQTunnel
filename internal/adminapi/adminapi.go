@@ -43,6 +43,7 @@ type TunnelConfiguration struct {
 	ServerName      string
 	RemotePrefixes  string
 	AllowedDstPorts string
+	AllowDefaultRoutes bool
 }
 
 // ManagerSnapshot contains local service-management metadata safe for the web UI.
