@@ -57,6 +57,7 @@ type Options struct {
 	IPCSocket  string
 	SpeedTestPeer string
 	SpeedTestToken string
+	EndpointMode string
 	Runner     Runner
 }
 
@@ -105,7 +106,7 @@ func New(opts Options) (*Controller, error) {
 	// Standalone node mode provisions the TUN transport without applying host
 	// firewall, forwarding, or policy-routing rules. Existing paired installs
 	// retain the historical site-to-site units unless this mode is explicit.
-	if os.Getenv("PQTUNNEL_MANAGER_ENDPOINT_MODE") == "transport" {
+	if opts.EndpointMode == "transport" {
 		if opts.Role == RoleGateway {
 			unit = "pqtunneld-transport.service"
 		} else {
