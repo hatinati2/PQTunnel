@@ -6,6 +6,18 @@ PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets usin
 
 > **Security notice:** This repository has not undergone an independent security audit. Do not use it to protect sensitive activity or deploy it on a production server. The key exchange is post-quantum hybrid; certificate signatures are currently Ed25519 (classical), so the entire authentication system is not post-quantum. No cryptographic construction is unbreakable by definition.
 
+
+
+## Platform support status
+
+PQTunnel is being stabilized as a Linux-first MVP. The project is still experimental.
+
+- **Linux server-to-server (Ubuntu 24.04/26.04; amd64/arm64):** target scope of the MVP; not production-ready until the [Linux MVP release gates](docs/LINUX-MVP-RELEASE-GATE.md) have been completed and the evidence reviewed.
+- **Windows:** unsupported. A cross-build does not constitute support; Wintun provisioning and tested address, route, DNS, firewall/kill-switch, crash cleanup, and reboot lifecycle are not complete.
+- **Android:** unsupported. The current `VpnService` code is a scaffold; certificate onboarding, lifecycle/error handling, and physical-device validation remain incomplete.
+
+A green CI run or passing namespace test is not proof of end-to-end operation between separate VPS hosts. Do not deploy this release on production infrastructure.
+
 ## Repository layout notice
 
 The active project source tree and CI source of truth are at the **repository root**. The nested `PQTunnel/` directory is a stale legacy copy retained pending a separate cleanup decision; it is not the active development or release source, and the root CI workflow does not test that nested copy. Do not build, package, or deploy from `PQTunnel/`.
@@ -171,7 +183,7 @@ A one-line remote preflight is also available; it defaults to checks only and do
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/scripts/pqtunnel-bootstrap.sh | bash
 ```
 
-The same bootstrap also has guarded `install-server` and `install-client` modes. Both require certificates and reviewed role-specific environment files to be staged first; the client build requires Go 1.24+ already installed. `install-server` stages the listener and network-helper configuration; `--start` starts the daemon, and the additional `--apply-network` flag is required to explicitly apply gateway routes/NAT. `install-client` stages the dialer service; its `--start` option activates the systemd unit, which applies the dialer network helper and invokes rollback after the service stops. Both modes refuse existing artifacts and do not install operating-system packages. Example settings use documentation-only IP prefixes and must be replaced. These helpers are not a substitute for a reviewed recovery plan and have not been run on your VPS. CI exercises them only in the disposable GitHub runner.
+The same bootstrap also has guarded `install-server` and `install-client` modes. Both require certificates and reviewed role-specific environment files to be staged first; the client build requires Go 1.26+ already installed. `install-server` stages the listener and network-helper configuration; `--start` starts the daemon, and the additional `--apply-network` flag is required to explicitly apply gateway routes/NAT. `install-client` stages the dialer service; its `--start` option activates the systemd unit, which applies the dialer network helper and invokes rollback after the service stops. Both modes refuse existing artifacts and do not install operating-system packages. Example settings use documentation-only IP prefixes and must be replaced. These helpers are not a substitute for a reviewed recovery plan and have not been run on your VPS. CI exercises them only in the disposable GitHub runner.
 
 ### One-line install and launch (explicit, network-changing mode)
 
@@ -208,7 +220,7 @@ The paths above are examples, not files created by the command. These operations
 The deployment assets are intentionally split into installation and network setup so that installing the service does not silently modify firewall/NAT policy.
 
 1. Ensure the server PKI directory contains `server.crt`, `server.key`, and `ca.crt`; do not place `ca.key` on the server. The installer validates that the server certificate chains to the supplied CA and matches its private key.
-2. Review `scripts/install-server.sh` and `deploy/systemd/pqtunneld.service`. The installer accepts either a source checkout (requires Go 1.24+) or a matching Linux release bundle containing a prebuilt `pqtunneld`. It refuses to overwrite a detected existing installation. By default it does not start/enable the service; `--enable` starts and enables it. This is not an upgrade tool.
+2. Review `scripts/install-server.sh` and `deploy/systemd/pqtunneld.service`. The installer accepts either a source checkout (requires Go 1.26+) or a matching Linux release bundle containing a prebuilt `pqtunneld`. It refuses to overwrite a detected existing installation. By default it does not start/enable the service; `--enable` starts and enables it. This is not an upgrade tool.
 3. `scripts/server-network.sh` is deliberately restricted to a dedicated test host. It refuses to apply if IPv4 forwarding is already enabled, UFW is active, or existing nftables/iptables rules are detected. Its forward chain uses `policy drop`, allowing only traffic between `pqtun0` and the selected WAN interface for the client subnet; other forwarded IPv4 traffic will be blocked. Do not use it on an existing router, multi-tunnel host, or production VPS without a specific firewall review.
 4. The network helper does not open TCP port 8443 in the provider firewall. Firewall integration (including UFW) must be separately reviewed.
 
@@ -244,6 +256,7 @@ Pushing a version tag (`v*`) triggers `.github/workflows/release.yml` to build L
 - [Protocol notes](docs/PROTOCOL.md)
 - [Experimental server-to-server guide (Persian)](docs/SITE-TO-SITE.fa.md)
 - [Pre-release checklist](docs/RELEASE-CHECKLIST.md)
+- [Linux MVP release gates](docs/LINUX-MVP-RELEASE-GATE.md)
 
 ## License
 

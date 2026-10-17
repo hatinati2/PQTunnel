@@ -40,7 +40,7 @@ script and source tarball both use that same ref; mutable branches such as main 
 --start is an explicit operational action. Gateway network apply requires the separate
 --apply-network flag. Starting the dialer unit applies its network helper. This project is
 experimental: retain console/out-of-band access, review every file, and test in a lab first.
-No OS packages are installed automatically; Go 1.24+ and role-specific certificates/configs
+No OS packages are installed automatically; Go 1.26+ and role-specific certificates/configs
 must be staged first. Existing installations are not overwritten.
 USAGE
 }
@@ -188,7 +188,7 @@ case "$MODE" in
     [[ -n "$PKI_DIR" && -d "$PKI_DIR" ]] || fail '--pki-dir must contain server.crt, server.key and ca.crt.'
     check_os_prerequisites curl tar go openssl systemctl ip stat grep awk install
     GV="$(go env GOVERSION | sed 's/^go//')"
-    if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=24)) }'; then fail "Go 1.24+ is required; found $GV."; fi
+    if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=26)) }'; then fail "Go 1.26+ is required; found $GV."; fi
     validate_gateway_config "$SERVER_ENV" "$NETWORK_ENV"
     [[ ! -e "$PKI_DIR/ca.key" ]] || fail 'ca.key must remain offline; it must not be copied to a server.'
     local_file=
@@ -229,7 +229,7 @@ case "$MODE" in
     [[ ! -e "$PKI_DIR/ca.key" ]] || fail 'ca.key must remain offline; it must not be copied to a client.'
     for local_file in client.crt client.key ca.crt; do [[ -s "$PKI_DIR/$local_file" ]] || fail "missing $PKI_DIR/$local_file."; done
     GV="$(go env GOVERSION | sed 's/^go//')"
-    if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=24)) }'; then fail "Go 1.24+ is required; found $GV."; fi
+    if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=26)) }'; then fail "Go 1.26+ is required; found $GV."; fi
     openssl x509 -in "$PKI_DIR/client.crt" -noout >/dev/null || fail 'client.crt is not a valid PEM certificate.'
     openssl pkey -in "$PKI_DIR/client.key" -noout >/dev/null || fail 'client.key is not a valid PEM private key.'
     openssl verify -purpose sslclient -CAfile "$PKI_DIR/ca.crt" "$PKI_DIR/client.crt" >/dev/null || fail 'client certificate does not validate against ca.crt.'
