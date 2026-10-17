@@ -1,0 +1,26 @@
+[Unit]
+Description=PQTunnel fixed local endpoint setup worker
+Wants=network-online.target
+After=network-online.target
+Documentation=https://github.com/hatinati2/PQTunnel
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/var/lib/pqtunnel-manager/node-setup.env
+ExecStart=/usr/local/lib/pqtunnel/pqtunnel-node-setup-worker.py
+TimeoutStartSec=0
+TimeoutStopSec=20s
+UMask=0077
+StateDirectory=pqtunnel-manager
+StateDirectoryMode=0700
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=-/etc/pqtunnel -/etc/default/pqtunneld -/etc/default/pqtunnel-client /var/lib/pqtunnel-manager
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
