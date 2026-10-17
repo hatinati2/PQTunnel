@@ -56,6 +56,7 @@ func main() {
 		IPCSocket: controlSocket,
 		SpeedTestPeer: os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_PEER"),
 		SpeedTestToken: os.Getenv("PQTUNNEL_MANAGER_SPEEDTEST_TOKEN"),
+		EndpointMode: os.Getenv("PQTUNNEL_MANAGER_ENDPOINT_MODE"),
 	})
 	fatalIf(err)
 	handler, err := adminui.NewWithPublicAccess(token, controller, publicHost, allowInsecurePublicHTTP)
