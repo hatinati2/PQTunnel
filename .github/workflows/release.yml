@@ -75,6 +75,7 @@ jobs:
           set -euo pipefail
           bash -n install.sh
           for script in scripts/*.sh; do bash -n "$script"; done
+          python3 -m py_compile scripts/pqtunnel-node-setup-worker.py
       - name: Install nftables parser for check-only regression test
         run: |
           sudo apt-get update
