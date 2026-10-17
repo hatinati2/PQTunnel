@@ -376,6 +376,12 @@ func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 		if err != nil {
 			return errors.New("tunnel endpoint configuration is not ready")
 		}
+		if _, validationErr := m.configurationChanges(cfg); validationErr != nil {
+			return fmt.Errorf("cannot %s tunnel: invalid endpoint configuration: %w", action, validationErr)
+		}
+		if requiresDefaultRouteReview(m.role, cfg) && !m.defaultRoutesApproved(cfg) {
+			return errors.New("default-route prefixes require explicit approval: review the settings, select the default-route confirmation, and save before starting")
+		}
 		ready, message, _ := m.credentialStatus(cfg)
 		if !ready {
 			return fmt.Errorf("cannot %s tunnel: %s", action, message)
@@ -492,6 +498,9 @@ func (m *Controller) ApplyConfiguration(ctx context.Context, config adminapi.Tun
 	defer m.speedRunMu.Unlock()
 	changes, err := m.configurationChanges(config)
 	if err != nil {
+		return err
+	}
+	if err := m.saveDefaultRouteApproval(config, config.AllowDefaultRoutes); err != nil {
 		return err
 	}
 	original, info, err := readSecureConfig(m.configPath)
