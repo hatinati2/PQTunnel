@@ -68,6 +68,9 @@ type ManagerSnapshot struct {
 	Config               TunnelConfiguration
 	ConfigReady          bool
 	ConfigError          string
+	CredentialsReady     bool
+	CredentialMessage    string
+	PeerBundleAvailable  bool
 	PeerDataReady        bool
 	TransportConnected   bool
 	Uptime               string
