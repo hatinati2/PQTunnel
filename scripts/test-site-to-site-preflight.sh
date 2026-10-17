@@ -43,6 +43,8 @@ fi
 HELP="$(bash "$PREFLIGHT" --help)"
 grep -q 'READ-ONLY' <<< "$HELP"
 grep -q 'check_certificate_bundle' "$PREFLIGHT"
+grep -q 'PQTUNNEL_PREFLIGHT_PKI_DIR' <<< "$HELP"
+grep -q 'dialer-ca.crt' "$PREFLIGHT"
 grep -q 'nftables query failed' "$PREFLIGHT"
 grep -q 'iptables-save query failed' "$PREFLIGHT"
 if bash "$PREFLIGHT" --role invalid >/dev/null 2>&1; then
@@ -160,4 +162,62 @@ STRICT_OUTPUT="$(PATH="$FAKE_BIN_DIR:$PATH" PQTUNNEL_REAL_IP="$REAL_IP" FAKE_RPF
 grep -q 'ipv4_rp_filter_all=1 (strict reverse-path filtering' <<< "$STRICT_OUTPUT"
 grep -q 'rp_filter_interface=lo configured=0 effective=1 mode=strict' <<< "$STRICT_OUTPUT"
 echo 'PASS: preflight distinguishes strict and loose rp_filter modes and reports effective interface values.'
+
+# Generate isolated certificate fixtures. The server CA intentionally differs
+# from the peer/client issuing CA, matching legacy Dialer deployments.
+make_test_ca() {
+  local dir="$1" name="$2"
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout "$dir/$name.key" -out "$dir/$name.crt" -days 2 \
+    -subj "/CN=$name" \
+    -addext 'basicConstraints=critical,CA:TRUE' \
+    -addext 'keyUsage=critical,keyCertSign,cRLSign' >/dev/null 2>&1
+}
+issue_test_client() {
+  local dir="$1" issuer="$2"
+  openssl req -new -newkey rsa:2048 -nodes \
+    -keyout "$dir/client.key" -out "$dir/client.csr" \
+    -subj '/CN=fixture-client' >/dev/null 2>&1
+  cat >"$dir/client.ext" <<'EXT'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth
+EXT
+  openssl x509 -req -in "$dir/client.csr" \
+    -CA "$dir/$issuer.crt" -CAkey "$dir/$issuer.key" -CAcreateserial \
+    -out "$dir/client.crt" -days 2 -sha256 -extfile "$dir/client.ext" >/dev/null 2>&1
+  chmod 0600 "$dir/client.key"
+}
+FIXTURE_PKI="$TMP_CONFIG_DIR/pki-dedicated"
+mkdir -m 0700 "$FIXTURE_PKI"
+make_test_ca "$FIXTURE_PKI" server-ca
+make_test_ca "$FIXTURE_PKI" dialer-ca
+cp "$FIXTURE_PKI/server-ca.crt" "$FIXTURE_PKI/ca.crt"
+issue_test_client "$FIXTURE_PKI" dialer-ca
+DEDICATED_CA_OUTPUT="$(PQTUNNEL_PREFLIGHT_PKI_DIR="$FIXTURE_PKI" bash "$PREFLIGHT" --role dialer)"
+grep -q '^client_certificate_ca=dialer-ca.crt
+ <<< "$DEDICATED_CA_OUTPUT"
+grep -q 'Client/peer certificate verifies against the configured CA for sslclient' <<< "$DEDICATED_CA_OUTPUT"
+if grep -q '^\[FAIL\]' <<< "$DEDICATED_CA_OUTPUT"; then
+  echo 'Dedicated dialer CA fixture unexpectedly failed preflight:' >&2
+  printf '%s\n' "$DEDICATED_CA_OUTPUT" >&2
+  exit 1
+fi
+echo 'PASS: dialer preflight selects and validates a separate dialer-ca.crt.'
+
+# A standard single-CA release bundle must keep using ca.crt.
+FIXTURE_SINGLE="$TMP_CONFIG_DIR/pki-single"
+mkdir -m 0700 "$FIXTURE_SINGLE"
+make_test_ca "$FIXTURE_SINGLE" ca
+issue_test_client "$FIXTURE_SINGLE" ca
+SINGLE_CA_OUTPUT="$(PQTUNNEL_PREFLIGHT_PKI_DIR="$FIXTURE_SINGLE" bash "$PREFLIGHT" --role dialer)"
+grep -q '^client_certificate_ca=ca.crt
+ <<< "$SINGLE_CA_OUTPUT"
+grep -q 'Client/peer certificate verifies against the configured CA for sslclient' <<< "$SINGLE_CA_OUTPUT"
+if grep -q '^\[FAIL\]' <<< "$SINGLE_CA_OUTPUT"; then
+  echo 'Single-CA fixture unexpectedly failed preflight:' >&2
+  printf '%s\n' "$SINGLE_CA_OUTPUT" >&2
+  exit 1
+fi
+echo 'PASS: dialer preflight retains compatibility with single-CA release bundles.'
 echo 'PASS: read-only preflight entry points and non-mutating guard verified.'
