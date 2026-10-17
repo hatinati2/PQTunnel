@@ -26,11 +26,17 @@ fail() { echo "pqtunnel manager installer: $*" >&2; exit 1; }
 SOURCE=""
 ROLE=""
 UPGRADE=0
+WITH_NODE_ENDPOINT=0
+PUBLIC_HTTP=0
+PUBLIC_HOST=""
 while (($#)); do
   case "$1" in
     --source) SOURCE="${2:?missing source path}"; shift 2 ;;
     --role) ROLE="${2:?missing role}"; shift 2 ;;
     --upgrade) UPGRADE=1; shift ;;
+    --with-node-endpoint) WITH_NODE_ENDPOINT=1; shift ;;
+    --public-http) PUBLIC_HTTP=1; shift ;;
+    --public-host) PUBLIC_HOST="${2:?missing public host IP}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -39,9 +45,25 @@ done
 [[ $EUID -eq 0 ]] || fail 'run with sudo on the destination Linux server.'
 [[ -n "$SOURCE" && -d "$SOURCE" ]] || fail '--source must point to a source tree or extracted Linux release bundle.'
 [[ "$ROLE" == gateway || "$ROLE" == dialer ]] || fail '--role must be gateway or dialer.'
+if (( PUBLIC_HTTP )); then
+  [[ -n "$PUBLIC_HOST" ]] || fail '--public-http requires --public-host with the server public IP.'
+  command -v python3 >/dev/null || fail 'python3 is required to validate the public IP.'
+  python3 - "$PUBLIC_HOST" <<'PY'
+import ipaddress, sys
+try:
+    value = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit("public host must be a literal public IP address")
+if value.version != 4 or not value.is_global:
+    raise SystemExit("public host must be a global IPv4 address")
+PY
+elif [[ -n "$PUBLIC_HOST" ]]; then
+  fail '--public-host requires --public-http.'
+fi
 [[ -f "$SOURCE/deploy/systemd/pqtunnel-manager.service" ]] || fail 'deploy/systemd/pqtunnel-manager.service is missing.'
 [[ -f "$SOURCE/deploy/systemd/pqtunnel-setup.service" ]] || fail 'deploy/systemd/pqtunnel-setup.service is missing.'
 [[ -f "$SOURCE/scripts/pqtunnel-setup-worker.sh" && -f "$SOURCE/scripts/pqtunnel-site-to-site-setup.sh" ]] || fail 'graphical setup worker scripts are missing; use a release containing the setup wizard.'
+[[ -f "$SOURCE/deploy/systemd/pqtunnel-node-setup.service" && -f "$SOURCE/scripts/pqtunnel-node-setup-worker.py" ]] || fail 'standalone node setup worker assets are missing.'
 SOURCE_VERSION="$(basename "$SOURCE" | sed -nE 's/^PQTunnel-(v[0-9A-Za-z._-]+)-linux-(amd64|arm64)$/\1/p')"
 if [[ -z "$SOURCE_VERSION" && -f "$SOURCE/install.sh" ]]; then
   SOURCE_VERSION="$(sed -nE 's/^VERSION="(v[0-9A-Za-z._-]+)"$/\1/p' "$SOURCE/install.sh" | head -n1)"
