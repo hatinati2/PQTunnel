@@ -10,8 +10,8 @@ cat >"$tmp_config" <<'CONFIG'
 PQTUNNEL_ROLE=dialer
 PQTUNNEL_WAN_IF=eth0
 PQTUNNEL_TUN=pqtun0
-PQTUNNEL_TCP_EGRESS_PORTS=443
-PQTUNNEL_UDP_EGRESS_PORTS=53
+PQTUNNEL_TCP_EGRESS_PORTS=80-90,443
+PQTUNNEL_UDP_EGRESS_PORTS=53-55
 PQTUNNEL_TCP_FORWARD_RULES='8443=192.0.2.10:443,9443=[2001:db8::10]:443'
 PQTUNNEL_UDP_FORWARD_RULES='5353=192.0.2.20:53,5354=[2001:db8::20]:53'
 CONFIG
@@ -31,6 +31,8 @@ assert_contains 'dnat ip to 192.0.2.10:443'
 assert_contains 'dnat ip6 to [2001:db8::10]:443'
 assert_contains 'dnat ip to 192.0.2.20:53'
 assert_contains 'dnat ip6 to [2001:db8::20]:53'
+assert_contains 'tcp dport { 80-90 , 443 } meta mark set 20561'
+assert_contains 'udp dport { 53-55 } meta mark set 20561'
 assert_contains 'snat ip to 10.66.0.2'
 assert_contains 'snat ip6 to fd42:7061:7475::2'
 
