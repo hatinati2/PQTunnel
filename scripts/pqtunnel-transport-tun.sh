@@ -27,6 +27,30 @@ if [[ "$ACTION" == up ]]; then
     echo "the PQTunnel transport subnet already has a route; refusing to add a conflicting TUN" >&2
     exit 1
   fi
+  routes4="$(ip -4 route show table all 2>/dev/null)"
+  routes6="$(ip -6 route show table all 2>/dev/null)"
+  python3 - "$routes4" "$routes6" <<'PY'
+import ipaddress
+import sys
+targets = [
+    ipaddress.ip_network("10.66.0.0/24"),
+    ipaddress.ip_network("fd42:7061:7475::/64"),
+]
+for block in sys.argv[1:]:
+    for line in block.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        try:
+            route = ipaddress.ip_network(fields[0], strict=False)
+        except ValueError:
+            continue
+        if route.prefixlen == 0:
+            continue
+        for target in targets:
+            if route.version == target.version and route.overlaps(target):
+                raise SystemExit("existing route overlaps the PQTunnel transport subnet; refusing to create pqtun0")
+PY
   created=0
   cleanup() {
     if (( created )); then
