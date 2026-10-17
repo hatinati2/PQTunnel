@@ -77,10 +77,10 @@ The installer verifies the v0.3.0-rc6 Linux archive against `SHA256SUMS`, suppor
 
 Run one command on each VPS separately. Choose gateway on the server that will listen for tunnel connections, and dialer on the server that will initiate them. Each command installs that server's web panel and a dormant endpoint draft. It does **not** start the tunnel, create a TUN interface, modify routes, enable forwarding, or change firewall rules.
 
-\`\`\`sh
+```sh
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --panel gateway --public-http-host 203.0.113.10
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --panel dialer --public-http-host 203.0.113.20
-\`\`\`
+```
 
 Replace each documentation IP with that VPS's real public IPv4 address, and run only the matching command on each machine. The panel is then available at http://YOUR_VPS_IP:9091. The --public-http-host option explicitly enables plaintext public HTTP for temporary testing; without it, the manager remains loopback-only. Allow TCP/9091 in the VPS provider firewall. Do not share the panel token.
 
