@@ -103,6 +103,8 @@ jobs:
           python3 -m py_compile scripts/pqtunnel-node-setup-worker.py
       - name: Test client installer completeness
         run: bash scripts/test-installer-completeness.sh
+      - name: Test server installer PKI validation
+        run: bash scripts/test-server-installer-validation.sh
       - name: Test optional TCP-forward validation and dry-run
         run: bash scripts/test-pqtunnel-tcp-forward.sh
       - name: Test read-only VPS preflight on disposable runner
