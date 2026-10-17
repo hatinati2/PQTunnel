@@ -1,6 +1,6 @@
 # PQTunnel
 
-**Version:** 0.3.0-rc6 · **Status:** experimental release candidate, not production-ready.
+**Version:** 0.3.0-rc8 · **Status:** experimental release candidate, not production-ready.
 
 PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
 
@@ -85,7 +85,7 @@ The menu offers read-only host checks or installation of the standalone manager 
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
 ```
 
-The installer verifies the v0.3.0-rc6 Linux archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go. On first setup it generates a random 256-bit `PQTUNNEL_MANAGER_TOKEN`, stores it in root-only `/etc/default/pqtunnel-manager`, validates the unit, enables and starts the manager, then displays the newly created token once in the terminal. Save it securely; rerunning the installer preserves an existing token and does not print it again. The manager listens on loopback (`127.0.0.1:9091`); use SSH forwarding for remote access. This command installs the **web manager only**, not the tunnel endpoint.
+The installer verifies the v0.3.0-rc8 Linux archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go. On first setup it generates a random 256-bit `PQTUNNEL_MANAGER_TOKEN`, stores it in root-only `/etc/default/pqtunnel-manager`, validates the unit, enables and starts the manager, then displays the newly created token once in the terminal. Save it securely; rerunning the installer preserves an existing token and does not print it again. The manager listens on loopback (`127.0.0.1:9091`); use SSH forwarding for remote access. This command installs the **web manager only**, not the tunnel endpoint.
 
 ### Independent per-VPS setup (experimental)
 
