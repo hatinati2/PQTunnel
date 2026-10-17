@@ -15,7 +15,7 @@ import (
 
 const (
 	nodeSetupUnit = "pqtunnel-node-setup.service"
-	nodeSetupWorkerPath = "/usr/local/lib/pqtunnel/pqtunnel-node-setup-worker.sh"
+	nodeSetupWorkerPath = "/usr/local/lib/pqtunnel/pqtunnel-node-setup-worker.py"
 	nodeSetupServicePath = "/etc/systemd/system/pqtunnel-node-setup.service"
 	nodeSetupEnvPath = "/var/lib/pqtunnel-manager/node-setup.env"
 	nodeSetupStatePath = "/var/lib/pqtunnel-manager/node-setup-state"
