@@ -227,6 +227,7 @@ if (( INSTALL_ENDPOINT )); then
   fi
 fi
 systemctl enable --now pqtunnel-manager
+systemctl restart pqtunnel-manager
 
 printf '\nPQTunnel %s panel installed and running (role=%s).\n' "$SOURCE_VERSION" "$ROLE"
 if [[ -n "$PUBLIC_HTTP_HOST" ]]; then
