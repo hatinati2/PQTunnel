@@ -368,11 +368,10 @@ func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 	default:
 		return errors.New("unsupported service action")
 	}
-	// Production endpoints must not start before their mutual-TLS credentials are
-	// installed and validated. Unit tests and embedders using a custom config path
-	// retain their injected behavior.
-	if (action == "start" || action == "restart") &&
-		(m.configPath == "/etc/default/pqtunneld" || m.configPath == "/etc/default/pqtunnel-client") {
+
+	isProductionEndpoint := m.configPath == "/etc/default/pqtunneld" ||
+		m.configPath == "/etc/default/pqtunnel-client"
+	if (action == "start" || action == "restart") && isProductionEndpoint {
 		cfg, _, err := m.readConfiguration()
 		if err != nil {
 			return errors.New("tunnel endpoint configuration is not ready")
@@ -382,6 +381,24 @@ func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 			return fmt.Errorf("cannot %s tunnel: %s", action, message)
 		}
 	}
+
+	if m.role == RoleGateway && m.configPath == "/etc/default/pqtunneld" {
+		switch action {
+		case "start":
+			return m.startManagedGateway(ctx)
+		case "stop":
+			return m.stopManagedGateway(ctx)
+		case "restart":
+			state, _, err := m.readServiceState(ctx)
+			if err != nil {
+				return errors.New("could not verify Gateway service state")
+			}
+			if state != "active" {
+				return errors.New("Gateway is not active; use Start after resolving any previous network-preflight failure")
+			}
+		}
+	}
+
 	if action == "stop" {
 		if _, err := m.runner.Run(ctx, "systemctl", "stop", m.unit); err != nil {
 			return fmt.Errorf("systemd stop failed for %s", m.unit)
@@ -398,6 +415,72 @@ func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 		return err
 	}
 	return nil
+}
+
+func (m *Controller) startManagedGateway(ctx context.Context) error {
+	state, _, err := m.readServiceState(ctx)
+	if err != nil {
+		return errors.New("could not verify Gateway service state")
+	}
+	if state == "active" {
+		return nil
+	}
+	if state == "activating" {
+		return errors.New("Gateway service is already starting")
+	}
+
+	// Recover only a marker left by this panel's own guarded start attempt.
+	// A pre-existing Gateway network state without the marker is never cleared
+	// automatically because it may belong to an older, separately managed setup.
+	if pathIsSafeRegularFile("/var/lib/pqtunnel-manager/gateway-tun-owned") {
+		if _, err := m.runner.Run(ctx, "systemctl", "start", "pqtunnel-gateway-cleanup.service"); err != nil {
+			return errors.New("a previous Gateway start left managed network state; cleanup failed")
+		}
+	}
+
+	if _, err := m.runner.Run(ctx, "systemctl", "start", "pqtunnel-gateway-prepare.service"); err != nil {
+		return errors.New("Gateway network preflight refused to start the endpoint; existing firewall, routes, forwarding, or TUN state must be reviewed")
+	}
+	if _, err := m.runner.Run(ctx, "systemctl", "start", m.unit); err != nil {
+		_, _ = m.runner.Run(context.Background(), "systemctl", "start", "pqtunnel-gateway-cleanup.service")
+		return errors.New("Gateway endpoint did not start; its owned startup state was cleaned up where safe")
+	}
+	if err := m.waitForState(ctx, "active"); err != nil {
+		_, _ = m.runner.Run(context.Background(), "systemctl", "stop", m.unit)
+		_, _ = m.runner.Run(context.Background(), "systemctl", "start", "pqtunnel-gateway-cleanup.service")
+		return err
+	}
+	if _, err := m.runner.Run(ctx, "systemctl", "start", "pqtunnel-gateway-network.service"); err != nil {
+		_, _ = m.runner.Run(context.Background(), "systemctl", "stop", m.unit)
+		_ = m.waitForState(context.Background(), "inactive")
+		_, _ = m.runner.Run(context.Background(), "systemctl", "start", "pqtunnel-gateway-cleanup.service")
+		return errors.New("Gateway network activation failed; the endpoint was stopped and owned startup state was cleaned up where safe")
+	}
+	return nil
+}
+
+func (m *Controller) stopManagedGateway(ctx context.Context) error {
+	if _, err := m.runner.Run(ctx, "systemctl", "stop", m.unit); err != nil {
+		return errors.New("systemd could not stop the Gateway endpoint")
+	}
+	if err := m.waitForState(ctx, "inactive"); err != nil {
+		return err
+	}
+	if pathIsSafeRegularFile("/var/lib/pqtunnel/site-selective-gateway.state") ||
+		pathIsSafeRegularFile("/var/lib/pqtunnel-manager/gateway-tun-owned") {
+		// The network unit has the narrowly scoped CAP_NET_ADMIN rights needed
+		// for nftables, routes, forwarding and TUN cleanup; the web manager does not.
+		_, _ = m.runner.Run(ctx, "systemctl", "stop", "pqtunnel-gateway-network.service")
+		if _, err := m.runner.Run(ctx, "systemctl", "start", "pqtunnel-gateway-cleanup.service"); err != nil {
+			return errors.New("Gateway endpoint is stopped, but network cleanup failed; inspect the saved PQTunnel state before retrying")
+		}
+	}
+	return nil
+}
+
+func pathIsSafeRegularFile(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0022 == 0
 }
 
 func (m *Controller) ApplyConfiguration(ctx context.Context, config adminapi.TunnelConfiguration) error {
