@@ -20,9 +20,9 @@ class OneLineInstallerTests(unittest.TestCase):
         cls.setup = (ROOT / "scripts/pqtunnel-site-to-site-setup.sh").read_text(encoding="utf-8")
         cls.remote_setup = (ROOT / "scripts/pqtunnel-site-to-site-remote.sh").read_text(encoding="utf-8")
 
-    def test_installer_tracks_current_rc5_release(self) -> None:
-        self.assertIn('VERSION="v0.3.0-rc5"', self.script)
-        self.assertNotIn('VERSION="v0.3.0-rc4"', self.script)
+    def test_installer_tracks_current_rc6_release(self) -> None:
+        self.assertIn('VERSION="v0.3.0-rc6"', self.script)
+        self.assertNotIn('VERSION="v0.3.0-rc5"', self.script)
         self.assertIn('"$RELEASE_BASE/SHA256SUMS"', self.script)
         self.assertIn('sha256sum --check -', self.script)
 
@@ -50,6 +50,26 @@ class OneLineInstallerTests(unittest.TestCase):
         start = self.script.index("systemctl enable --now pqtunnel-manager")
         self.assertLess(validate, start)
         self.assertIn("127.0.0.1:9091", self.manager_installer)
+
+    def test_independent_node_mode_installs_panel_and_stopped_endpoint(self) -> None:
+        self.assertIn("--node", self.script)
+        self.assertIn("--public-ip", self.script)
+        self.assertIn('MODE=node', self.script)
+        self.assertIn('--with-node-endpoint --public-http --public-host "$PUBLIC_IP"', self.script)
+        self.assertIn("PQTUNNEL_MANAGER_ENDPOINT_MODE=transport", self.manager_installer)
+        self.assertIn("pqtunneld-transport.service", self.manager_installer)
+        self.assertIn("pqtunnel-client-transport.service", self.manager_installer)
+        self.assertIn("tunnel service remains stopped and disabled", self.manager_installer)
+        self.assertNotIn("systemctl enable --now pqtunneld-transport.service", self.manager_installer)
+        self.assertNotIn("systemctl enable --now pqtunnel-client-transport.service", self.manager_installer)
+
+    def test_node_profile_exchange_never_bundles_private_keys(self) -> None:
+        worker = (ROOT / "scripts/pqtunnel-node-setup-worker.py").read_text(encoding="utf-8")
+        self.assertIn('"gateway-ca.crt": (PKI / "gateway-ca.crt").read_bytes()', worker)
+        self.assertIn('"dialer-ca.crt": (PKI / "dialer-ca.crt").read_bytes()', worker)
+        self.assertNotIn('"server.key":', worker)
+        self.assertNotIn('"client.key":', worker)
+        self.assertIn("host routing, forwarding, NAT, or firewall rules were changed", worker)
 
     def test_pair_mode_downloads_verified_bundle_and_invokes_orchestrator(self) -> None:
         self.assertIn("--pair", self.script)
