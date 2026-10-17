@@ -382,23 +382,12 @@ func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 			return fmt.Errorf("cannot %s tunnel: %s", action, message)
 		}
 	}
-	if action == "start" && m.role == RoleGateway &&
-		m.configPath == "/etc/default/pqtunneld" && !m.hasGatewayNetworkState() {
-		if _, err := m.runner.Run(ctx, "/usr/local/lib/pqtunnel/site-to-site-selective.sh", "gateway-preflight"); err != nil {
-			return errors.New("Gateway network preflight refused to start the endpoint; existing firewall, routes, forwarding, or TUN state must be reviewed first")
-		}
-	}
 	if action == "stop" {
 		if _, err := m.runner.Run(ctx, "systemctl", "stop", m.unit); err != nil {
 			return fmt.Errorf("systemd stop failed for %s", m.unit)
 		}
 		if err := m.waitForState(ctx, "inactive"); err != nil {
 			return err
-		}
-		if m.role == RoleGateway && m.hasGatewayNetworkState() {
-			if _, err := m.runner.Run(ctx, "/usr/local/lib/pqtunnel/site-to-site-selective.sh", "gateway-down"); err != nil {
-				return errors.New("Gateway service stopped, but network cleanup failed; inspect the PQTunnel network state before retrying")
-			}
 		}
 		return nil
 	}
@@ -407,15 +396,6 @@ func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 	}
 	if err := m.waitForState(ctx, "active"); err != nil {
 		return err
-	}
-	if action == "start" && m.role == RoleGateway && !m.hasGatewayNetworkState() {
-		if _, err := m.runner.Run(ctx, "/usr/local/lib/pqtunnel/site-to-site-selective.sh", "gateway-up"); err != nil {
-			// The helper validates existing firewall and routing state before it
-			// applies anything. Stop the listener if that safe preflight refuses.
-			_, _ = m.runner.Run(context.Background(), "systemctl", "stop", m.unit)
-			_ = m.waitForState(context.Background(), "inactive")
-			return errors.New("Gateway service was stopped because the network preflight refused to apply rules; review the existing host network before trying again")
-		}
 	}
 	return nil
 }
