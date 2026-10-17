@@ -116,6 +116,8 @@ def valid_allow(value):
     return True
 
 def create_bundle(path, members):
+    if path.exists() or path.is_symlink():
+        raise RuntimeError("a public profile bundle already exists; inspect the previous setup before retrying")
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tarfile.open(tmp, "w:gz") as archive:
         for name, data in members.items():
@@ -131,6 +133,7 @@ def create_bundle(path, members):
     os.chown(tmp, 0, 0)
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
+    CREATED.append(path)
 
 def parse_profile(kind, destination):
     if not UPLOAD_FILE.is_file() or UPLOAD_FILE.is_symlink():
@@ -214,7 +217,7 @@ def gateway_init(req):
     allow_text = ",".join(allowed)
     if Path("/etc/default/pqtunneld").exists():
         raise RuntimeError("an existing /etc/default/pqtunneld was found; refusing to overwrite it")
-    for path in (PKI / "server.key", PKI / "server.crt", PKI / "gateway-ca.crt", META_FILE):
+    for path in (PKI / "server.key", PKI / "server.crt", PKI / "gateway-ca.crt", META_FILE, BUNDLE_FILE):
         if path.exists():
             raise RuntimeError("existing Gateway setup artifacts detected; inspect them before retrying")
     if shutil.which("ss"):
@@ -252,7 +255,7 @@ def dialer_import_gateway():
         raise RuntimeError("import a Gateway profile from a Dialer panel")
     if Path("/etc/default/pqtunnel-client").exists():
         raise RuntimeError("an existing /etc/default/pqtunnel-client was found; refusing to overwrite it")
-    for path in (PKI / "client.key", PKI / "client.crt", META_FILE):
+    for path in (PKI / "client.key", PKI / "client.crt", META_FILE, BUNDLE_FILE):
         if path.exists():
             raise RuntimeError("existing Dialer setup artifacts detected; inspect them before retrying")
     work = Path(tempfile.mkdtemp(prefix="dialer-pki-", dir=str(STATE)))
