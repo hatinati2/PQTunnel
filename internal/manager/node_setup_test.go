@@ -61,7 +61,6 @@ func TestValidateNodeSetupRequest(t *testing.T) {
 }
 
 func TestManagerSelectsTransportUnitOnlyWithExplicitMode(t *testing.T) {
-	t.Setenv("PQTUNNEL_MANAGER_ENDPOINT_MODE", "")
 	gateway, err := New(Options{Role: RoleGateway})
 	if err != nil {
 		t.Fatal(err)
@@ -74,12 +73,11 @@ func TestManagerSelectsTransportUnitOnlyWithExplicitMode(t *testing.T) {
 		t.Fatalf("legacy units unexpectedly changed: gateway=%q dialer=%q", gateway.unit, dialer.unit)
 	}
 
-	t.Setenv("PQTUNNEL_MANAGER_ENDPOINT_MODE", "transport")
-	gateway, err = New(Options{Role: RoleGateway})
+	gateway, err = New(Options{Role: RoleGateway, EndpointMode: "transport"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dialer, err = New(Options{Role: RoleDialer})
+	dialer, err = New(Options{Role: RoleDialer, EndpointMode: "transport"})
 	if err != nil {
 		t.Fatal(err)
 	}
