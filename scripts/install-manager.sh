@@ -214,7 +214,11 @@ ENV
 fi
 
 systemctl daemon-reload
-if ! systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service /etc/systemd/system/pqtunnel-setup.service; then
+VERIFY_UNITS=(/etc/systemd/system/pqtunnel-manager.service /etc/systemd/system/pqtunnel-setup.service /etc/systemd/system/pqtunnel-node-setup.service)
+if (( WITH_NODE_ENDPOINT )); then
+  if [[ "$ROLE" == gateway ]]; then VERIFY_UNITS+=(/etc/systemd/system/pqtunneld-transport.service); else VERIFY_UNITS+=(/etc/systemd/system/pqtunnel-client-transport.service); fi
+fi
+if ! systemd-analyze verify "${VERIFY_UNITS[@]}"; then
   if (( UPGRADE )); then
     install -o root -g root -m 0755 "$BACKUP_DIR/pqtunnel-manager" /usr/local/sbin/pqtunnel-manager
     install -o root -g root -m 0644 "$BACKUP_DIR/pqtunnel-manager.service" /etc/systemd/system/pqtunnel-manager.service
@@ -249,19 +253,23 @@ if (( UPGRADE )); then
       fail "manager upgrade failed; previous binary/unit restored. Review service status and backup: $BACKUP_DIR"
     fi
   fi
-  echo "PQTunnel manager upgraded with graphical setup support."
+  echo "PQTunnel manager upgraded."
+  if (( WITH_NODE_ENDPOINT )); then echo "Standalone endpoint assets installed for role $ROLE; tunnel service remains stopped and disabled."; fi
   echo "Protected backup: $BACKUP_DIR"
   echo "Setup wizard worker is installed but not enabled as a daemon; it is invoked only for an authenticated setup request."
   if [[ -n "$NEW_MANAGER_TOKEN" ]]; then
     printf '\nThe previous manager listener was public or insecure. It is now loopback-only and its login token was rotated. Save this new token exactly once:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$NEW_MANAGER_TOKEN"
     unset NEW_MANAGER_TOKEN
   else
-    echo "Existing loopback-only manager token and role were preserved."
+    echo "Existing manager token and role were preserved."
   fi
 else
-  echo 'PQTunnel manager installed, but not enabled or started.'
-  echo 'Review /etc/default/pqtunnel-manager and set a strong PQTUNNEL_MANAGER_TOKEN first.'
-  echo 'Then run: sudo systemctl enable --now pqtunnel-manager'
+  echo 'PQTunnel manager installed; the top-level installer will assign the token and start the panel.'
+  if (( WITH_NODE_ENDPOINT )); then echo "Standalone endpoint assets installed for role $ROLE; tunnel service remains stopped and disabled."; fi
 fi
-echo 'For remote browser access, use SSH local forwarding; do not expose port 9091 publicly.'
-echo 'The graphical setup worker can change host packages and network state only after explicit web confirmation and existing-state guards.'
+if (( PUBLIC_HTTP )); then
+  echo 'WARNING: manager is exposed over plaintext HTTP. Use only for temporary testing and restrict TCP/9091 at the provider firewall.'
+else
+  echo 'For remote browser access, use SSH local forwarding; do not expose port 9091 publicly.'
+fi
+echo 'The standalone endpoint is not started during installation. Its transport unit does not apply host firewall, NAT, forwarding, or default-route changes.'
