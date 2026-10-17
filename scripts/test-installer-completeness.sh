@@ -47,4 +47,13 @@ for installer in scripts/install-server.sh scripts/install-manager.sh scripts/pq
   }
 done
 
+# Keep the standalone setup helper's fallback release aligned with the one-line installer.
+# The installer passes this version explicitly; the fallback matters for direct invocation.
+INSTALLER_VERSION="$(sed -n 's/^VERSION="\\([^"]*\\)"$/\\1/p' install.sh | head -n1)"
+SETUP_DEFAULT_VERSION="$(sed -n 's/^VERSION="${PQTUNNEL_SETUP_VERSION:-\\([^}]*\\)}"$/\\1/p' scripts/pqtunnel-site-to-site-setup.sh | head -n1)"
+if [[ -z "$INSTALLER_VERSION" || "$SETUP_DEFAULT_VERSION" != "$INSTALLER_VERSION" ]]; then
+  echo "Setup helper default version is out of sync with install.sh" >&2
+  exit 1
+fi
+
 echo "PASS: client installer stages every helper referenced by its systemd unit."
