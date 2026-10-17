@@ -3,22 +3,20 @@ set -Eeuo pipefail
 
 usage() {
   cat <<'USAGE'
-Install the optional standalone PQTunnel web manager and its fixed setup worker.
-A first install does not start the manager. --upgrade backs up and upgrades a
-complete existing manager and restarts it only when it was already active.
+Install the PQTunnel web manager and optionally the stopped local endpoint.
+--upgrade backs up and upgrades a complete existing manager.
 
 Usage:
-  sudo bash ./scripts/install-manager.sh --source /path/to/source-or-Linux-bundle --role gateway
-  sudo bash ./scripts/install-manager.sh --source /path/to/source-or-Linux-bundle --role dialer
+  sudo bash ./scripts/install-manager.sh --source /path/to/Linux-bundle --role gateway
+  sudo bash ./scripts/install-manager.sh --source /path/to/Linux-bundle --role dialer
   sudo bash ./scripts/install-manager.sh --source /path/to/Linux-bundle --role dialer --upgrade
+  sudo bash ./scripts/install-manager.sh --source /path/to/Linux-bundle --role dialer --with-node-endpoint --public-http --public-host 203.0.113.10 --upgrade
 
-The role is fixed in /etc/default/pqtunnel-manager:
-  gateway -> pqtunneld.service and /etc/default/pqtunneld
-  dialer  -> pqtunnel-client.service and /etc/default/pqtunnel-client
-
-Before starting the manager, set PQTUNNEL_MANAGER_TOKEN to a random secret of
-at least 32 bytes, then review the role/config. The manager binds only to a
-literal loopback address and must be accessed remotely through SSH forwarding.
+The default manager listener is loopback-only. Public plaintext HTTP requires
+both --public-http and --public-host and is intended only for temporary testing.
+With --with-node-endpoint, role-specific binaries and transport-only systemd units
+are installed but not enabled or started. Existing tunnel configurations are
+never overwritten by this installer.
 USAGE
 }
 fail() { echo "pqtunnel manager installer: $*" >&2; exit 1; }
@@ -150,6 +148,11 @@ install -o root -g root -m 0644 "$SOURCE/deploy/systemd/pqtunnel-node-setup.serv
 install -o root -g root -m 0750 "$SOURCE/scripts/pqtunnel-node-setup-worker.py" /usr/local/lib/pqtunnel/pqtunnel-node-setup-worker.py
 
 if (( WITH_NODE_ENDPOINT )); then
+  for path in /etc/pqtunnel /etc/pqtunnel/pki /var/lib/pqtunnel; do
+    [[ ! -L "$path" ]] || fail "refusing symlinked endpoint directory: $path"
+    if [[ ! -e "$path" ]]; then install -d -o root -g root -m 0750 "$path"; fi
+    [[ -d "$path" ]] || fail "endpoint path is not a directory: $path"
+  done
   install -o root -g root -m 0755 "$SOURCE/pqtunnel-pki" /usr/local/bin/pqtunnel-pki
   install -o root -g root -m 0750 "$SOURCE/scripts/pqtunnel-transport-tun.sh" /usr/local/lib/pqtunnel/pqtunnel-transport-tun.sh
   if [[ "$ROLE" == gateway ]]; then
