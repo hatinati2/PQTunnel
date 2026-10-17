@@ -169,6 +169,12 @@ check_rule_tables_free() {
   [[ -z "$(ip -4 route show table "$TABLE_FORWARD" 2>/dev/null)$(ip -6 route show table "$TABLE_FORWARD" 2>/dev/null)" ]] || fail 'route table 519 is not empty; no changes made'
 }
 
+check_no_existing_tuntap() {
+  local devices
+  devices="$(ip tuntap show 2>/dev/null)" || fail 'could not inspect existing TUN/TAP interfaces; no changes made'
+  [[ -z "$devices" ]] || fail 'pre-existing TUN/TAP interfaces were detected; refusing to modify a host with existing tunnel interfaces'
+}
+
 nft_port_set() {
   local value="$1"
   [[ -n "$value" ]] || return 0
@@ -304,14 +310,14 @@ apply_dialer() {
   if pgrep -x pqtunnel-client >/dev/null 2>&1; then fail 'pqtunnel-client is already running; stop it before changing TUN policy'; fi
   check_no_existing_firewall
   check_rule_tables_free
+  check_no_existing_tuntap
   ip link show dev "$PQTUNNEL_WAN_IF" >/dev/null 2>&1 || fail 'WAN interface was not found'
-  if ip link show dev "$PQTUNNEL_TUN" >/dev/null 2>&1; then fail "TUN $PQTUNNEL_TUN already exists without PQTunnel state; refusing to take it over"; fi
   local needForward=0 created=1 old4 old6 changed4=0 changed6=0 tmp
   [[ -z "$PQTUNNEL_TCP_FORWARD_RULES$PQTUNNEL_UDP_FORWARD_RULES" ]] || needForward=1
   old4="$(cat /proc/sys/net/ipv4/ip_forward)"
   old6="$(cat /proc/sys/net/ipv6/conf/all/forwarding)"
+  [[ "$old4" == 0 && "$old6" == 0 ]] || fail 'IPv4 or IPv6 forwarding is already enabled; refusing a host that may already route traffic'
   if (( needForward )); then
-    [[ "$old4" == 0 && "$old6" == 0 ]] || fail 'IPv4 or IPv6 forwarding is already enabled; refusing a host that may already route traffic'
     changed4=1; changed6=1
   fi
   tmp="$(mktemp)"
@@ -370,6 +376,7 @@ gateway_preflight() {
   [[ ! -e "$GATEWAY_STATE" ]] || fail "state exists at $GATEWAY_STATE; inspect it before retrying"
   check_no_existing_firewall
   check_rule_tables_free
+  check_no_existing_tuntap
   ip link show dev "$PQTUNNEL_WAN_IF" >/dev/null 2>&1 || fail 'WAN interface was not found'
   [[ "$(cat /proc/sys/net/ipv4/ip_forward)" == 0 && "$(cat /proc/sys/net/ipv6/conf/all/forwarding)" == 0 ]] || fail 'IP forwarding is already enabled; refusing a host that may already route traffic'
   if ip link show dev "$PQTUNNEL_TUN" >/dev/null 2>&1; then
