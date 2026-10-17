@@ -498,6 +498,7 @@ func (m *Controller) ApplyConfiguration(ctx context.Context, config adminapi.Tun
 		return errors.New("a speed test is running; configuration changes are temporarily blocked")
 	}
 	defer m.speedRunMu.Unlock()
+
 	changes, err := m.configurationChanges(config)
 	if err != nil {
 		return err
@@ -505,6 +506,7 @@ func (m *Controller) ApplyConfiguration(ctx context.Context, config adminapi.Tun
 	if err := m.saveDefaultRouteApproval(config, config.AllowDefaultRoutes); err != nil {
 		return err
 	}
+
 	original, info, err := readSecureConfig(m.configPath)
 	if err != nil {
 		return fmt.Errorf("read current configuration: %w", err)
@@ -517,43 +519,106 @@ func (m *Controller) ApplyConfiguration(ctx context.Context, config adminapi.Tun
 	if err != nil {
 		return err
 	}
-	if bytes.Equal(original, updated) {
+	appChanged := !bytes.Equal(original, updated)
+
+	var networkOriginal, networkUpdated []byte
+	var networkInfo os.FileInfo
+	networkPath := ""
+	networkChanged := false
+	if m.role == RoleDialer && m.configPath == "/etc/default/pqtunnel-client" {
+		candidatePath := "/etc/pqtunnel/site-to-site.env"
+		if _, statErr := os.Lstat(candidatePath); statErr == nil {
+			networkPath = candidatePath
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return errors.New("could not safely inspect the Dialer network configuration")
+		}
+	}
+	if networkPath != "" {
+		networkOriginal, networkInfo, err = readSecureConfig(networkPath)
+		if err != nil {
+			return fmt.Errorf("read Dialer network configuration: %w", err)
+		}
+		networkEntries, parseErr := parseEnvFile(networkOriginal)
+		if parseErr != nil || networkEntries["PQTUNNEL_ROLE"] != "dialer" {
+			return errors.New("Dialer network configuration is invalid; no settings were changed")
+		}
+		egressChanges, mapErr := dialerNetworkEgressChanges(config.AllowedDstPorts)
+		if mapErr != nil {
+			return fmt.Errorf("cannot synchronize Dialer network port policy: %w", mapErr)
+		}
+		networkUpdated, err = updateEnvFile(networkOriginal, networkEntries, egressChanges)
+		if err != nil {
+			return fmt.Errorf("prepare synchronized Dialer network config: %w", err)
+		}
+		networkChanged = !bytes.Equal(networkOriginal, networkUpdated)
+	}
+	if !appChanged && !networkChanged {
 		return nil
 	}
+
 	state, _, err := m.readServiceState(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot verify service state; configuration was not changed: %w", err)
 	}
-	if err := m.writeBackup(original); err != nil {
-		return fmt.Errorf("cannot create protected backup; configuration was not changed: %w", err)
+	if appChanged {
+		if err := m.writeBackup(original); err != nil {
+			return fmt.Errorf("cannot create protected backup; configuration was not changed: %w", err)
+		}
 	}
-	if err := atomicWrite(m.configPath, updated, info.Mode().Perm()); err != nil {
-		return fmt.Errorf("write validated configuration: %w", err)
+	if networkChanged {
+		if err := m.writeBackup(networkOriginal); err != nil {
+			return fmt.Errorf("cannot create protected backup for Dialer network settings; configuration was not changed: %w", err)
+		}
+	}
+
+	networkWritten := false
+	if networkChanged {
+		if err := atomicWrite(networkPath, networkUpdated, networkInfo.Mode().Perm()); err != nil {
+			return fmt.Errorf("write synchronized Dialer network settings: %w", err)
+		}
+		networkWritten = true
+	}
+	if appChanged {
+		if err := atomicWrite(m.configPath, updated, info.Mode().Perm()); err != nil {
+			if networkWritten {
+				if rollbackErr := atomicWrite(networkPath, networkOriginal, networkInfo.Mode().Perm()); rollbackErr != nil {
+					return errors.New("Dialer app config write failed and network config rollback failed; manual recovery is required")
+				}
+			}
+			return fmt.Errorf("write validated configuration: %w", err)
+		}
 	}
 	if state != "active" {
 		return nil
 	}
+
 	restartErr := m.restartAndWait(ctx)
 	if restartErr == nil {
 		return nil
 	}
-	rollbackErr := atomicWrite(m.configPath, original, info.Mode().Perm())
-	if rollbackErr != nil {
-		return fmt.Errorf("new configuration failed to start and automatic rollback failed; manual recovery required")
+	var appRollbackErr error
+	if appChanged {
+		appRollbackErr = atomicWrite(m.configPath, original, info.Mode().Perm())
+	}
+	var networkRollbackErr error
+	if networkChanged {
+		networkRollbackErr = atomicWrite(networkPath, networkOriginal, networkInfo.Mode().Perm())
+	}
+	if appRollbackErr != nil || networkRollbackErr != nil {
+		return errors.New("new configuration failed to start and automatic rollback failed; manual recovery required")
 	}
 	// A request deadline/cancellation must not prevent recovery of the known-good
 	// config. Use a fresh bounded context for the rollback restart.
 	rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer rollbackCancel()
 	if _, err := m.runner.Run(rollbackCtx, "systemctl", "restart", m.unit); err != nil {
-		return fmt.Errorf("new configuration failed; previous file was restored but service rollback restart failed")
+		return errors.New("new configuration failed; previous files were restored but service rollback restart failed")
 	}
 	if err := m.waitForState(rollbackCtx, "active"); err != nil {
-		return fmt.Errorf("new configuration failed; previous file was restored but previous service state could not be confirmed")
+		return errors.New("new configuration failed; previous files were restored but previous service state could not be confirmed")
 	}
-	return fmt.Errorf("new configuration failed to start; previous configuration was restored and restarted")
+	return errors.New("new configuration failed to start; previous configuration was restored and restarted")
 }
-
 func (m *Controller) configurationChanges(cfg adminapi.TunnelConfiguration) (map[string]string, error) {
 	changes := make(map[string]string)
 	if m.role == RoleGateway {
