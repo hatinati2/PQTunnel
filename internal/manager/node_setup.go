@@ -151,10 +151,25 @@ func (m *Controller) UploadNodeSetupBundle(ctx context.Context, data []byte) err
 func (m *Controller) NodeSetupStatus(ctx context.Context) (adminapi.NodeSetupStatus, error) {
 	_ = ctx
 	out := adminapi.NodeSetupStatus{Role: string(m.role), State: "idle"}
-	for _, path := range []string{nodeSetupWorkerPath, nodeSetupServicePath} {
+	for _, path := range []string{nodeSetupWorkerPath, nodeSetupServicePath, "/usr/local/bin/pqtunnel-pki"} {
 		info, err := os.Lstat(path)
 		if err != nil || !info.Mode().IsRegular() {
 			return out, nil
+		}
+	}
+	if m.role == RoleGateway {
+		for _, path := range []string{"/usr/local/sbin/pqtunneld", "/etc/systemd/system/pqtunneld-transport.service"} {
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() {
+				return out, nil
+			}
+		}
+	} else {
+		for _, path := range []string{"/usr/local/bin/pqtunnel-client", "/usr/local/lib/pqtunnel/run-client.sh", "/etc/systemd/system/pqtunnel-client-transport.service"} {
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() {
+				return out, nil
+			}
 		}
 	}
 	out.Available = true
