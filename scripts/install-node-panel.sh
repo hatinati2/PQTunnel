@@ -72,10 +72,10 @@ fi
 
 ENDPOINT_COUNT=0
 if [[ "$ROLE" == gateway ]]; then
-  for path in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/default/pqtunneld /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh; do
+  for path in /usr/local/sbin/pqtunneld /etc/systemd/system/pqtunneld.service /etc/default/pqtunneld /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh /etc/systemd/system/pqtunnel-gateway-prepare.service /etc/systemd/system/pqtunnel-gateway-network.service /etc/systemd/system/pqtunnel-gateway-cleanup.service; do
     [[ ! -e "$path" ]] || ENDPOINT_COUNT=$((ENDPOINT_COUNT + 1))
   done
-  EXPECTED_ENDPOINT_COUNT=5
+  EXPECTED_ENDPOINT_COUNT=8
   ENDPOINT_UNIT=pqtunneld.service
 else
   for path in /usr/local/bin/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/default/pqtunnel-client /etc/pqtunnel/site-to-site.env /usr/local/lib/pqtunnel/site-to-site-selective.sh /usr/local/lib/pqtunnel/run-client.sh /usr/local/lib/pqtunnel/stop-client-network.sh; do
@@ -109,6 +109,9 @@ if (( INSTALL_ENDPOINT )); then
   if [[ "$ROLE" == gateway ]]; then
     install -o root -g root -m 0755 "$SOURCE/pqtunneld" /usr/local/sbin/pqtunneld
     install -o root -g root -m 0644 "$SOURCE/deploy/systemd/pqtunneld.service" /etc/systemd/system/pqtunneld.service
+    install -o root -g root -m 0644 "$SOURCE/deploy/systemd/pqtunnel-gateway-prepare.service" /etc/systemd/system/pqtunnel-gateway-prepare.service
+    install -o root -g root -m 0644 "$SOURCE/deploy/systemd/pqtunnel-gateway-network.service" /etc/systemd/system/pqtunnel-gateway-network.service
+    install -o root -g root -m 0644 "$SOURCE/deploy/systemd/pqtunnel-gateway-cleanup.service" /etc/systemd/system/pqtunnel-gateway-cleanup.service
     cat > /etc/default/pqtunneld <<'ENV'
 # Draft endpoint configuration; review settings and install credentials before start.
 PQTUNNEL_LISTEN=0.0.0.0:8443
@@ -120,7 +123,6 @@ PQTUNNEL_PEER_PREFIXES=10.66.0.2/32,fd42:7061:7475::2/128
 PQTUNNEL_LOCAL_PREFIXES=0.0.0.0/0,::/0
 PQTUNNEL_PEER_NAME=pqtunnel-dialer
 PQTUNNEL_ALLOWED_DST_PORTS=tcp:443,udp:53,udp:123
-PQTUNNEL_MANAGER_NETWORK_HOOKS=1
 ENV
     chown root:root /etc/default/pqtunneld
     chmod 0640 /etc/default/pqtunneld
@@ -219,7 +221,7 @@ systemctl daemon-reload
 systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service /etc/systemd/system/pqtunnel-setup.service
 if (( INSTALL_ENDPOINT )); then
   if [[ "$ROLE" == gateway ]]; then
-    systemd-analyze verify /etc/systemd/system/pqtunneld.service
+    systemd-analyze verify /etc/systemd/system/pqtunneld.service /etc/systemd/system/pqtunnel-gateway-prepare.service /etc/systemd/system/pqtunnel-gateway-network.service /etc/systemd/system/pqtunnel-gateway-cleanup.service
   else
     systemd-analyze verify /etc/systemd/system/pqtunnel-client.service
   fi
