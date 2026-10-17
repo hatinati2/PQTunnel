@@ -181,7 +181,11 @@ PY
       fi
     else
       [[ "$MODE" != manager-upgrade ]] || fail '--manager-upgrade requires a complete existing manager installation; use --manager for a first install.'
-      bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE"
+      if [[ "$MODE" == node ]]; then
+        bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE" --with-node-endpoint --public-http --public-host "$PUBLIC_IP"
+      else
+        bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE"
+      fi
     fi
 
     [[ -f "$CONFIG" ]] || fail "manager config not found at $CONFIG; service left stopped."
@@ -204,7 +208,13 @@ PY
     systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service
     systemctl enable --now pqtunnel-manager
     systemctl --no-pager --full status pqtunnel-manager
-    printf '\nManager token configuration is stored root-only in %s. Default access is loopback-only; use SSH forwarding for remote access.\n' "$CONFIG"
-    printf 'This mode does not install or start the tunnel endpoint, and does not change routes, firewall, NAT, or forwarding.\n'
+    if [[ "$MODE" == node ]]; then
+      printf '\nPanel URL: http://%s:9091\n' "$PUBLIC_IP"
+      printf 'Open /node-setup to generate/import public profiles. The tunnel service is not started.\n'
+      printf 'No host firewall, NAT, forwarding, default-route, or policy-routing rules were changed by this installer.\n'
+    else
+      printf '\nManager token configuration is stored root-only in %s. Default access is loopback-only; use SSH forwarding for remote access.\n' "$CONFIG"
+      printf 'This mode does not install or start the tunnel endpoint, and does not change routes, firewall, NAT, or forwarding.\n'
+    fi
     ;;
 esac
