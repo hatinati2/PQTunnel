@@ -72,6 +72,7 @@ type Controller struct {
 	lastSpeedTestMu sync.Mutex
 	speedTestPeer   string
 	speedTestToken  string
+	defaultRouteApprovalPath string
 	lastSpeedTest   *adminapi.SpeedTestResult
 	now        func() time.Time
 }
@@ -116,7 +117,8 @@ func New(opts Options) (*Controller, error) {
 	return &Controller{
 		role: opts.Role, unit: unit, configPath: opts.ConfigPath, backupDir: opts.BackupDir,
 		ipcSocket: opts.IPCSocket, speedTestPeer: strings.TrimSpace(opts.SpeedTestPeer),
-		speedTestToken: opts.SpeedTestToken, runner: opts.Runner, now: time.Now,
+		speedTestToken: opts.SpeedTestToken, runner: opts.Runner,
+		defaultRouteApprovalPath: defaultRouteApprovalFile, now: time.Now,
 	}, nil
 }
 
