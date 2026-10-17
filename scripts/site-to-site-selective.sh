@@ -7,7 +7,7 @@ CONFIG="${PQTUNNEL_SITE_CONFIG:-/etc/pqtunnel/site-to-site.env}"
 STATE_DIR="${PQTUNNEL_STATE_DIR:-/var/lib/pqtunnel}"
 DIALER_STATE="$STATE_DIR/site-selective-dialer.state"
 GATEWAY_STATE="$STATE_DIR/site-selective-gateway.state"
-GATEWAY_TUN_OWNER_MARKER="/run/pqtunnel/pqtunnel-gateway-tun-owned"
+GATEWAY_TUN_OWNER_MARKER="/var/lib/pqtunnel-manager/gateway-tun-owned"
 TUN_DEFAULT="pqtun0"
 TUN_V4_DIALER="10.66.0.2/24"
 TUN_V4_GATEWAY="10.66.0.1/24"
@@ -375,8 +375,9 @@ gateway_preflight() {
 gateway_prepare() {
   need_root
   gateway_preflight
-  [[ -d /run/pqtunnel && ! -L /run/pqtunnel ]] || fail 'systemd RuntimeDirectory /run/pqtunnel is missing or unsafe'
-  [[ "$(stat -c '%u' /run/pqtunnel)" == 0 ]] || fail '/run/pqtunnel is not owned by root'
+  [[ -d /var/lib/pqtunnel-manager && ! -L /var/lib/pqtunnel-manager ]] || fail 'manager state directory is missing or unsafe'
+  [[ "$(stat -c '%u' /var/lib/pqtunnel-manager)" == 0 ]] || fail 'manager state directory is not owned by root'
+  [[ "$(stat -c '%a' /var/lib/pqtunnel-manager)" == 700 || "$(stat -c '%a' /var/lib/pqtunnel-manager)" == 750 ]] || fail 'manager state directory permissions are unsafe'
   [[ ! -e "$GATEWAY_TUN_OWNER_MARKER" && ! -L "$GATEWAY_TUN_OWNER_MARKER" ]] || fail 'Gateway TUN ownership marker already exists; inspect the previous service run'
   (umask 077; : > "$GATEWAY_TUN_OWNER_MARKER")
   chown root:root "$GATEWAY_TUN_OWNER_MARKER"
