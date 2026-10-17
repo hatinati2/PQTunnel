@@ -214,7 +214,7 @@ chown root:root "$TMP_CONFIG"
 chmod 0600 "$TMP_CONFIG"
 mv -f "$TMP_CONFIG" "$CONFIG"
 
-sed -i 's@^ReadWritePaths=.*@ReadWritePaths=-/etc/default/pqtunneld -/etc/default/pqtunnel-client /etc/pqtunnel/pki /var/lib/pqtunnel-manager@' /etc/systemd/system/pqtunnel-manager.service
+sed -i 's@^ReadWritePaths=.*@ReadWritePaths=-/etc/default/pqtunneld -/etc/default/pqtunnel-client -/etc/pqtunnel/site-to-site.env /etc/pqtunnel/pki /var/lib/pqtunnel-manager@' /etc/systemd/system/pqtunnel-manager.service
 chmod 0644 /etc/systemd/system/pqtunnel-manager.service
 
 systemctl daemon-reload
