@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0-rc6
+
+- Added an independent per-VPS installation mode that installs and starts the management panel plus a dormant role-specific endpoint draft without starting the tunnel or applying any routes, firewall rules, TUN interfaces, or forwarding settings.
+- Added authenticated Gateway credential generation, private Dialer bundle export/import with certificate and key validation, and endpoint start guards that require valid credentials.
+- Added a read-only Gateway network preflight before starting its endpoint and enabled default route CIDRs only in the intended local/remote prefix fields.
+- Added bilingual instructions for installing Gateway and Dialer separately. Public HTTP remains an explicit temporary opt-in and is not encrypted; this release remains experimental and has not had an independent security audit.
+
 ## 0.3.0-rc5
 
 - Added an authenticated, Persian/English graphical two-VPS setup wizard to the standalone Dialer manager, with constrained inputs and a separate final approval gate after both hosts pass preflight.
