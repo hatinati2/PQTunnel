@@ -164,18 +164,29 @@ fi
 
 if (( UPGRADE )); then
   config_tmp="$(mktemp /etc/default/pqtunnel-manager.XXXXXX)"
-  awk '!/^(PQTUNNEL_SETUP_VERSION|PQTUNNEL_MANAGER_LISTEN|PQTUNNEL_MANAGER_TOKEN|PQTUNNEL_MANAGER_PUBLIC_HOST|PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP|PQTUNNEL_MANAGER_TLS_CERT|PQTUNNEL_MANAGER_TLS_KEY)=/' /etc/default/pqtunnel-manager > "$config_tmp"
+  old_endpoint_mode="$(sed -n 's/^PQTUNNEL_MANAGER_ENDPOINT_MODE=//p' /etc/default/pqtunnel-manager | head -n1)"
+  awk '!/^(PQTUNNEL_SETUP_VERSION|PQTUNNEL_MANAGER_LISTEN|PQTUNNEL_MANAGER_TOKEN|PQTUNNEL_MANAGER_PUBLIC_HOST|PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP|PQTUNNEL_MANAGER_TLS_CERT|PQTUNNEL_MANAGER_TLS_KEY|PQTUNNEL_MANAGER_ENDPOINT_MODE)=/' /etc/default/pqtunnel-manager > "$config_tmp"
   old_listen="$(sed -n 's/^PQTUNNEL_MANAGER_LISTEN=//p' /etc/default/pqtunnel-manager | head -n1)"
   old_insecure="$(sed -n 's/^PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=//p' /etc/default/pqtunnel-manager | head -n1)"
-  if [[ "$old_insecure" == true || ! "$old_listen" =~ ^(127\.0\.0\.1:[0-9]+|\[::1\]:[0-9]+)$ ]]; then
+  old_token="$(sed -n 's/^PQTUNNEL_MANAGER_TOKEN=//p' /etc/default/pqtunnel-manager | head -n1)"
+  if (( PUBLIC_HTTP )); then
+    if [[ ! "$old_token" =~ ^[A-Za-z0-9_.,:/=-]{32,}$ ]]; then
+      NEW_MANAGER_TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+      [[ "$NEW_MANAGER_TOKEN" =~ ^[0-9a-f]{64}$ ]] || fail 'could not generate a replacement manager token; upgrade stopped.'
+      old_token="$NEW_MANAGER_TOKEN"
+    fi
+    printf 'PQTUNNEL_MANAGER_LISTEN=0.0.0.0:9091\nPQTUNNEL_MANAGER_PUBLIC_HOST=%s\nPQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=true\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$PUBLIC_HOST" "$old_token" >> "$config_tmp"
+  elif [[ "$old_insecure" == true || ! "$old_listen" =~ ^(127\.0\.0\.1:[0-9]+|\[::1\]:[0-9]+)$ ]]; then
     NEW_MANAGER_TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
     [[ "$NEW_MANAGER_TOKEN" =~ ^[0-9a-f]{64}$ ]] || fail 'could not generate a replacement manager token; upgrade stopped.'
     printf 'PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$NEW_MANAGER_TOKEN" >> "$config_tmp"
   else
-    printf 'PQTUNNEL_MANAGER_LISTEN=%s\n' "$old_listen" >> "$config_tmp"
-    old_token="$(sed -n 's/^PQTUNNEL_MANAGER_TOKEN=//p' /etc/default/pqtunnel-manager | head -n1)"
-    [[ "$old_token" =~ ^[A-Za-z0-9_.,:/=\-\[\]]{32,}$ ]] || fail 'existing manager token is missing or invalid; repair it locally before upgrading.'
-    printf 'PQTUNNEL_MANAGER_TOKEN=%s\n' "$old_token" >> "$config_tmp"
+    printf 'PQTUNNEL_MANAGER_LISTEN=%s\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$old_listen" "$old_token" >> "$config_tmp"
+  fi
+  if (( WITH_NODE_ENDPOINT )); then
+    printf 'PQTUNNEL_MANAGER_ENDPOINT_MODE=transport\n' >> "$config_tmp"
+  elif [[ -n "$old_endpoint_mode" ]]; then
+    printf 'PQTUNNEL_MANAGER_ENDPOINT_MODE=%s\n' "$old_endpoint_mode" >> "$config_tmp"
   fi
   printf 'PQTUNNEL_SETUP_VERSION=%s\n' "$SOURCE_VERSION" >> "$config_tmp"
   chown root:root "$config_tmp"
@@ -183,20 +194,20 @@ if (( UPGRADE )); then
   mv -f "$config_tmp" /etc/default/pqtunnel-manager
 else
   cat > /etc/default/pqtunnel-manager <<ENV
-# Optional management UI. It remains stopped until you review this file and start it.
+# Optional management UI; token is assigned by the top-level installer.
 PQTUNNEL_MANAGER_ROLE=$ROLE
-PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091
-# Set this to a random secret of at least 32 bytes; never commit or share it.
+ENV
+  if (( PUBLIC_HTTP )); then
+    printf 'PQTUNNEL_MANAGER_LISTEN=0.0.0.0:9091\nPQTUNNEL_MANAGER_PUBLIC_HOST=%s\nPQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=true\n' "$PUBLIC_HOST" >> /etc/default/pqtunnel-manager
+  else
+    printf 'PQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\n' >> /etc/default/pqtunnel-manager
+  fi
+  if (( WITH_NODE_ENDPOINT )); then
+    printf 'PQTUNNEL_MANAGER_ENDPOINT_MODE=transport\n' >> /etc/default/pqtunnel-manager
+  fi
+  cat >> /etc/default/pqtunnel-manager <<ENV
 PQTUNNEL_MANAGER_TOKEN=
 PQTUNNEL_SETUP_VERSION=$SOURCE_VERSION
-# Optional tunnel-only speed test. Set the actual private TUN addresses.
-# Gateway example: listen=10.66.0.1:9109, peer=10.66.0.2:9109
-# Dialer example:  listen=10.66.0.2:9109, peer=10.66.0.1:9109
-# Configure matching local/peer prefixes and allow tcp:9109 on BOTH tunnel configs.
-# Use the SAME separate random token on both servers; do not reuse the web token.
-# PQTUNNEL_MANAGER_SPEEDTEST_LISTEN=
-# PQTUNNEL_MANAGER_SPEEDTEST_PEER=
-# PQTUNNEL_MANAGER_SPEEDTEST_TOKEN=
 ENV
   chown root:root /etc/default/pqtunnel-manager
   chmod 0600 /etc/default/pqtunnel-manager
