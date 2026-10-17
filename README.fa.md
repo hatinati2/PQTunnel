@@ -105,10 +105,10 @@ curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh 
 
 برای هر سرور، دستور مربوط به همان نقش را جداگانه روی همان VPS اجرا کن. دستور فقط پنل وب و فایل‌های اولیهٔ endpoint همان سرور را نصب می‌کند؛ سرویس تونل روشن نمی‌شود و هیچ route، فایروال، forwarding یا رابط TUN تغییر نمی‌کند.
 
-\`\`\`sh
+```sh
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --panel gateway --public-http-host 203.0.113.10
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --panel dialer --public-http-host 203.0.113.20
-\`\`\`
+```
 
 به‌جای IPهای نمونه، IP عمومی واقعی هر VPS را قرار بده و روی هر سرور فقط دستور نقش خودش را اجرا کن. پنل در آدرس http://YOUR_VPS_IP:9091 باز می‌شود. گزینهٔ --public-http-host دسترسی عمومی HTTP بدون رمزنگاری را فقط برای تست موقت فعال می‌کند؛ اگر این گزینه حذف شود، پنل به loopback محدود می‌ماند. در فایروال ارائه‌دهنده، TCP/9091 را مجاز کن و توکن پنل را برای کسی نفرست.
 
