@@ -25,7 +25,7 @@ PQTunnel یک تونل آزمایشی لایهٔ ۳ با encapsulation بسته�
 
 - حمل بسته‌های IPv4 و IPv6 و فیلتر route بر پایهٔ CIDR برای لینک آزمایشی server-to-server؛ تنظیم واقعی مسیرهای IPv6 هنوز دستی و آزمایش‌نشده است.
 - فیلتر پورت مقصد TCP/UDP با `--allowed-dst-ports`، مثل `tcp:443,udp:53,tcp:8000-8010`؛ با فعال‌بودن فیلتر، بسته‌های fragment‌شده عمداً رد می‌شوند.
-- helper آزمایشی `scripts/site-to-site-selective.sh` برای policy routing انتخابی روی پورت‌های خروجی و DNAT/SNAT پورت‌های ورودی؛ نیازمند میزبان آزمایشی اختصاصی و بررسی دستی است.
+- helper آزمایشی `scripts/site-to-site-selective.sh` برای policy routing انتخابی IPv4/IPv6، forwarding و egress پورت‌های مشخص و DNAT/SNAT ورودی TCP/UDP؛ فقط برای میزبان اختصاصیِ بدون قواعد فایروال/forwarding موجود طراحی شده است. CI آن را فقط در network namespace ایزوله آزمایش می‌کند؛ کارکرد روی دو VPS واقعی و فایروال ارائه‌دهنده هنوز تأیید نشده است.
 - پارامترهای transport برای hostname/IPv4/IPv6 (`--server`, `--server-name`, `--network tcp|tcp4|tcp6`) و حالت peer-prefix تک‌اتصالی.
 - مسیر نصب سرویس Ubuntu با systemd در `scripts/install-server.sh` و `deploy/systemd/pqtunneld.service`.
 - اسکریپت مستقل و قابل بازگردانی برای فعال‌سازی IPv4 forwarding و NAT در `scripts/server-network.sh`؛ فقط جدول اختصاصی nftables خودش را مدیریت می‌کند و UFW را تغییر نمی‌دهد.
