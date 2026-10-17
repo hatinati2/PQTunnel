@@ -69,6 +69,16 @@ grep -Fq 'outside PQTUNNEL_REMOTE_PREFIXES' "$ROOT/prefix.err"
 
 cat > "$ROOT/client.env" <<'EOF'
 PQTUNNEL_REMOTE_PREFIXES=10.66.0.1/32
+PQTUNNEL_ALLOWED_DST_PORTS=
+EOF
+if bash "$SCRIPT" "${ARGS[@]}" > /dev/null 2> "$ROOT/empty-allow.err"; then
+  echo "test failure: empty destination allowlist was accepted" >&2
+  exit 1
+fi
+grep -Fq 'must explicitly allow the target TCP port' "$ROOT/empty-allow.err"
+
+cat > "$ROOT/client.env" <<'EOF'
+PQTUNNEL_REMOTE_PREFIXES=10.66.0.1/32
 PQTUNNEL_ALLOWED_DST_PORTS=tcp:10488
 EOF
 if FAKE_SS_BUSY=1 bash "$SCRIPT" "${ARGS[@]}" > /dev/null 2> "$ROOT/busy.err"; then
