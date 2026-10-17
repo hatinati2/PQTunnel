@@ -12,6 +12,7 @@ Checks OS, tools, routes, forwarding, policy table conflicts, firewall presence,
 PQTunnel files/service state and certificate expiry. Does not source config files,
 print certificate/private-key contents, write reports, or apply changes.
 --endpoint optionally checks the existing route to a literal IP or resolved hostname.
+PQTUNNEL_PREFLIGHT_PKI_DIR optionally overrides the PKI directory (mainly for isolated fixture tests).
 USAGE
 }
 while (($#)); do
@@ -23,6 +24,12 @@ while (($#)); do
   esac
 done
 case "$ROLE" in dialer|gateway|both) ;; *) echo "role must be dialer, gateway or both" >&2; exit 2 ;; esac
+
+PKI_DIR="${PQTUNNEL_PREFLIGHT_PKI_DIR:-/etc/pqtunnel/pki}"
+if [[ "$PKI_DIR" != /* ]]; then
+  echo "PQTUNNEL_PREFLIGHT_PKI_DIR must be an absolute path" >&2
+  exit 2
+fi
 
 PASS=0; WARN=0; FAIL=0
 report() {
@@ -255,20 +262,20 @@ if [[ "$ROLE" == gateway || "$ROLE" == both ]]; then
   printf '%s\n' '--- gateway/listener checks ---'
   check_file /usr/local/sbin/pqtunneld 'pqtunneld binary'
   check_file /etc/default/pqtunneld 'pqtunneld environment file'
-  check_file /etc/pqtunnel/pki/server.crt 'server certificate'
-  check_file /etc/pqtunnel/pki/server.key 'server private key' 1
-  check_file /etc/pqtunnel/pki/ca.crt 'peer CA certificate'
+  check_file "$PKI_DIR/server.crt" 'server certificate'
+  check_file "$PKI_DIR/server.key" 'server private key' 1
+  check_file "$PKI_DIR/ca.crt" 'peer CA certificate'
   if have systemctl; then
     if systemctl is-active --quiet pqtunneld 2>/dev/null; then report WARN 'pqtunneld service is active.'; else report PASS 'pqtunneld service is not active.'; fi
     if systemctl is-enabled --quiet pqtunneld 2>/dev/null; then report WARN 'pqtunneld is enabled at boot.'; else report PASS 'pqtunneld is not enabled at boot.'; fi
   fi
   if have openssl; then
-    if [[ -s /etc/pqtunnel/pki/server.crt ]]; then
-      END_DATE=$(openssl x509 -in /etc/pqtunnel/pki/server.crt -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
+    if [[ -s "$PKI_DIR/server.crt" ]]; then
+      END_DATE=$(openssl x509 -in "$PKI_DIR/server.crt" -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
       [[ -z "$END_DATE" ]] || printf 'server_certificate_not_after=%s\n' "$END_DATE"
     fi
-    check_certificate_bundle /etc/pqtunnel/pki/server.crt /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/ca.crt sslserver 'Server'
-    check_ca_certificate /etc/pqtunnel/pki/ca.crt 'Peer'
+    check_certificate_bundle "$PKI_DIR/server.crt" "$PKI_DIR/server.key" "$PKI_DIR/ca.crt" sslserver 'Server'
+    check_ca_certificate "$PKI_DIR/ca.crt" 'Peer'
   fi
 fi
 
@@ -276,9 +283,9 @@ if [[ "$ROLE" == dialer || "$ROLE" == both ]]; then
   printf '%s\n' '--- dialer/client checks ---'
   check_file /usr/local/bin/pqtunnel-client 'pqtunnel-client binary'
   check_file /etc/pqtunnel/site-to-site.env 'selective network config'
-  check_file /etc/pqtunnel/pki/client.crt 'client/peer certificate'
-  check_file /etc/pqtunnel/pki/client.key 'client/peer private key' 1
-  check_file /etc/pqtunnel/pki/ca.crt 'server CA certificate'
+  check_file "$PKI_DIR/client.crt" 'client/peer certificate'
+  check_file "$PKI_DIR/client.key" 'client/peer private key' 1
+  check_file "$PKI_DIR/ca.crt" 'server CA certificate'
   if have pgrep; then
     CLIENT_COUNT=$(pgrep -x pqtunnel-client 2>/dev/null | awk 'END{print NR+0}')
     printf 'pqtunnel_client_process_count=%s\n' "$CLIENT_COUNT"
@@ -288,8 +295,23 @@ if [[ "$ROLE" == dialer || "$ROLE" == both ]]; then
     if systemctl is-active --quiet pqtunnel-client 2>/dev/null; then report WARN 'pqtunnel-client systemd unit is active.'; else report PASS 'pqtunnel-client systemd unit is not active.'; fi
   fi
   if have openssl; then
-    check_certificate_bundle /etc/pqtunnel/pki/client.crt /etc/pqtunnel/pki/client.key /etc/pqtunnel/pki/ca.crt sslclient 'Client/peer'
-    check_ca_certificate /etc/pqtunnel/pki/ca.crt 'Server'
+    CLIENT_CA="$PKI_DIR/ca.crt"
+    if [[ -s "$PKI_DIR/dialer-ca.crt" && -s "$PKI_DIR/client.crt" ]] &&
+       openssl verify -purpose sslclient -CAfile "$PKI_DIR/dialer-ca.crt" "$PKI_DIR/client.crt" >/dev/null 2>&1; then
+      CLIENT_CA="$PKI_DIR/dialer-ca.crt"
+    elif [[ -s "$PKI_DIR/dialer-ca.crt" && -s "$PKI_DIR/client.crt" ]] &&
+         openssl verify -purpose sslclient -CAfile "$PKI_DIR/ca.crt" "$PKI_DIR/client.crt" >/dev/null 2>&1; then
+      report WARN 'dialer-ca.crt exists but does not verify the client certificate; ca.crt matches, so the fallback CA is being used.'
+    fi
+    printf 'client_certificate_ca=%s\n' "\${CLIENT_CA##*/}"
+    if [[ "$CLIENT_CA" != "$PKI_DIR/ca.crt" ]]; then
+      check_file "$CLIENT_CA" 'client/peer CA certificate'
+    fi
+    check_certificate_bundle "$PKI_DIR/client.crt" "$PKI_DIR/client.key" "$CLIENT_CA" sslclient 'Client/peer'
+    if [[ "$CLIENT_CA" != "$PKI_DIR/ca.crt" ]]; then
+      check_ca_certificate "$CLIENT_CA" 'Client/peer'
+    fi
+    check_ca_certificate "$PKI_DIR/ca.crt" 'Server'
   fi
 fi
 
