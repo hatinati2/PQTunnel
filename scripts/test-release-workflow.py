@@ -57,7 +57,7 @@ class ReleaseProxyWorkflowTests(unittest.TestCase):
         self.assertIn("needs: integration-test", release_job)
         self.assertIn("ref: ${{ github.sha }}", self.workflow)
         self.assertNotIn("ref: ${{ inputs.release_tag }}", self.workflow)
-        self.assertIn("existing_sha != \"$TARGET_SHA\"", self.workflow)
+        self.assertIn('if [[ "$existing_sha" != "$TARGET_SHA" ]]; then', self.workflow)
         self.assertIn("tag_name: ${{ inputs.release_tag }}", release_job)
         self.assertIn("target_commitish: ${{ github.sha }}", release_job)
         self.assertIn("name: ${{ contains(inputs.release_tag, '-') && format('PQTunnel {0} — Experimental VPS Test', inputs.release_tag) || format('PQTunnel {0}', inputs.release_tag) }}", release_job)
