@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0-rc8
+
+- Prepared an experimental Linux candidate for controlled VPS acceptance testing.
+- Release automation can publish an explicitly marked prerelease without representing the Linux MVP gates as passed.
+- Linux bundles target amd64 and arm64; Ubuntu 24.04/26.04 remain the automated test matrix.
+- Real independent two-VPS connectivity, provider firewall coexistence, and out-of-band recovery remain unverified. This candidate is not production-ready.
+
 ## 0.3.0-rc6
 
 - Added an independent per-VPS installer mode: `--node gateway|dialer --public-ip IPv4` installs and starts only the local management panel, while installing role-specific endpoint assets without enabling or starting the tunnel.

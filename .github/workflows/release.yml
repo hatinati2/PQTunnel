@@ -12,6 +12,11 @@ on:
         required: true
         type: boolean
         default: false
+      experimental_prerelease:
+        description: Allow an explicitly experimental prerelease for VPS acceptance testing without claiming the Linux MVP gates passed
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -72,8 +77,8 @@ jobs:
         run: sudo bash scripts/test-site-to-site-selective-fail-closed.sh
 
   release:
-    # Manual dispatch only; publishing requires a main-branch run and explicit operator confirmation after reviewing all Linux MVP evidence.
-    if: github.ref == 'refs/heads/main' && inputs.linux_mvp_gates_passed == true
+    # Manual dispatch only. Experimental prereleases may be published for controlled VPS acceptance; stable releases require explicit approval of all Linux MVP gates.
+    if: github.ref == 'refs/heads/main' && (inputs.linux_mvp_gates_passed == true || (inputs.experimental_prerelease == true && contains(inputs.release_tag, '-')))
     needs: integration-test
     runs-on: ubuntu-24.04
     permissions:
@@ -113,6 +118,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag }}
+          name: ${{ contains(inputs.release_tag, '-') && format('PQTunnel {0} — Experimental VPS Test', inputs.release_tag) || format('PQTunnel {0}', inputs.release_tag) }}
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
