@@ -10,13 +10,8 @@ RuntimeDirectory=pqtunnel
 RuntimeDirectoryMode=0750
 EnvironmentFile=-/etc/default/pqtunneld
 # For site-to-site mode set PEER_PREFIXES, LOCAL_PREFIXES, PEER_NAME and MAX_CLIENTS=1.
-# The independent node-panel installer opts into these fixed network hooks.
-# Legacy installations do not set this flag and retain their existing explicit apply workflow.
-ExecStartPre=/bin/sh -ec 'test "$PQTUNNEL_MANAGER_NETWORK_HOOKS" != 1 || exec /usr/local/lib/pqtunnel/site-to-site-selective.sh gateway-prepare'
 ExecStartPre=/bin/sh -ec 'ip link show pqtun0 >/dev/null 2>&1 || ip tuntap add dev pqtun0 mode tun; ip address replace 10.66.0.1/24 dev pqtun0; ip link set dev pqtun0 up'
 ExecStart=/usr/local/sbin/pqtunneld
-ExecStartPost=/bin/sh -ec 'test "$PQTUNNEL_MANAGER_NETWORK_HOOKS" != 1 || exec /usr/local/lib/pqtunnel/site-to-site-selective.sh gateway-up'
-ExecStopPost=/bin/sh -ec 'test "$PQTUNNEL_MANAGER_NETWORK_HOOKS" != 1 || exec /usr/local/lib/pqtunnel/site-to-site-selective.sh gateway-cleanup'
 Restart=on-failure
 RestartSec=3s
 TimeoutStopSec=15s
