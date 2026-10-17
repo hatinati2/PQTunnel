@@ -16,15 +16,26 @@ class OneLineInstallerTests(unittest.TestCase):
         cls.readme_en = (ROOT / "README.md").read_text(encoding="utf-8")
         cls.readme_fa = (ROOT / "README.fa.md").read_text(encoding="utf-8")
         cls.manager_installer = (ROOT / "scripts/install-manager.sh").read_text(encoding="utf-8")
+        cls.node_panel_installer = (ROOT / "scripts/install-node-panel.sh").read_text(encoding="utf-8")
         cls.pki_installer = (ROOT / "scripts/prepare-site-to-site-pki.sh").read_text(encoding="utf-8")
         cls.setup = (ROOT / "scripts/pqtunnel-site-to-site-setup.sh").read_text(encoding="utf-8")
         cls.remote_setup = (ROOT / "scripts/pqtunnel-site-to-site-remote.sh").read_text(encoding="utf-8")
 
-    def test_installer_tracks_current_rc5_release(self) -> None:
-        self.assertIn('VERSION="v0.3.0-rc5"', self.script)
-        self.assertNotIn('VERSION="v0.3.0-rc4"', self.script)
+    def test_installer_tracks_current_rc6_release(self) -> None:
+        self.assertIn('VERSION="v0.3.0-rc6"', self.script)
+        self.assertNotIn('VERSION="v0.3.0-rc5"', self.script)
         self.assertIn('"$RELEASE_BASE/SHA256SUMS"', self.script)
         self.assertIn('sha256sum --check -', self.script)
+
+    def test_independent_panel_mode_installs_one_role_and_leaves_endpoint_stopped(self) -> None:
+        self.assertIn("--panel gateway", self.script)
+        self.assertIn("--panel dialer", self.script)
+        self.assertIn("--public-http-host", self.script)
+        self.assertIn('scripts/install-node-panel.sh', self.script)
+        self.assertIn("systemctl enable --now pqtunnel-manager", self.node_panel_installer)
+        self.assertIn('Endpoint unit: %s (not enabled or started)', self.node_panel_installer)
+        self.assertIn("No routes, firewall rules, TUN interfaces, or forwarding settings were changed.", self.node_panel_installer)
+        self.assertIn("gateway-preflight", (ROOT / "scripts/site-to-site-selective.sh").read_text(encoding="utf-8"))
 
     def test_new_token_is_saved_root_only_and_shown_once(self) -> None:
         self.assertIn("TOKEN_GENERATED=0", self.script)
