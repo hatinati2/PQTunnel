@@ -140,6 +140,19 @@ case "$MODE" in
       prompt 'Manager role on this server [gateway/dialer]: ' ROLE
     fi
     [[ "$ROLE" == gateway || "$ROLE" == dialer ]] || fail 'manager role must be gateway or dialer.'
+    if [[ "$MODE" == node ]]; then
+      [[ -n "$PUBLIC_IP" ]] || prompt 'Public IPv4 address for this VPS: ' PUBLIC_IP
+      need python3
+      python3 - "$PUBLIC_IP" <<'PY'
+import ipaddress, sys
+try:
+    value = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit("public IP must be a literal IPv4 address")
+if value.version != 4 or not value.is_global:
+    raise SystemExit("public IP must be a global IPv4 address")
+PY
+    fi
     need curl; need tar; need sha256sum; need awk; need uname; need od; need tr; need systemctl; need systemd-analyze; need sed; need grep
     case "$(uname -m)" in
       x86_64|amd64) ARCH=amd64 ;;
@@ -159,11 +172,12 @@ case "$MODE" in
     if [[ -x /usr/local/sbin/pqtunnel-manager && -f /etc/systemd/system/pqtunnel-manager.service && -f "$CONFIG" ]]; then
       EXISTING_ROLE="$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' "$CONFIG" | head -n1)"
       [[ "$EXISTING_ROLE" == "$ROLE" ]] || fail "existing manager role is '$EXISTING_ROLE', not '$ROLE'; refusing to change it."
-      if [[ "$MODE" == manager-upgrade ]]; then
-        [[ -x "$SOURCE_DIR/pqtunnel-manager" && -f "$SOURCE_DIR/deploy/systemd/pqtunnel-setup.service" && -f "$SOURCE_DIR/scripts/pqtunnel-setup-worker.sh" ]] || fail "the pinned release $VERSION does not contain the graphical setup wizard yet. Do not retry this against rc4; upgrade becomes available after the wizard release is published."
+      if [[ "$MODE" == node ]]; then
+        bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE" --upgrade --with-node-endpoint --public-http --public-host "$PUBLIC_IP"
+      elif [[ "$MODE" == manager-upgrade ]]; then
         bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE" --upgrade
       else
-        printf 'Existing manager installation found; keeping its binary, unit, and role. Use --manager-upgrade %s to upgrade after the wizard release is published.\n' "$ROLE"
+        printf 'Existing manager installation found; keeping its binary, unit, and role. Use --manager-upgrade %s to upgrade it.\n' "$ROLE"
       fi
     else
       [[ "$MODE" != manager-upgrade ]] || fail '--manager-upgrade requires a complete existing manager installation; use --manager for a first install.'
