@@ -64,12 +64,15 @@ USAGE
 
 MODE=""
 ROLE=""
+PUBLIC_IP=""
 while (($#)); do
   case "$1" in
     --site-to-site|--full) MODE=site-to-site; shift ;;
     --pair) MODE=pair; shift ;;
     --manager) MODE=manager; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     --manager-upgrade) MODE=manager-upgrade; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
+    --node) MODE=node; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
+    --public-ip) PUBLIC_IP="${2:?missing public IPv4 address}"; shift 2 ;;
     --preflight) MODE=preflight; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1 (use --help)." ;;
@@ -131,7 +134,7 @@ case "$MODE" in
     curl --fail --silent --show-error --location "$RAW_BASE/scripts/site-to-site-preflight.sh" -o "$TMP_DIR/site-to-site-preflight.sh"
     bash "$TMP_DIR/site-to-site-preflight.sh" --role "$ROLE"
     ;;
-  manager|manager-upgrade)
+  manager|manager-upgrade|node)
     [[ "$EUID" -eq 0 ]] || fail 'manager installation requires root; rerun with sudo.'
     if [[ -z "$ROLE" ]]; then
       prompt 'Manager role on this server [gateway/dialer]: ' ROLE
