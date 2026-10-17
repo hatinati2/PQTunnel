@@ -76,7 +76,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:right;padding:13px 10
 footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{display:flex;gap:8px}.language-picker a{white-space:nowrap}
 @media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.details{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:540px){.wrap{margin-top:22px}.grid,.details{grid-template-columns:1fr}.section{padding:14px}table,tbody,tr,td{display:block}thead{display:none}tr{border-bottom:1px solid #26334d;padding:9px 0}td{border:0;padding:5px 2px}td:before{content:attr(data-label) ": ";color:var(--muted)}td:last-child:before{content:""}}
- .configform{display:grid;gap:12px}.configform label{display:block;font-weight:650;margin:5px 0}.configform input:not([type=hidden]){display:block;width:100%;margin-top:6px;padding:11px 12px;border:1px solid #394966;border-radius:10px;background:#0c1425;color:var(--text);font:inherit}.configform input[type=number]{max-width:220px}.configform details{width:max-content;max-width:100%}.configform details p{max-width:700px}
+ .configform{display:grid;gap:12px}.configform label{display:block;font-weight:650;margin:5px 0}.configform input:not([type=hidden]){display:block;width:100%;margin-top:6px;padding:11px 12px;border:1px solid #394966;border-radius:10px;background:#0c1425;color:var(--text);font:inherit}.configform input[type=number]{max-width:220px}.configform input.default-route-approval{width:auto;display:inline-block;margin-inline-start:8px}.configform details{width:max-content;max-width:100%}.configform details p{max-width:700px}
 </style></head>
 <body><main class="wrap">
 <header><div><h1>{{tr .Lang "پنل مدیریت PQTunnel" "PQTunnel Management Panel"}}</h1><p class="sub">{{tr .Lang "وضعیت سرویس و همتایان متصل · کنترل محدود و امن" "Service and connected peers · limited, secure controls"}}</p></div>
@@ -131,7 +131,8 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 <label>{{tr .Lang "CIDRهای سمت Gateway قابل‌دسترسی برای Dialer" "Gateway CIDRs reachable by the Dialer"}}<input name="remote_prefixes" maxlength="2048" required value="{{.Manager.Config.RemotePrefixes}}"></label>
 {{end}}
 <label>{{tr .Lang "Allowlist پورت‌های مقصد TCP/UDP" "TCP/UDP destination port allowlist"}}<input name="allowed_dst_ports" maxlength="1024" required value="{{.Manager.Config.AllowedDstPorts}}"></label>
-<p class="sub">{{tr .Lang "تغییرات با اعتبارسنجی و تهیهٔ نسخهٔ پشتیبان ذخیره می‌شود. اگر سرویس فعال باشد، پنل آن را restart می‌کند؛ در صورت ناموفق‌بودن، تنظیم قبلی بازگردانده می‌شود. انتخاب default route یا CIDR هم‌پوشان رد می‌شود یا نیازمند بازبینی جداگانه است." "Changes are validated and backed up before saving. If the service is active, the panel restarts it; if restart fails, the previous settings are restored. Default-route or overlapping CIDR changes are rejected or require separate review."}}</p>
+<p class="sub">{{tr .Lang "تغییرات با اعتبارسنجی و تهیهٔ نسخهٔ پشتیبان ذخیره می‌شود. اگر سرویس فعال باشد، پنل آن را restart می‌کند؛ در صورت ناموفق‌بودن، تنظیم قبلی بازگردانده می‌شود. مسیر پیش‌فرض ممکن است ترافیک پورت‌های انتخاب‌شده را به شبکهٔ دوردست بفرستد." "Changes are validated and backed up before saving. If the service is active, the panel restarts it; if restart fails, the previous settings are restored. A default route may send selected-port traffic to the remote network."}}</p>
+<label><input class="default-route-approval" type="checkbox" name="allow_default_routes" value="yes"> {{tr .Lang "مسیرهای پیش‌فرض 0.0.0.0/0 یا ::/0 را بررسی کرده‌ام و صریحاً تأیید می‌کنم." "I reviewed and explicitly approve use of 0.0.0.0/0 or ::/0 in these tunnel route-prefix fields."}}</label>
 <details class="disconnect"><summary>{{tr .Lang "بررسی و اعمال تنظیمات" "Review and apply settings"}}</summary><p>{{tr .Lang "اعمال ممکن است تونل را برای چند لحظه قطع کند. فقط وقتی دسترسی کنسول/SSH مستقل داری تأیید کن." "Applying changes may briefly interrupt the tunnel. Confirm only when you have independent console/SSH access."}}</p><input type="hidden" name="confirm" value="yes"><button class="danger" type="submit">{{tr .Lang "تأیید اعتبارسنجی و اعمال" "Validate and apply"}}</button></details>
 </form>
 {{end}}
@@ -472,6 +473,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ServerName: r.PostForm.Get("server_name"),
 			RemotePrefixes: r.PostForm.Get("remote_prefixes"),
 			AllowedDstPorts: r.PostForm.Get("allowed_dst_ports"),
+			AllowDefaultRoutes: r.PostForm.Get("allow_default_routes") == "yes",
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
