@@ -71,8 +71,8 @@ if not any(target in network for network in networks if network.version == 4):
 
 allow_text = values.get("PQTUNNEL_ALLOWED_DST_PORTS", "")
 if not allow_text:
-    print("pqtunnel-tcp-forward: WARNING: PQTUNNEL_ALLOWED_DST_PORTS is empty; the client-side port filter is disabled.", file=sys.stderr)
-    raise SystemExit(0)
+    print("pqtunnel-tcp-forward: ERROR: PQTUNNEL_ALLOWED_DST_PORTS must explicitly allow the target TCP port; refusing an unfiltered relay", file=sys.stderr)
+    raise SystemExit(1)
 
 matched = False
 for raw in allow_text.split(","):
@@ -199,6 +199,10 @@ Group=nogroup
 ExecStart=${socat_bin} TCP-LISTEN:${listen_port},bind=${listen_address},reuseaddr,fork TCP:${target_address}:${target_port}
 Restart=on-failure
 RestartSec=2s
+TasksMax=128
+LimitNOFILE=4096
+MemoryMax=256M
+OOMPolicy=stop
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
