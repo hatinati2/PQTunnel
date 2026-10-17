@@ -118,6 +118,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag }}
+          name: ${{ contains(inputs.release_tag, '-') && format('PQTunnel {0} — Experimental VPS Test', inputs.release_tag) || format('PQTunnel {0}', inputs.release_tag) }}
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
