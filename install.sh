@@ -2,7 +2,7 @@
 # PQTunnel one-line entry point. Preflight is read-only; manager setup can print a new token once.
 set -Eeuo pipefail
 
-VERSION="v0.3.0-rc5"
+VERSION="v0.3.0-rc6"
 REPO="hatinati2/PQTunnel"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
 SOURCE_RAW_BASE="$RAW_BASE"
@@ -35,11 +35,13 @@ prompt() {
 }
 usage() {
   cat <<'USAGE'
-PQTunnel one-line installer (experimental release v0.3.0-rc5)
+PQTunnel one-line installer (experimental release v0.3.0-rc6)
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --panel gateway --public-http-host 203.0.113.10
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --panel dialer --public-http-host 203.0.113.20
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager-upgrade dialer
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --pair
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --site-to-site
@@ -49,6 +51,8 @@ Modes:
   --site-to-site / --full    Guided setup for both VPSes: Gateway over root SSH, Dialer locally,
                              mutual-TLS PKI, tunnel endpoints, selective-port routing, and both panels.
   --pair                     Legacy paired installer; requires SSH-key root access to Germany.
+  --panel gateway|dialer     Install the local panel and a dormant endpoint on this VPS only.
+  --public-http-host IP       Opt in to temporary public HTTP at http://IP:9091 (panel mode only).
   --manager gateway|dialer   Install the optional local web manager only.
   --manager-upgrade gateway|dialer
                              Back up and upgrade a complete existing manager to a release with
@@ -58,15 +62,18 @@ Modes:
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
 
---manager installs only the local web manager. --site-to-site/--full configures both the Iran Dialer and overseas Gateway, generates role-specific mutual-TLS certificates, installs both endpoint services and manager panels, and configures a bounded speed-test agent. --pair remains available as the legacy mode. It defaults to selected-port egress (TCP 80/443, UDP 53/123/443), not a full-tunnel VPN. It refuses to overwrite an existing tunnel endpoint. Services and network rules remain unactivated until the explicit APPLY-NETWORK confirmation. Provider firewalls/security groups are not modified. This project remains experimental; use out-of-band recovery access and do not use on production systems.
+--panel installs the manager plus this VPS's dormant endpoint; it does not configure or start a tunnel. --manager installs only the local web manager. --site-to-site/--full configures both the Iran Dialer and overseas Gateway, generates role-specific mutual-TLS certificates, installs both endpoint services and manager panels, and configures a bounded speed-test agent. --pair remains available as the legacy mode. It defaults to selected-port egress (TCP 80/443, UDP 53/123/443), not a full-tunnel VPN. It refuses to overwrite an existing tunnel endpoint. Services and network rules remain unactivated until the explicit APPLY-NETWORK confirmation. Provider firewalls/security groups are not modified. This project remains experimental; use out-of-band recovery access and do not use on production systems.
 USAGE
 }
 
 MODE=""
 ROLE=""
+PANEL_PUBLIC_HTTP_HOST=""
 while (($#)); do
   case "$1" in
     --site-to-site|--full) MODE=site-to-site; shift ;;
+    --panel) MODE=panel; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
+    --public-http-host) PANEL_PUBLIC_HTTP_HOST="${2:?missing public IP}"; shift 2 ;;
     --pair) MODE=pair; shift ;;
     --manager) MODE=manager; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     --manager-upgrade) MODE=manager-upgrade; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
@@ -80,13 +87,15 @@ if [[ -z "$MODE" ]]; then
   printf '\nPQTunnel %s — one-line setup\n' "$VERSION"
   printf '  1) Read-only preflight (no changes)\n'
   printf '  2) Install/start local web manager only\n'
-  printf '  3) Guided full two-VPS setup (tunnel + both management panels, run on Iran)\n'
-  prompt 'Choose [1-3]: ' CHOICE
+  printf '  3) Guided full two-VPS setup (both servers, run on Iran)\n'
+  printf '  4) Install a local panel and dormant endpoint on this VPS only\n'
+  prompt 'Choose [1-4]: ' CHOICE
   case "$CHOICE" in
     1) MODE=preflight; ROLE=both ;;
     2) MODE=manager ;;
     3) MODE=site-to-site ;;
-    *) fail 'choose 1, 2 or 3.' ;;
+    4) MODE=panel ;;
+    *) fail 'choose 1, 2, 3 or 4.' ;;
   esac
 fi
 
@@ -130,6 +139,33 @@ case "$MODE" in
     TMP_DIR="$(mktemp -d)"
     curl --fail --silent --show-error --location "$RAW_BASE/scripts/site-to-site-preflight.sh" -o "$TMP_DIR/site-to-site-preflight.sh"
     bash "$TMP_DIR/site-to-site-preflight.sh" --role "$ROLE"
+    ;;
+  panel)
+    [[ "$EUID" -eq 0 ]] || fail 'panel installation requires root; rerun with sudo.'
+    if [[ -z "$ROLE" ]]; then
+      prompt 'Role for this VPS [gateway/dialer]: ' ROLE
+    fi
+    [[ "$ROLE" == gateway || "$ROLE" == dialer ]] || fail 'panel role must be gateway or dialer.'
+    need curl; need tar; need sha256sum; need awk; need uname; need grep
+    case "$(uname -m)" in
+      x86_64|amd64) ARCH=amd64 ;;
+      aarch64|arm64) ARCH=arm64 ;;
+      *) fail "unsupported architecture: $(uname -m); supported Linux architectures: amd64, arm64." ;;
+    esac
+    ASSET="PQTunnel-${VERSION}-linux-${ARCH}.tar.gz"
+    TMP_DIR="$(mktemp -d)"
+    curl --fail --silent --show-error --location "$RELEASE_BASE/$ASSET" -o "$TMP_DIR/$ASSET"
+    curl --fail --silent --show-error --location "$RELEASE_BASE/SHA256SUMS" -o "$TMP_DIR/SHA256SUMS"
+    grep -Fq "  ./$ASSET" "$TMP_DIR/SHA256SUMS" || fail "release checksum file does not list $ASSET; refusing to install."
+    (cd "$TMP_DIR" && grep -F "  ./$ASSET" SHA256SUMS | sha256sum --check -)
+    tar -xzf "$TMP_DIR/$ASSET" -C "$TMP_DIR"
+    SOURCE_DIR="$TMP_DIR/PQTunnel-${VERSION}-linux-${ARCH}"
+    [[ -f "$SOURCE_DIR/scripts/install-node-panel.sh" ]] || fail 'release bundle is missing the node-panel installer.'
+    if [[ -n "$PANEL_PUBLIC_HTTP_HOST" ]]; then
+      bash "$SOURCE_DIR/scripts/install-node-panel.sh" --source "$SOURCE_DIR" --role "$ROLE" --public-http-host "$PANEL_PUBLIC_HTTP_HOST"
+    else
+      bash "$SOURCE_DIR/scripts/install-node-panel.sh" --source "$SOURCE_DIR" --role "$ROLE"
+    fi
     ;;
   manager|manager-upgrade)
     [[ "$EUID" -eq 0 ]] || fail 'manager installation requires root; rerun with sudo.'
