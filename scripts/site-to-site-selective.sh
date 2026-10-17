@@ -81,11 +81,17 @@ load_config() {
 }
 
 validate_port_list() {
-  local label="$1" value="$2" item
+  local label="$1" value="$2" item first last
   [[ -z "$value" ]] && return 0
-  [[ "$value" =~ ^[0-9]+(,[0-9]+)*$ ]] || fail "$label must be comma-separated numeric ports, e.g. 443,8443"
+  [[ "$value" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || fail "$label must be comma-separated numeric ports or ranges, e.g. 443,8000-8010"
   IFS=',' read -r -a _ports <<< "$value"
-  for item in "${_ports[@]}"; do valid_port "$item" || fail "$label contains invalid port: $item"; done
+  for item in "${_ports[@]}"; do
+    first="${item%%-*}"
+    if [[ "$item" == *-* ]]; then last="${item#*-}"; else last="$first"; fi
+    valid_port "$first" || fail "$label contains invalid port: $first"
+    valid_port "$last" || fail "$label contains invalid port: $last"
+    (( 10#$first <= 10#$last )) || fail "$label contains a reversed port range: $item"
+  done
 }
 
 # Parses a single mapping and sets LOCAL_PORT, TARGET_IP, TARGET_PORT, TARGET_FAMILY.
