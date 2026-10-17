@@ -16,7 +16,10 @@ mkdir -p "$SOURCE/deploy/systemd" "$PKI"
 printf '[Unit]\nDescription=Test fixture\n' > "$SOURCE/deploy/systemd/pqtunneld.service"
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
-  -subj '/CN=PQTunnel test CA' -keyout "$PKI/ca.key" -out "$PKI/ca.crt" >/dev/null 2>&1
+  -subj '/CN=PQTunnel test CA' \\
+  -addext 'basicConstraints=critical,CA:TRUE' \\
+  -addext 'keyUsage=critical,keyCertSign,cRLSign' \\
+  -keyout "$PKI/ca.key" -out "$PKI/ca.crt" >/dev/null 2>&1
 openssl req -new -newkey rsa:2048 -nodes -subj '/CN=gateway.test' \
   -keyout "$PKI/server.key" -out "$TMP/server.csr" >/dev/null 2>&1
 cat > "$TMP/server.ext" <<'EXT'
