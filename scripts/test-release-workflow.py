@@ -44,6 +44,18 @@ class ReleaseProxyWorkflowTests(unittest.TestCase):
         self.assertIn('[[ ! -e "$DIST_DIR/PQTunnel-${VERSION}-windows-amd64.tar.gz" ]]',
                       self.bundle_builder)
 
+    def test_release_publish_requires_explicit_linux_mvp_gate_approval(self) -> None:
+        self.assertIn(
+            "if: vars.PQTUNNEL_LINUX_MVP_RELEASE_APPROVED == 'true'",
+            self.workflow,
+        )
+        release_job = self.workflow.split("\\n  release:\\n", 1)[1]
+        self.assertIn("needs: integration-test", release_job)
+        self.assertLess(
+            release_job.index("if: vars.PQTUNNEL_LINUX_MVP_RELEASE_APPROVED == 'true'"),
+            release_job.index("- name: Publish release"),
+        )
+
     def test_release_workflow_uses_the_verified_bundle_builder(self) -> None:
         build_step = 'bash scripts/build-release-bundles.sh "$GITHUB_REF_NAME" dist'
         self.assertIn(build_step, self.workflow)
