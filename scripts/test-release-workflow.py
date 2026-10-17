@@ -44,22 +44,35 @@ class ReleaseProxyWorkflowTests(unittest.TestCase):
         self.assertIn('[[ ! -e "$DIST_DIR/PQTunnel-${VERSION}-windows-amd64.tar.gz" ]]',
                       self.bundle_builder)
 
-    def test_release_publish_requires_manual_dispatch_and_explicit_gate_approval(self) -> None:
+    def test_release_publish_requires_manual_dispatch_and_separates_prerelease_from_final_gates(self) -> None:
         self.assertIn("workflow_dispatch:", self.workflow)
         self.assertIn("release_tag:", self.workflow)
         self.assertIn("linux_mvp_gates_passed:", self.workflow)
+        self.assertIn("experimental_prerelease:", self.workflow)
         self.assertNotIn("    tags: ['v*']", self.workflow)
         release_start = self.workflow.index("  release:")
         release_job = self.workflow[release_start:]
-        self.assertIn("if: github.ref == 'refs/heads/main' && inputs.linux_mvp_gates_passed == true", release_job)
+        release_condition = "if: github.ref == 'refs/heads/main' && (inputs.linux_mvp_gates_passed == true || (inputs.experimental_prerelease == true && contains(inputs.release_tag, '-')))"
+        self.assertIn(release_condition, release_job)
         self.assertIn("needs: integration-test", release_job)
         self.assertIn("ref: ${{ inputs.release_tag }}", release_job)
         self.assertIn("tag_name: ${{ inputs.release_tag }}", release_job)
         self.assertIn("contents: write", release_job)
+        self.assertIn("prerelease: ${{ contains(inputs.release_tag, '-') }}", release_job)
         self.assertLess(
-            release_job.index("if: github.ref == 'refs/heads/main' && inputs.linux_mvp_gates_passed == true"),
+            release_job.index(release_condition),
             release_job.index("- name: Publish release"),
         )
+
+    def test_rc8_release_version_is_consistent_across_installer_and_docs(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        readme_fa = (ROOT / "README.fa.md").read_text(encoding="utf-8")
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn("**Version:** 0.3.0-rc8", readme)
+        self.assertIn("**نسخه: 0.3.0-rc8", readme_fa)
+        self.assertTrue(changelog.startswith("# Changelog\\n\\n## 0.3.0-rc8"))
+        self.assertIn('VERSION="v0.3.0-rc8"', installer)
 
     def test_release_workflow_uses_the_verified_bundle_builder(self) -> None:
         build_step = 'bash scripts/build-release-bundles.sh "$RELEASE_TAG" dist'
