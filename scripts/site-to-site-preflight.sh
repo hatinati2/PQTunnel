@@ -303,7 +303,7 @@ if [[ "$ROLE" == dialer || "$ROLE" == both ]]; then
          openssl verify -purpose sslclient -CAfile "$PKI_DIR/ca.crt" "$PKI_DIR/client.crt" >/dev/null 2>&1; then
       report WARN 'dialer-ca.crt exists but does not verify the client certificate; ca.crt matches, so the fallback CA is being used.'
     fi
-    printf 'client_certificate_ca=%s\n' "\${CLIENT_CA##*/}"
+    printf 'client_certificate_ca=%s\n' "${CLIENT_CA##*/}"
     if [[ "$CLIENT_CA" != "$PKI_DIR/ca.crt" ]]; then
       check_file "$CLIENT_CA" 'client/peer CA certificate'
     fi
