@@ -382,6 +382,12 @@ func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 			return fmt.Errorf("cannot %s tunnel: %s", action, message)
 		}
 	}
+	if action == "start" && m.role == RoleGateway &&
+		m.configPath == "/etc/default/pqtunneld" && !m.hasGatewayNetworkState() {
+		if _, err := m.runner.Run(ctx, "/usr/local/lib/pqtunnel/site-to-site-selective.sh", "gateway-preflight"); err != nil {
+			return errors.New("Gateway network preflight refused to start the endpoint; existing firewall, routes, forwarding, or TUN state must be reviewed first")
+		}
+	}
 	if action == "stop" {
 		if _, err := m.runner.Run(ctx, "systemctl", "stop", m.unit); err != nil {
 			return fmt.Errorf("systemd stop failed for %s", m.unit)
