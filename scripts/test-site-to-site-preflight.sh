@@ -195,8 +195,7 @@ make_test_ca "$FIXTURE_PKI" dialer-ca
 cp "$FIXTURE_PKI/server-ca.crt" "$FIXTURE_PKI/ca.crt"
 issue_test_client "$FIXTURE_PKI" dialer-ca
 DEDICATED_CA_OUTPUT="$(PQTUNNEL_PREFLIGHT_PKI_DIR="$FIXTURE_PKI" bash "$PREFLIGHT" --role dialer)"
-grep -q '^client_certificate_ca=dialer-ca.crt
- <<< "$DEDICATED_CA_OUTPUT"
+grep -F 'client_certificate_ca=dialer-ca.crt' <<< "$DEDICATED_CA_OUTPUT"
 grep -q 'Client/peer certificate verifies against the configured CA for sslclient' <<< "$DEDICATED_CA_OUTPUT"
 if grep -q '^\[FAIL\]' <<< "$DEDICATED_CA_OUTPUT"; then
   echo 'Dedicated dialer CA fixture unexpectedly failed preflight:' >&2
@@ -211,8 +210,7 @@ mkdir -m 0700 "$FIXTURE_SINGLE"
 make_test_ca "$FIXTURE_SINGLE" ca
 issue_test_client "$FIXTURE_SINGLE" ca
 SINGLE_CA_OUTPUT="$(PQTUNNEL_PREFLIGHT_PKI_DIR="$FIXTURE_SINGLE" bash "$PREFLIGHT" --role dialer)"
-grep -q '^client_certificate_ca=ca.crt
- <<< "$SINGLE_CA_OUTPUT"
+grep -F 'client_certificate_ca=ca.crt' <<< "$SINGLE_CA_OUTPUT"
 grep -q 'Client/peer certificate verifies against the configured CA for sslclient' <<< "$SINGLE_CA_OUTPUT"
 if grep -q '^\[FAIL\]' <<< "$SINGLE_CA_OUTPUT"; then
   echo 'Single-CA fixture unexpectedly failed preflight:' >&2
