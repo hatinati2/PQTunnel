@@ -80,7 +80,7 @@ footer{color:var(--muted);font-size:.84rem;margin-top:18px}.language-picker{disp
 </style></head>
 <body><main class="wrap">
 <header><div><h1>{{tr .Lang "پنل مدیریت PQTunnel" "PQTunnel Management Panel"}}</h1><p class="sub">{{tr .Lang "وضعیت سرویس و همتایان متصل · کنترل محدود و امن" "Service and connected peers · limited, secure controls"}}</p></div>
-<div class="header-actions"><nav class="language-picker"><a class="refresh" href="/language?lang=fa&amp;next=/">فارسی</a><a class="refresh" href="/language?lang=en&amp;next=/">English</a></nav>{{if .Manager}}{{if eq .Manager.Role "dialer"}}<a class="refresh" href="/setup">{{tr .Lang "راه‌اندازی گرافیکی" "Setup wizard"}}</a>{{end}}<a class="refresh" href="/credentials">{{tr .Lang "گواهی‌ها" "Credentials"}}</a><a class="refresh" href="/logs">{{tr .Lang "لاگ سرویس" "Service logs"}}</a>{{end}}<a class="refresh" href="/">{{tr .Lang "به‌روزرسانی وضعیت" "Refresh status"}}</a>
+<div class="header-actions"><nav class="language-picker"><a class="refresh" href="/language?lang=fa&amp;next=/">فارسی</a><a class="refresh" href="/language?lang=en&amp;next=/">English</a></nav>{{if .Manager}}{{if and (eq .Manager.Role "dialer") .SetupAvailable}}<a class="refresh" href="/setup">{{tr .Lang "راه‌اندازی گرافیکی" "Setup wizard"}}</a>{{end}}<a class="refresh" href="/credentials">{{tr .Lang "گواهی‌ها" "Credentials"}}</a><a class="refresh" href="/logs">{{tr .Lang "لاگ سرویس" "Service logs"}}</a>{{end}}<a class="refresh" href="/">{{tr .Lang "به‌روزرسانی وضعیت" "Refresh status"}}</a>
 <form method="post" action="/logout" class="logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">{{tr .Lang "خروج از پنل" "Log out of the panel"}}</button></form></div></header>
 {{if .Notice}}<div class="notice" role="status">{{.Notice}}{{if .Detail}} — {{.Detail}}{{end}}</div>{{end}}
 <section class="grid" aria-label="{{tr .Lang "خلاصه وضعیت" "Status summary"}}">
@@ -323,6 +323,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Notice   string
 			Detail   string
 			Manager  *adminapi.ManagerSnapshot
+			SetupAvailable bool
 			Lang     string
 		}{
 			Snapshot: h.controller.AdminSnapshot(),
@@ -330,6 +331,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Notice:   noticeMessage(r.URL.Query().Get("notice"), lang),
 			Detail:   safeNoticeDetail(r.URL.Query().Get("detail")),
 			Manager:  managerView,
+			SetupAvailable: h.allowedPublicHost == "" && !h.allowInsecurePublicHTTP,
 			Lang:     lang,
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
