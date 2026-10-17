@@ -73,6 +73,9 @@ func (m *Controller) saveDefaultRouteApproval(cfg adminapi.TunnelConfiguration, 
 		return nil
 	}
 	if !allowed {
+		if m.defaultRoutesApproved(cfg) {
+			return nil
+		}
 		return errors.New("default-route prefixes require explicit confirmation in the settings form")
 	}
 	if info, err := os.Lstat(filepath.Dir(defaultRouteApprovalPath)); err != nil ||
