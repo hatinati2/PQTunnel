@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0-rc6
+
+- Added an independent per-VPS installer mode: `--node gateway|dialer --public-ip IPv4` installs and starts only the local management panel, while installing role-specific endpoint assets without enabling or starting the tunnel.
+- Added a per-node setup page that generates Gateway PKI locally and exchanges only public CA/profile bundles between separately administered panels; private endpoint keys are generated and retained on their own VPS.
+- Added transport-only Gateway/Dialer systemd units that provision only the PQTunnel-owned TUN interface and peer IPs; they do not modify existing firewall rules, NAT, forwarding, policy routing, or default routes.
+- Preserved the existing manager token and role during a same-role upgrade, and added guardrails to refuse overwriting an existing tunnel endpoint or an overlapping route/TUN interface.
+- Added independent-node request validation and installer regression tests. This release candidate remains experimental; public HTTP is plaintext and the profile transfer workflow requires a trusted management network.
+
 ## 0.3.0-rc5
 
 - Added an authenticated, Persian/English graphical two-VPS setup wizard to the standalone Dialer manager, with constrained inputs and a separate final approval gate after both hosts pass preflight.
