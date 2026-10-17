@@ -99,6 +99,10 @@ if [[ -z "$MODE" ]]; then
   esac
 fi
 
+if [[ -n "$PANEL_PUBLIC_HTTP_HOST" && "$MODE" != panel ]]; then
+  fail '--public-http-host is only valid with --panel.'
+fi
+
 case "$MODE" in
   site-to-site)
     [[ "$EUID" -eq 0 ]] || fail 'two-VPS setup requires root; run on the Iran/Dialer VPS.'
