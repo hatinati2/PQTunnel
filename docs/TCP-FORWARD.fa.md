@@ -15,18 +15,18 @@
 
 ## پیش‌نمایش و نصب
 
-روی Dialer و از checkout بررسی‌شدهٔ مخزن یا بستهٔ release متناظر اجرا کن. IPها و پورت‌های نمونه را با مقادیر واقعی جایگزین کن.
+روی Dialer و از checkout بررسی‌شدهٔ مخزن یا بستهٔ release متناظر اجرا کن. IPها و پورت‌های نمونه را با مقادیر واقعی جایگزین کن. آدرس `192.0.2.10` فقط برای مستندسازی رزرو شده است؛ هنگام نصب، آن را با IPv4 واقعیِ تخصیص‌یافته به Dialer جایگزین کن. در حالت dry-run لازم نیست این آدرس روی رابط میزبان وجود داشته باشد.
 
 ابتدا فقط واحد systemd را پیش‌نمایش بگیر؛ در این مرحله فایلی نوشته و سرویسی روشن نمی‌شود:
 
 ```sh
-sudo bash scripts/pqtunnel-tcp-forward.sh install --name xray --listen-address 213.176.7.211 --listen-port 10488 --target-address 10.66.0.1 --target-port 10488 --dry-run
+sudo bash scripts/pqtunnel-tcp-forward.sh install --name xray --listen-address 192.0.2.10 --listen-port 10488 --target-address 10.66.0.1 --target-port 10488 --dry-run
 ```
 
 اگر پیش‌نمایش درست است و عمداً می‌خواهی TCP/10488 از IP ایران در دسترس باشد، سرویس را نصب و روشن کن:
 
 ```sh
-sudo bash scripts/pqtunnel-tcp-forward.sh install --name xray --listen-address 213.176.7.211 --listen-port 10488 --target-address 10.66.0.1 --target-port 10488 --start
+sudo bash scripts/pqtunnel-tcp-forward.sh install --name xray --listen-address 192.0.2.10 --listen-port 10488 --target-address 10.66.0.1 --target-port 10488 --start
 ```
 
 اسکریپت وجود یکی از واحدهای `pqtunnel-client-transport.service` یا `pqtunnel-client.service`، قرارگرفتن مقصد در remote prefixes، مجازبودن پورت TCP در allowlist و آزاد بودن پورت شنونده را بررسی می‌کند و واحد `pqtunnel-tcp-forward-xray.service` می‌سازد. گزینهٔ `--start` نیاز دارد سرویس تونل از قبل فعال باشد؛ اسکریپت تونل را مخفیانه روشن یا بازپیکربندی نمی‌کند. سرویس relay به واحد کلاینت وابسته است تا همراه توقف/راه‌اندازی مجدد آن متوقف/شروع شود. بدون `--start` فقط فایل سرویس ساخته می‌شود و فعال نخواهد شد.
@@ -37,7 +37,7 @@ sudo bash scripts/pqtunnel-tcp-forward.sh install --name xray --listen-address 2
 
 برای کانفیگ Xray/VLESS که از inbound موجود Gateway روی TCP/10488 استفاده می‌کند، آدرس سمت کلاینت را روی IP عمومی قابل‌دسترسی Dialer و پورت relay بگذار:
 
-- Address: `213.176.7.211`
+- Address: `192.0.2.10`
 - Port: `10488`
 
 UUID، transport، پارامترهای TLS/Reality، SNI/server name، public key و short ID را بدون نیاز تغییر نده. آدرس `10.66.0.1` برای هدف داخلی relay استفاده می‌شود، نه در گوشی یا کلاینت بیرونی. همچنین IP/پورت بیرونی PQTunnel یعنی `11784` را به‌عنوان پورت VLESS وارد نکن؛ این پورت فقط transport تونل PQTunnel را حمل می‌کند.

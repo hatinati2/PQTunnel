@@ -15,18 +15,18 @@ For a service already listening on the Gateway TUN address, this optional helper
 
 ## Preview and install
 
-Run on the Dialer from a checked-out copy of the repository or the matching release bundle. Replace example addresses and ports with your own.
+Run on the Dialer from a checked-out copy of the repository or the matching release bundle. Replace example addresses and ports with your own. The example address `192.0.2.10` is reserved for documentation; substitute the IPv4 address actually assigned to the Dialer when installing the relay. The dry-run mode does not require the sample listen address to be assigned.
 
 Preview the generated systemd unit first. This is read-only and does not start the service:
 
 ```sh
-sudo bash scripts/pqtunnel-tcp-forward.sh install --name xray --listen-address 213.176.7.211 --listen-port 10488 --target-address 10.66.0.1 --target-port 10488 --dry-run
+sudo bash scripts/pqtunnel-tcp-forward.sh install --name xray --listen-address 192.0.2.10 --listen-port 10488 --target-address 10.66.0.1 --target-port 10488 --dry-run
 ```
 
 If the preview is correct and TCP/10488 is intentionally exposed on the Dialer, install and start the service explicitly:
 
 ```sh
-sudo bash scripts/pqtunnel-tcp-forward.sh install --name xray --listen-address 213.176.7.211 --listen-port 10488 --target-address 10.66.0.1 --target-port 10488 --start
+sudo bash scripts/pqtunnel-tcp-forward.sh install --name xray --listen-address 192.0.2.10 --listen-port 10488 --target-address 10.66.0.1 --target-port 10488 --start
 ```
 
 The script requires an installed PQTunnel client systemd unit (`pqtunnel-client-transport.service` or the legacy `pqtunnel-client.service`), validates that the target is in the configured remote prefixes, validates the TCP destination-port allowlist, refuses a port that already has a listener, and creates `pqtunnel-tcp-forward-xray.service`. `--start` requires that the tunnel service is already active; it does not silently start or reconfigure a tunnel. The forward is tied to that client unit, so it is stopped/restarted with it. Without `--start`, the generated unit is created but left stopped.
@@ -37,7 +37,7 @@ The helper supports IPv4/TCP only. It relays the stream without terminating TLS/
 
 For an Xray/VLESS configuration using the Gateway's existing TCP/10488 inbound, set the client-facing server address to the Dialer's reachable public IP and the relay port:
 
-- Address: `213.176.7.211`
+- Address: `192.0.2.10`
 - Port: `10488`
 
 Keep the UUID, transport, TLS/Reality parameters, SNI/server name, public key and short ID unchanged unless the Gateway configuration itself requires a change. Do not use `10.66.0.1` as the address on a phone or external client; that is the TUN-side target used by the Dialer relay. Do not point the client at PQTunnel's outer port (`11784`); that port carries the PQTunnel TLS transport, not VLESS.

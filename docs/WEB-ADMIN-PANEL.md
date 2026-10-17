@@ -93,11 +93,13 @@ ssh -N -L 9091:127.0.0.1:9091 USER@SERVER
 
 #### تست موقت با HTTP (ناامن؛ فقط با opt-in صریح)
 
-برای دسترسی موقت به شکل `http://12.12.12.12:9091`، فایل `/etc/default/pqtunnel-manager` را با مقادیر واقعی تنظیم کن. این نمونه برای حالت HTTP است؛ متغیرهای TLS را در این حالت لازم نیست تنظیم کنی:
+برای دسترسی موقت به شکل `http://192.0.2.10:9091`، فایل `/etc/default/pqtunnel-manager` را با مقادیر واقعی تنظیم کن. این نمونه برای حالت HTTP است؛ متغیرهای TLS را در این حالت لازم نیست تنظیم کنی:
+
+آدرس `192.0.2.10` از محدودهٔ مستندسازی TEST-NET است و فقط جای‌نگهدار محسوب می‌شود؛ آن را با IP واقعی VPS جایگزین کن و عیناً روی سرور به کار نبر.
 
 ```ini
 PQTUNNEL_MANAGER_LISTEN=0.0.0.0:9091
-PQTUNNEL_MANAGER_PUBLIC_HOST=12.12.12.12
+PQTUNNEL_MANAGER_PUBLIC_HOST=192.0.2.10
 PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=true
 ```
 
@@ -109,20 +111,20 @@ sudo systemctl restart pqtunnel-manager
 sudo systemctl status pqtunnel-manager --no-pager
 ```
 
-مرورگر را به `http://12.12.12.12:9091/` ببر. اگر می‌توانی، در فایروال به‌جای `0.0.0.0/0` فقط IP عمومی خودت را مجاز کن. این گزینهٔ HTTP فقط در نسخه‌ای کار می‌کند که قابلیت opt-in آن ساخته و نصب شده باشد؛ نسخهٔ منتشرشدهٔ قبلی این قابلیت را ندارد. وقتی HTTPS آماده شد، مقدار `PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP` را حذف کن یا `false` بگذار و TLS را طبق بخش زیر پیکربندی کن.
+مرورگر را به `http://192.0.2.10:9091/` ببر. اگر می‌توانی، در فایروال به‌جای `0.0.0.0/0` فقط IP عمومی خودت را مجاز کن. این گزینهٔ HTTP فقط در نسخه‌ای کار می‌کند که قابلیت opt-in آن ساخته و نصب شده باشد؛ نسخهٔ منتشرشدهٔ قبلی این قابلیت را ندارد. وقتی HTTPS آماده شد، مقدار `PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP` را حذف کن یا `false` بگذار و TLS را طبق بخش زیر پیکربندی کن.
 
 نمونهٔ فایل `/etc/default/pqtunnel-manager` (مقادیر نمونه را با IP واقعی و مسیر گواهی معتبر جایگزین کنید):
 
 ```ini
 PQTUNNEL_MANAGER_ROLE=dialer
 PQTUNNEL_MANAGER_LISTEN=0.0.0.0:9091
-PQTUNNEL_MANAGER_PUBLIC_HOST=12.12.12.12
+PQTUNNEL_MANAGER_PUBLIC_HOST=192.0.2.10
 PQTUNNEL_MANAGER_TLS_CERT=/etc/pqtunnel-manager/fullchain.pem
 PQTUNNEL_MANAGER_TLS_KEY=/etc/pqtunnel-manager/privkey.pem
 PQTUNNEL_MANAGER_TOKEN=...توکن تصادفی فعلی...
 ```
 
-فایل را فقط برای root قابل‌خواندن نگه دارید (`chown root:root` و `chmod 0600`). پیش از راه‌اندازی، مطمئن شوید گواهی برای IP عمومی صادر شده و فایل کلید خصوصی فقط در اختیار root است. سپس `sudo systemctl restart pqtunnel-manager` را اجرا کنید. در فایروال سیستم و Security Group ارائه‌دهنده فقط دسترسی موردنیاز به TCP/9091 را مجاز کنید؛ این پروژه قوانین فایروال را خودکار تغییر نمی‌دهد. برای کاهش سطح حمله، در صورت امکان دسترسی را به IP مدیریت خود محدود کنید. بعد از آن پنل با `https://12.12.12.12:9091/` باز می‌شود.
+فایل را فقط برای root قابل‌خواندن نگه دارید (`chown root:root` و `chmod 0600`). پیش از راه‌اندازی، مطمئن شوید گواهی برای IP عمومی صادر شده و فایل کلید خصوصی فقط در اختیار root است. سپس `sudo systemctl restart pqtunnel-manager` را اجرا کنید. در فایروال سیستم و Security Group ارائه‌دهنده فقط دسترسی موردنیاز به TCP/9091 را مجاز کنید؛ این پروژه قوانین فایروال را خودکار تغییر نمی‌دهد. برای کاهش سطح حمله، در صورت امکان دسترسی را به IP مدیریت خود محدود کنید. بعد از آن پنل با `https://192.0.2.10:9091/` باز می‌شود.
 
 در حالت TLS، بررسی Origin فقط HTTPS با IP صریح تنظیم‌شده را می‌پذیرد و کوکی نشست پرچم Secure دارد. در حالت HTTP، بررسی Origin همچنان به همان IP محدود است اما ترافیک رمزگذاری نمی‌شود و کوکی Secure نیست؛ این استثنا فقط با opt-in صریح فعال می‌شود. نشر مستقیم پنل روی اینترنت همچنان ریسک بالاتری از SSH یا VPN مدیریتی دارد.
 

@@ -13,11 +13,15 @@ usage() {
 PQTunnel optional user-space TCP forward (IPv4 only)
 
   sudo bash scripts/pqtunnel-tcp-forward.sh install \
-    --name xray --listen-address 213.176.7.211 --listen-port 10488 \
+    --name xray --listen-address 192.0.2.10 --listen-port 10488 \
     --target-address 10.66.0.1 --target-port 10488 [--start]
 
   bash scripts/pqtunnel-tcp-forward.sh install ... --dry-run
   sudo bash scripts/pqtunnel-tcp-forward.sh remove --name xray
+
+192.0.2.10 is a documentation-only TEST-NET address. Replace it with an IPv4
+address assigned locally to the Dialer before a real installation. --dry-run
+allows the reserved sample address and does not change system state.
 
 The relay changes no routes, firewall rules, NAT, or forwarding settings.
 USAGE
@@ -147,8 +151,10 @@ PY
   [[ -r "$CLIENT_ENV" ]] || fail "Dialer config not readable: $CLIENT_ENV"
   validate_policy "$target_address" "$target_port"
 
-  if ! ip -o -4 addr show | awk '{for (i=1; i<NF; i++) if ($i=="inet") {split($(i+1), a, "/"); print a[1]}}' | grep -Fxq "$listen_address"; then
-    fail "listen address $listen_address is not assigned to a local interface; use the guest/local interface address, not an unassigned provider NAT address"
+  if (( ! dry_run )); then
+    if ! ip -o -4 addr show | awk '{for (i=1; i<NF; i++) if ($i=="inet") {split($(i+1), a, "/"); print a[1]}}' | grep -Fxq "$listen_address"; then
+      fail "listen address $listen_address is not assigned to a local interface; use the guest/local interface address, not an unassigned provider NAT address"
+    fi
   fi
   if ss -H -ltn "( sport = :$listen_port )" 2>/dev/null | grep -q .; then
     fail "TCP/$listen_port already has a listener; nothing was changed"

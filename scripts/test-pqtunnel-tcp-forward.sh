@@ -8,12 +8,12 @@ SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pqtunnel-tcp-forward.sh"
 
 cat > "$ROOT/bin/ip" <<'EOF'
 #!/usr/bin/env bash
-printf '2: ens192 inet 213.176.7.211/32 scope global ens192\n'
+printf '2: ens192 inet 192.0.2.20/32 scope global ens192\n'
 EOF
 cat > "$ROOT/bin/ss" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${FAKE_SS_BUSY:-0}" == 1 ]]; then
-  printf 'LISTEN 0 128 213.176.7.211:10488 0.0.0.0:*\n'
+  printf 'LISTEN 0 128 192.0.2.10:10488 0.0.0.0:*\n'
 fi
 EOF
 cat > "$ROOT/bin/systemctl" <<'EOF'
@@ -40,11 +40,11 @@ EOF
 
 export PATH="$ROOT/bin:$PATH"
 export PQTUNNEL_TCP_FORWARD_CLIENT_ENV="$ROOT/client.env"
-ARGS=(install --name xray --listen-address 213.176.7.211 --listen-port 10488 --target-address 10.66.0.1 --target-port 10488 --dry-run)
+ARGS=(install --name xray --listen-address 192.0.2.10 --listen-port 10488 --target-address 10.66.0.1 --target-port 10488 --dry-run)
 
 bash "$SCRIPT" "${ARGS[@]}" > "$ROOT/valid.out"
 grep -Fq 'Requires=pqtunnel-client-transport.service' "$ROOT/valid.out"
-grep -Fq 'TCP-LISTEN:10488,bind=213.176.7.211,reuseaddr,fork TCP:10.66.0.1:10488' "$ROOT/valid.out"
+grep -Fq 'TCP-LISTEN:10488,bind=192.0.2.10,reuseaddr,fork TCP:10.66.0.1:10488' "$ROOT/valid.out"
 grep -Fq 'Dry run only: no unit file or systemd state was changed.' "$ROOT/valid.out"
 
 cat > "$ROOT/client.env" <<'EOF'
