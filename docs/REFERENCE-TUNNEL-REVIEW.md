@@ -21,7 +21,7 @@
 | IPTABLE-Tunnel-multi-port | [73fe935](https://github.com/azavaxhuman/IPTABLE-Tunnel-multi-port/commit/73fe935e86b8ae74fb83901c2624204fdf6e664d) | Main branch commit dated 2024-01-04 |
 
 
-**Production safety decision:** neither `example-host-1` nor `example-ubuntu-host` is to be changed by this work. Both have existing TUN/tunnel services, netfilter rules and forwarding state. PQTunnel's existing Layer-3 helper intentionally fails closed on these hosts; do not bypass it or import scripts that mutate global routes/firewall state.
+**Production safety decision:** do not modify any pre-existing host with active TUN/tunnel services, netfilter rules, or forwarding state without a separately reviewed and host-specific maintenance plan. PQTunnel's existing Layer-3 helper intentionally fails closed on such hosts; do not bypass it or import scripts that mutate global routes/firewall state.
 
 ## Findings by project
 
