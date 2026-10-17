@@ -87,6 +87,30 @@ else
   (( EXISTING_COUNT == 0 )) || fail 'existing manager artifacts detected; use --upgrade to back up and upgrade a complete installation.'
 fi
 
+if (( WITH_NODE_ENDPOINT )); then
+  [[ -x "$SOURCE/pqtunnel-pki" && -f "$SOURCE/scripts/pqtunnel-transport-tun.sh" ]] || fail 'release bundle lacks standalone endpoint support.'
+  if [[ "$ROLE" == gateway ]]; then
+    [[ -x "$SOURCE/pqtunneld" && -f "$SOURCE/deploy/systemd/pqtunneld-transport.service" ]] || fail 'release bundle lacks Gateway transport assets.'
+  else
+    [[ -x "$SOURCE/pqtunnel-client" && -f "$SOURCE/scripts/run-pqtunnel-client.sh" && -f "$SOURCE/deploy/systemd/pqtunnel-client-transport.service" ]] || fail 'release bundle lacks Dialer transport assets.'
+  fi
+  existing_mode=""
+  if [[ -f /etc/default/pqtunnel-manager ]]; then
+    existing_mode="$(sed -n 's/^PQTUNNEL_MANAGER_ENDPOINT_MODE=//p' /etc/default/pqtunnel-manager | head -n1)"
+  fi
+  if [[ "$existing_mode" != transport ]]; then
+    if [[ "$ROLE" == gateway ]]; then
+      for path in /usr/local/sbin/pqtunneld /etc/default/pqtunneld /etc/systemd/system/pqtunneld.service /etc/pqtunnel/pki/server.key /etc/pqtunnel/pki/server.crt; do
+        [[ ! -e "$path" ]] || fail "existing Gateway endpoint artifact at $path; refusing to overwrite another installation."
+      done
+    else
+      for path in /usr/local/bin/pqtunnel-client /etc/default/pqtunnel-client /etc/systemd/system/pqtunnel-client.service /etc/pqtunnel/pki/client.key /etc/pqtunnel/pki/client.crt; do
+        [[ ! -e "$path" ]] || fail "existing Dialer endpoint artifact at $path; refusing to overwrite another installation."
+      done
+    fi
+  fi
+fi
+
 TMPBIN=""
 BACKUP_DIR=""
 NEW_MANAGER_TOKEN=""
@@ -122,6 +146,21 @@ install -o root -g root -m 0644 "$SOURCE/deploy/systemd/pqtunnel-manager.service
 install -o root -g root -m 0644 "$SOURCE/deploy/systemd/pqtunnel-setup.service" /etc/systemd/system/pqtunnel-setup.service
 install -o root -g root -m 0750 "$SOURCE/scripts/pqtunnel-setup-worker.sh" /usr/local/lib/pqtunnel/pqtunnel-setup-worker.sh
 install -o root -g root -m 0750 "$SOURCE/scripts/pqtunnel-site-to-site-setup.sh" /usr/local/lib/pqtunnel/pqtunnel-site-to-site-setup.sh
+install -o root -g root -m 0644 "$SOURCE/deploy/systemd/pqtunnel-node-setup.service" /etc/systemd/system/pqtunnel-node-setup.service
+install -o root -g root -m 0750 "$SOURCE/scripts/pqtunnel-node-setup-worker.py" /usr/local/lib/pqtunnel/pqtunnel-node-setup-worker.py
+
+if (( WITH_NODE_ENDPOINT )); then
+  install -o root -g root -m 0755 "$SOURCE/pqtunnel-pki" /usr/local/bin/pqtunnel-pki
+  install -o root -g root -m 0750 "$SOURCE/scripts/pqtunnel-transport-tun.sh" /usr/local/lib/pqtunnel/pqtunnel-transport-tun.sh
+  if [[ "$ROLE" == gateway ]]; then
+    install -o root -g root -m 0755 "$SOURCE/pqtunneld" /usr/local/sbin/pqtunneld
+    install -o root -g root -m 0644 "$SOURCE/deploy/systemd/pqtunneld-transport.service" /etc/systemd/system/pqtunneld-transport.service
+  else
+    install -o root -g root -m 0755 "$SOURCE/pqtunnel-client" /usr/local/bin/pqtunnel-client
+    install -o root -g root -m 0755 "$SOURCE/scripts/run-pqtunnel-client.sh" /usr/local/lib/pqtunnel/run-client.sh
+    install -o root -g root -m 0644 "$SOURCE/deploy/systemd/pqtunnel-client-transport.service" /etc/systemd/system/pqtunnel-client-transport.service
+  fi
+fi
 
 if (( UPGRADE )); then
   config_tmp="$(mktemp /etc/default/pqtunnel-manager.XXXXXX)"
