@@ -2,7 +2,7 @@
 # PQTunnel one-line entry point. Preflight is read-only; manager setup can print a new token once.
 set -Eeuo pipefail
 
-VERSION="v0.3.0-rc5"
+VERSION="v0.3.0-rc6"
 REPO="hatinati2/PQTunnel"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
 SOURCE_RAW_BASE="$RAW_BASE"
@@ -16,7 +16,7 @@ cleanup() {
   local status=$?
   if (( TOKEN_GENERATED )); then
     if (( status == 0 )); then
-      printf '\nPQTunnel manager installed and started. Save this newly generated token now; it is shown only once:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$TOKEN"
+      printf '\nPQTunnel panel installed and started. The tunnel remains stopped. Save this newly generated token now; it is shown only once:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$TOKEN"
       printf 'Keep it private. It grants access to the management panel.\n'
     else
       printf '\nPQTunnel setup did not finish successfully. A token was generated and saved; keep it for recovery and do not share it:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$TOKEN" >&2
@@ -35,12 +35,13 @@ prompt() {
 }
 usage() {
   cat <<'USAGE'
-PQTunnel one-line installer (experimental release v0.3.0-rc5)
+PQTunnel one-line installer (experimental release v0.3.0-rc6)
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager-upgrade dialer
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --node dialer --public-ip 203.0.113.10
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --pair
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --site-to-site
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | bash -s -- --preflight dialer
@@ -51,9 +52,10 @@ Modes:
   --pair                     Legacy paired installer; requires SSH-key root access to Germany.
   --manager gateway|dialer   Install the optional local web manager only.
   --manager-upgrade gateway|dialer
-                             Back up and upgrade a complete existing manager to a release with
-                             the graphical setup wizard. Public/insecure listeners are moved to
-                             loopback and the login token is rotated.
+                             Upgrade an existing manager and install the graphical setup worker.
+  --node gateway|dialer --public-ip IPv4
+                             Install/update this VPS only: panel + stopped local endpoint. Enables
+                             temporary plaintext HTTP on the public IP port 9091.
   --preflight gateway|dialer|both
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
@@ -84,12 +86,14 @@ if [[ -z "$MODE" ]]; then
   printf '  1) Read-only preflight (no changes)\n'
   printf '  2) Install/start local web manager only\n'
   printf '  3) Guided full two-VPS setup (tunnel + both management panels, run on Iran)\n'
-  prompt 'Choose [1-3]: ' CHOICE
+  printf '  4) Independent node panel + stopped local endpoint\n'
+  prompt 'Choose [1-4]: ' CHOICE
   case "$CHOICE" in
     1) MODE=preflight; ROLE=both ;;
     2) MODE=manager ;;
     3) MODE=site-to-site ;;
-    *) fail 'choose 1, 2 or 3.' ;;
+    4) MODE=node ;;
+    *) fail 'choose 1, 2, 3 or 4.' ;;
   esac
 fi
 
