@@ -64,10 +64,10 @@ done
 BIN_SOURCE=""
 TMPBIN=""
 if [[ -f "$SOURCE/go.mod" ]]; then
-  command -v go >/dev/null || fail 'Go 1.24+ is required to build from source. Use a matching Linux release bundle if Go is not installed.'
+  command -v go >/dev/null || fail 'Go 1.26+ is required to build from source. Use a matching Linux release bundle if Go is not installed.'
   GV="$(go env GOVERSION | sed 's/^go//')"
-  if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=24)) }'; then
-    fail "Go 1.24+ is required; found $GV. No automatic toolchain installation is performed."
+  if ! awk -v v="$GV" 'BEGIN { split(v,a,"."); exit !((a[1]+0)>1 || ((a[1]+0)==1 && (a[2]+0)>=26)) }'; then
+    fail "Go 1.26+ is required; found $GV. No automatic toolchain installation is performed."
   fi
   [[ -f "$SOURCE/cmd/pqtunneld/main.go" ]] || fail 'cmd/pqtunneld/main.go is missing from source tree.'
   TMPBIN="$(mktemp)"
