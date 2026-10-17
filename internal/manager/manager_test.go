@@ -297,12 +297,21 @@ func TestSpeedTestRequiresPrivatePeerPrefixAndAllowedTCPPort(t *testing.T) {
 	}
 }
 
-func TestWebManagerRejectsDefaultRoutes(t *testing.T) {
+func TestWebManagerRequiresExplicitDefaultRouteApproval(t *testing.T) {
 	m, _ := New(Options{Role: RoleDialer, ConfigPath: "/tmp/d", BackupDir: "/tmp/b", IPCSocket: "/tmp/s", Runner: &fakeRunner{state: "active"}})
 	cfg := validDialerConfig()
-	cfg.RemotePrefixes = "0.0.0.0/0"
-	if _, err := m.configurationChanges(cfg); err == nil {
-		t.Fatal("web manager must reject default-route changes without an out-of-band recovery review")
+	cfg.RemotePrefixes = "0.0.0.0/0,::/0"
+
+	if _, err := m.configurationChanges(cfg); err != nil {
+		t.Fatalf("default routes should be syntactically valid when explicitly reviewed: %v", err)
+	}
+	if err := m.saveDefaultRouteApproval(cfg, false); err == nil {
+		t.Fatal("default routes must require an explicit confirmation")
+	}
+
+	cfg.AllowDefaultRoutes = true
+	if _, err := m.configurationChanges(cfg); err != nil {
+		t.Fatalf("explicitly confirmed default routes should pass configuration validation: %v", err)
 	}
 }
 
