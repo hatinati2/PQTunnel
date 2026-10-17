@@ -57,6 +57,8 @@ jobs:
         run: sudo bash scripts/test-site-to-site-selective-fail-closed.sh
 
   release:
+    # Fail closed: publish only after the Linux MVP evidence gates, including real two-host acceptance and recovery, have been reviewed. Leave this repository variable unset/false until then.
+    if: vars.PQTUNNEL_LINUX_MVP_RELEASE_APPROVED == 'true'
     needs: integration-test
     runs-on: ubuntu-24.04
     steps:
