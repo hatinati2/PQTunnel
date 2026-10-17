@@ -171,7 +171,7 @@ install_or_check_manager() {
   systemctl stop pqtunnel-manager >/dev/null 2>&1 || true
   cp -a "$config" "$config.backup.$(date +%Y%m%d-%H%M%S)"
   tmp=$(mktemp /etc/default/pqtunnel-manager.XXXXXX)
-  awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY|SPEEDTEST_LISTEN|SPEEDTEST_PEER|SPEEDTEST_TOKEN)=/' "$config" > "$tmp"
+  awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY|SPEEDTEST_LISTEN|SPEEDTEST_PEER|SPEEDTEST_TOKEN|ENDPOINT_MODE)=/' "$config" > "$tmp"
   printf '\nPQTUNNEL_MANAGER_ROLE=%s\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_LISTEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_PEER=%s\nPQTUNNEL_MANAGER_SPEEDTEST_TOKEN=%s\n' "$role" "$token" "$speed_listen" "$speed_peer" "$SPEEDTEST_TOKEN" >> "$tmp"
   chown root:root "$tmp"; chmod 0600 "$tmp"; mv -f "$tmp" "$config"
   if [[ "$role" == dialer ]]; then TOKEN_DIALER=$token; else TOKEN_GATEWAY=$token; fi
@@ -417,7 +417,7 @@ speedtest_token=$(sed -n 's/^PQTUNNEL_MANAGER_SPEEDTEST_TOKEN=//p' "$STAGE/manag
 systemctl stop pqtunnel-manager >/dev/null 2>&1 || true
 cp -a /etc/default/pqtunnel-manager "/etc/default/pqtunnel-manager.backup.$(date +%Y%m%d-%H%M%S)"
 tmp=$(mktemp /etc/default/pqtunnel-manager.XXXXXX)
-awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY|SPEEDTEST_LISTEN|SPEEDTEST_PEER|SPEEDTEST_TOKEN)=/' /etc/default/pqtunnel-manager > "$tmp"
+awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY|SPEEDTEST_LISTEN|SPEEDTEST_PEER|SPEEDTEST_TOKEN|ENDPOINT_MODE)=/' /etc/default/pqtunnel-manager > "$tmp"
 printf '\nPQTUNNEL_MANAGER_ROLE=gateway\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_LISTEN=10.66.0.1:9109\nPQTUNNEL_MANAGER_SPEEDTEST_PEER=10.66.0.2:9109\nPQTUNNEL_MANAGER_SPEEDTEST_TOKEN=%s\n' "$token" "$speedtest_token" >> "$tmp"
 chown root:root "$tmp"; chmod 0600 "$tmp"; mv -f "$tmp" /etc/default/pqtunnel-manager
 printf 'PAIR_GATEWAY_TOKEN=%s\n' "$token"

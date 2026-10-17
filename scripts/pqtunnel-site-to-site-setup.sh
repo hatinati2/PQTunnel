@@ -110,11 +110,12 @@ secure_existing_local_manager(){
  (( count==3 )) || fail 'Partial local manager installation found; inspect it before continuing.'
  role="$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' "$config" | head -n1)"
  [[ "$role" == dialer ]] || fail "Existing local manager role is '$role', not 'dialer'; refusing to take over the wrong role."
- local current_listen current_insecure
+ local current_listen current_insecure current_mode
  current_listen="$(sed -n 's/^PQTUNNEL_MANAGER_LISTEN=//p' "$config" | head -n1)"
  current_insecure="$(sed -n 's/^PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP=//p' "$config" | head -n1)"
- if [[ "$current_insecure" != true && ( "$current_listen" =~ ^127\.0\.0\.1:[0-9]+$ || "$current_listen" =~ ^\[::1\]:[0-9]+$ ) ]]; then
-  printf 'Existing manager is already loopback-only; preserving its token.\n'
+ current_mode="$(sed -n 's/^PQTUNNEL_MANAGER_ENDPOINT_MODE=//p' "$config" | head -n1)"
+ if [[ "$current_insecure" != true && "$current_mode" != transport && ( "$current_listen" =~ ^127\.0\.0\.1:[0-9]+$ || "$current_listen" =~ ^\[::1\]:[0-9]+$ ) ]]; then
+  printf 'Existing manager is already loopback-only and uses the site-to-site service mode; preserving its token.\n'
   return 0
  fi
  DTOKEN="$(openssl rand -hex 32)"
@@ -123,7 +124,7 @@ secure_existing_local_manager(){
  backup="$config.backup.$(date +%Y%m%d-%H%M%S)"
  cp -a -- "$config" "$backup"; chown root:root "$backup"; chmod 0600 "$backup"
  tmp="$(mktemp /etc/default/pqtunnel-manager.XXXXXX)"
- awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY|SPEEDTEST_LISTEN|SPEEDTEST_PEER|SPEEDTEST_TOKEN)=/' "$config" > "$tmp"
+ awk '!/^[[:space:]]*PQTUNNEL_MANAGER_(ROLE|LISTEN|TOKEN|PUBLIC_HOST|ALLOW_INSECURE_PUBLIC_HTTP|TLS_CERT|TLS_KEY|SPEEDTEST_LISTEN|SPEEDTEST_PEER|SPEEDTEST_TOKEN|ENDPOINT_MODE)=/' "$config" > "$tmp"
  printf '\nPQTUNNEL_MANAGER_ROLE=dialer\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$DTOKEN" >> "$tmp"
  chown root:root "$tmp"; chmod 0600 "$tmp"; mv -f "$tmp" "$config"
  systemctl daemon-reload
@@ -313,7 +314,7 @@ ENV
  systemctl daemon-reload; systemd-analyze verify /etc/systemd/system/pqtunnel-client.service
  manager_check dialer
  if [[ ! -x /usr/local/sbin/pqtunnel-manager ]]; then bash "$BUNDLE/scripts/install-manager.sh" --source "$BUNDLE" --role dialer; fi
- mt="$(mktemp)"; if [[ -f /etc/default/pqtunnel-manager ]]; then grep -Ev '^(PQTUNNEL_MANAGER_ROLE|PQTUNNEL_MANAGER_LISTEN|PQTUNNEL_MANAGER_TOKEN|PQTUNNEL_MANAGER_PUBLIC_HOST|PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP|PQTUNNEL_MANAGER_TLS_CERT|PQTUNNEL_MANAGER_TLS_KEY|PQTUNNEL_MANAGER_SPEEDTEST_LISTEN|PQTUNNEL_MANAGER_SPEEDTEST_PEER|PQTUNNEL_MANAGER_SPEEDTEST_TOKEN)=' /etc/default/pqtunnel-manager > "$mt" || true; fi
+ mt="$(mktemp)"; if [[ -f /etc/default/pqtunnel-manager ]]; then grep -Ev '^(PQTUNNEL_MANAGER_ROLE|PQTUNNEL_MANAGER_LISTEN|PQTUNNEL_MANAGER_TOKEN|PQTUNNEL_MANAGER_PUBLIC_HOST|PQTUNNEL_MANAGER_ALLOW_INSECURE_PUBLIC_HTTP|PQTUNNEL_MANAGER_TLS_CERT|PQTUNNEL_MANAGER_TLS_KEY|PQTUNNEL_MANAGER_SPEEDTEST_LISTEN|PQTUNNEL_MANAGER_SPEEDTEST_PEER|PQTUNNEL_MANAGER_SPEEDTEST_TOKEN|PQTUNNEL_MANAGER_ENDPOINT_MODE)=' /etc/default/pqtunnel-manager > "$mt" || true; fi
  printf 'PQTUNNEL_MANAGER_ROLE=dialer\nPQTUNNEL_MANAGER_LISTEN=127.0.0.1:9091\nPQTUNNEL_MANAGER_TOKEN=%s\nPQTUNNEL_MANAGER_SPEEDTEST_LISTEN=10.66.0.2:9109\nPQTUNNEL_MANAGER_SPEEDTEST_PEER=10.66.0.1:9109\nPQTUNNEL_MANAGER_SPEEDTEST_TOKEN=%s\n' "$DTOKEN" "$STOKEN" >> "$mt"; install -o root -g root -m 0600 "$mt" /etc/default/pqtunnel-manager; rm -f "$mt"
  systemctl enable --now pqtunnel-client; systemctl --no-pager --full status pqtunnel-client
  systemctl enable --now pqtunnel-manager; systemctl restart pqtunnel-manager; systemctl --no-pager --full status pqtunnel-manager

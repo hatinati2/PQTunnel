@@ -2,7 +2,7 @@
 # PQTunnel one-line entry point. Preflight is read-only; manager setup can print a new token once.
 set -Eeuo pipefail
 
-VERSION="v0.3.0-rc5"
+VERSION="v0.3.0-rc6"
 REPO="hatinati2/PQTunnel"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
 SOURCE_RAW_BASE="$RAW_BASE"
@@ -16,7 +16,7 @@ cleanup() {
   local status=$?
   if (( TOKEN_GENERATED )); then
     if (( status == 0 )); then
-      printf '\nPQTunnel manager installed and started. Save this newly generated token now; it is shown only once:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$TOKEN"
+      printf '\nPQTunnel panel installed and started. The tunnel remains stopped. Save this newly generated token now; it is shown only once:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$TOKEN"
       printf 'Keep it private. It grants access to the management panel.\n'
     else
       printf '\nPQTunnel setup did not finish successfully. A token was generated and saved; keep it for recovery and do not share it:\nPQTUNNEL_MANAGER_TOKEN=%s\n' "$TOKEN" >&2
@@ -35,12 +35,13 @@ prompt() {
 }
 usage() {
   cat <<'USAGE'
-PQTunnel one-line installer (experimental release v0.3.0-rc5)
+PQTunnel one-line installer (experimental release v0.3.0-rc6)
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager-upgrade dialer
+  curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --node dialer --public-ip 203.0.113.10
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --pair
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --site-to-site
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | bash -s -- --preflight dialer
@@ -51,9 +52,10 @@ Modes:
   --pair                     Legacy paired installer; requires SSH-key root access to Germany.
   --manager gateway|dialer   Install the optional local web manager only.
   --manager-upgrade gateway|dialer
-                             Back up and upgrade a complete existing manager to a release with
-                             the graphical setup wizard. Public/insecure listeners are moved to
-                             loopback and the login token is rotated.
+                             Upgrade an existing manager and install the graphical setup worker.
+  --node gateway|dialer --public-ip IPv4
+                             Install/update this VPS only: panel + stopped local endpoint. Enables
+                             temporary plaintext HTTP on the public IP port 9091.
   --preflight gateway|dialer|both
                              Run read-only host checks; no files or network state are changed.
   --help                     Show this help.
@@ -64,12 +66,15 @@ USAGE
 
 MODE=""
 ROLE=""
+PUBLIC_IP=""
 while (($#)); do
   case "$1" in
     --site-to-site|--full) MODE=site-to-site; shift ;;
     --pair) MODE=pair; shift ;;
     --manager) MODE=manager; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     --manager-upgrade) MODE=manager-upgrade; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
+    --node) MODE=node; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
+    --public-ip) PUBLIC_IP="${2:?missing public IPv4 address}"; shift 2 ;;
     --preflight) MODE=preflight; shift; if (($#)) && [[ "$1" != --* ]]; then ROLE="$1"; shift; fi ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1 (use --help)." ;;
@@ -81,12 +86,14 @@ if [[ -z "$MODE" ]]; then
   printf '  1) Read-only preflight (no changes)\n'
   printf '  2) Install/start local web manager only\n'
   printf '  3) Guided full two-VPS setup (tunnel + both management panels, run on Iran)\n'
-  prompt 'Choose [1-3]: ' CHOICE
+  printf '  4) Independent node panel + stopped local endpoint\n'
+  prompt 'Choose [1-4]: ' CHOICE
   case "$CHOICE" in
     1) MODE=preflight; ROLE=both ;;
     2) MODE=manager ;;
     3) MODE=site-to-site ;;
-    *) fail 'choose 1, 2 or 3.' ;;
+    4) MODE=node ;;
+    *) fail 'choose 1, 2, 3 or 4.' ;;
   esac
 fi
 
@@ -131,12 +138,25 @@ case "$MODE" in
     curl --fail --silent --show-error --location "$RAW_BASE/scripts/site-to-site-preflight.sh" -o "$TMP_DIR/site-to-site-preflight.sh"
     bash "$TMP_DIR/site-to-site-preflight.sh" --role "$ROLE"
     ;;
-  manager|manager-upgrade)
+  manager|manager-upgrade|node)
     [[ "$EUID" -eq 0 ]] || fail 'manager installation requires root; rerun with sudo.'
     if [[ -z "$ROLE" ]]; then
       prompt 'Manager role on this server [gateway/dialer]: ' ROLE
     fi
     [[ "$ROLE" == gateway || "$ROLE" == dialer ]] || fail 'manager role must be gateway or dialer.'
+    if [[ "$MODE" == node ]]; then
+      [[ -n "$PUBLIC_IP" ]] || prompt 'Public IPv4 address for this VPS: ' PUBLIC_IP
+      need python3
+      python3 - "$PUBLIC_IP" <<'PY'
+import ipaddress, sys
+try:
+    value = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit("public IP must be a literal IPv4 address")
+if value.version != 4 or not value.is_global:
+    raise SystemExit("public IP must be a global IPv4 address")
+PY
+    fi
     need curl; need tar; need sha256sum; need awk; need uname; need od; need tr; need systemctl; need systemd-analyze; need sed; need grep
     case "$(uname -m)" in
       x86_64|amd64) ARCH=amd64 ;;
@@ -156,15 +176,20 @@ case "$MODE" in
     if [[ -x /usr/local/sbin/pqtunnel-manager && -f /etc/systemd/system/pqtunnel-manager.service && -f "$CONFIG" ]]; then
       EXISTING_ROLE="$(sed -n 's/^PQTUNNEL_MANAGER_ROLE=//p' "$CONFIG" | head -n1)"
       [[ "$EXISTING_ROLE" == "$ROLE" ]] || fail "existing manager role is '$EXISTING_ROLE', not '$ROLE'; refusing to change it."
-      if [[ "$MODE" == manager-upgrade ]]; then
-        [[ -x "$SOURCE_DIR/pqtunnel-manager" && -f "$SOURCE_DIR/deploy/systemd/pqtunnel-setup.service" && -f "$SOURCE_DIR/scripts/pqtunnel-setup-worker.sh" ]] || fail "the pinned release $VERSION does not contain the graphical setup wizard yet. Do not retry this against rc4; upgrade becomes available after the wizard release is published."
+      if [[ "$MODE" == node ]]; then
+        bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE" --upgrade --with-node-endpoint --public-http --public-host "$PUBLIC_IP"
+      elif [[ "$MODE" == manager-upgrade ]]; then
         bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE" --upgrade
       else
-        printf 'Existing manager installation found; keeping its binary, unit, and role. Use --manager-upgrade %s to upgrade after the wizard release is published.\n' "$ROLE"
+        printf 'Existing manager installation found; keeping its binary, unit, and role. Use --manager-upgrade %s to upgrade it.\n' "$ROLE"
       fi
     else
       [[ "$MODE" != manager-upgrade ]] || fail '--manager-upgrade requires a complete existing manager installation; use --manager for a first install.'
-      bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE"
+      if [[ "$MODE" == node ]]; then
+        bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE" --with-node-endpoint --public-http --public-host "$PUBLIC_IP"
+      else
+        bash "$SOURCE_DIR/scripts/install-manager.sh" --source "$SOURCE_DIR" --role "$ROLE"
+      fi
     fi
 
     [[ -f "$CONFIG" ]] || fail "manager config not found at $CONFIG; service left stopped."
@@ -187,7 +212,13 @@ case "$MODE" in
     systemd-analyze verify /etc/systemd/system/pqtunnel-manager.service
     systemctl enable --now pqtunnel-manager
     systemctl --no-pager --full status pqtunnel-manager
-    printf '\nManager token configuration is stored root-only in %s. Default access is loopback-only; use SSH forwarding for remote access.\n' "$CONFIG"
-    printf 'This mode does not install or start the tunnel endpoint, and does not change routes, firewall, NAT, or forwarding.\n'
+    if [[ "$MODE" == node ]]; then
+      printf '\nPanel URL: http://%s:9091\n' "$PUBLIC_IP"
+      printf 'Open /node-setup to generate/import public profiles. The tunnel service is not started.\n'
+      printf 'No host firewall, NAT, forwarding, default-route, or policy-routing rules were changed by this installer.\n'
+    else
+      printf '\nManager token configuration is stored root-only in %s. Default access is loopback-only; use SSH forwarding for remote access.\n' "$CONFIG"
+      printf 'This mode does not install or start the tunnel endpoint, and does not change routes, firewall, NAT, or forwarding.\n'
+    fi
     ;;
 esac

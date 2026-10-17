@@ -1,6 +1,6 @@
 # PQTunnel
 
-**Version:** 0.3.0-rc5 · **Status:** experimental release candidate, not production-ready.
+**Version:** 0.3.0-rc6 · **Status:** experimental release candidate, not production-ready.
 
 PQTunnel is an experimental layer-3 tunnel for normal IPv4 and IPv6 packets using TCP with TLS 1.3 and a strict `X25519MLKEM768` hybrid key exchange. It uses mutual TLS with a private CA, length-prefixed IP frames, a Linux TUN device, a Windows Wintun adapter, and an Android `VpnService` scaffold.
 
@@ -71,7 +71,29 @@ The menu offers read-only host checks or installation of the standalone manager 
 curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --manager dialer
 ```
 
-The installer verifies the v0.3.0-rc5 Linux archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go. On first setup it generates a random 256-bit `PQTUNNEL_MANAGER_TOKEN`, stores it in root-only `/etc/default/pqtunnel-manager`, validates the unit, enables and starts the manager, then displays the newly created token once in the terminal. Save it securely; rerunning the installer preserves an existing token and does not print it again. The manager listens on loopback (`127.0.0.1:9091`); use SSH forwarding for remote access. This command installs the **web manager only**, not the tunnel endpoint.
+The installer verifies the v0.3.0-rc6 Linux archive against `SHA256SUMS`, supports Linux amd64 and arm64, and does not require Go. On first setup it generates a random 256-bit `PQTUNNEL_MANAGER_TOKEN`, stores it in root-only `/etc/default/pqtunnel-manager`, validates the unit, enables and starts the manager, then displays the newly created token once in the terminal. Save it securely; rerunning the installer preserves an existing token and does not print it again. The manager listens on loopback (`127.0.0.1:9091`); use SSH forwarding for remote access. This command installs the **web manager only**, not the tunnel endpoint.
+
+### Independent per-VPS setup (experimental)
+
+Use this mode when you want to install and manage each server separately. Run one command on each VPS; the role only selects which local endpoint tools are installed. This mode starts the web manager, installs the local endpoint binaries and pairing UI, but leaves the tunnel endpoint disabled and stopped. It does not apply firewall, NAT, forwarding, policy-routing, or default-route changes.
+
+On the Gateway VPS, replace `203.0.113.10` with that server's public IPv4 address:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --node gateway --public-ip 203.0.113.10
+```
+
+On the Dialer VPS, run separately and replace `198.51.100.20` with its public IPv4 address:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash -s -- --node dialer --public-ip 198.51.100.20
+```
+
+The panel URL is `http://PUBLIC_IP:9091`. The current login token is preserved when upgrading an existing manager; on a first install the installer prints a randomly generated token once. This HTTP mode is plaintext and only intended for temporary testing. Allow TCP/9091 in the provider firewall, preferably only from your management IP. The installer does not edit the host firewall.
+
+To pair later, open **Node setup** on the Gateway panel, generate and download its public profile, then upload it on the Dialer panel. Download the Dialer's public profile and upload it back to the Gateway panel. Private keys are generated locally and are not included in the profile bundles. Once each panel reports its endpoint configuration ready, start the Gateway endpoint from its dashboard and then start the Dialer endpoint. Starting the transport creates only PQTunnel's `pqtun0` interface and its private peer addresses; it does not route general Internet traffic or configure NAT/firewall rules. Additional, separately reviewed routing/firewall integration is needed to route traffic beyond the two tunnel endpoints.
+
+Public profiles can be tampered with over plaintext HTTP. Use trusted administration networks for testing and verify peer/fingerprint details out of band before handling sensitive traffic. Switch the panel to HTTPS when the test stage is complete.
 
 ### Graphical two-VPS setup wizard (experimental)
 
