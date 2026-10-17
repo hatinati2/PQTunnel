@@ -19,8 +19,9 @@ Do not open public issues containing private keys, certificates, connection toke
 - No independent security review or fuzzing campaign.
 - No online revocation/distribution or safe automated enrollment workflow.
 - Windows routes/DNS/kill-switch and Android certificate import/build verification remain incomplete.
-- The site-to-site link mode currently supports one configured peer-route profile per listener; host route installation, dual-stack forwarding and NAT are not automated or integration-tested.
-- IPv6 packet encapsulation is implemented, but IPv6 host routing/firewall policy must be separately configured and tested.
+- The site-to-site link mode currently supports one configured peer-route profile per listener. The experimental `scripts/site-to-site-selective.sh` helper can apply narrowly scoped IPv4/IPv6 policy routing, forwarding and NAT for selected-port egress and explicit TCP/UDP port mappings on clean dedicated hosts; it refuses detected pre-existing firewall/forwarding state.
+- CI exercises the helper in disposable Linux network namespaces, including injected failures and rollback checks. This does not validate two independent VPSs, provider firewalls, or arbitrary existing host firewall/routing policy; real-host recovery rehearsals remain required before stable release.
+- The separate `scripts/server-network.sh` helper handles IPv4 forwarding/NAT only. Packet encapsulation itself does not configure general host routes or firewall policy, and IPv6 behavior must be reviewed for the specific network design.
 - Linux networking helpers are prototypes and are not a persistent, audited kill-switch.
 - Traffic may be exposed if endpoints, client keys, CA signing key, host firewall rules, or device permissions are compromised.
 
