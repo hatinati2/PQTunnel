@@ -30,7 +30,7 @@ def log(msg):
 def write_atomic(path, data, mode=0o600, refuse_existing=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if refuse_existing and path.exists():
+    if refuse_existing and (path.exists() or path.is_symlink()):
         raise RuntimeError("refusing to overwrite existing file: " + str(path))
     fd, tmp_name = tempfile.mkstemp(prefix=".node-setup-", dir=str(path.parent))
     try:
@@ -232,7 +232,6 @@ def gateway_init(req):
         install_pki_file(pki_work / "server.crt", PKI / "server.crt", 0o644)
         install_pki_file(pki_work / "server.key", PKI / "server.key", 0o600)
         install_pki_file(pki_work / "ca.crt", PKI / "gateway-ca.crt", 0o644)
-        install_pki_file(pki_work / "ca.key", PKI / "gateway-ca.key", 0o600)
         meta = {"schema": 1, "role": "gateway", "server_name": name,
                 "listen_port": port, "allowed_dst_ports": allow_text,
                 "peer_identity": "10.66.0.2"}
@@ -272,7 +271,6 @@ def dialer_import_gateway():
         run_checked(["/usr/local/bin/pqtunnel-pki", "init", "--server-name", "dialer.local", "--out", str(local_pki)])
         run_checked(["/usr/local/bin/pqtunnel-pki", "issue-client", "--ip", "10.66.0.2", "--out", str(local_pki)])
         install_pki_file(local_pki / "ca.crt", PKI / "dialer-ca.crt", 0o644)
-        install_pki_file(local_pki / "ca.key", PKI / "dialer-ca.key", 0o600)
         install_pki_file(local_pki / "client-10_66_0_2.crt", PKI / "client.crt", 0o644)
         install_pki_file(local_pki / "client-10_66_0_2.key", PKI / "client.key", 0o600)
         app_cfg = (
@@ -280,7 +278,7 @@ def dialer_import_gateway():
             f"PQTUNNEL_SERVER={name}:{port}\n"
             f"PQTUNNEL_SERVER_NAME={name}\n"
             "PQTUNNEL_LOCAL_PREFIXES=10.66.0.2/32,fd42:7061:7475::2/128\n"
-            "PQTUNNEL_REMOTE_PREFIXES=0.0.0.0/0,::/0\n"
+            "PQTUNNEL_REMOTE_PREFIXES=10.66.0.1/32,fd42:7061:7475::1/128\n"
             f"PQTUNNEL_ALLOWED_DST_PORTS={allow}\n"
         )
         write_atomic("/etc/default/pqtunnel-client", app_cfg.encode(), 0o600, refuse_existing=True)
@@ -334,7 +332,7 @@ def gateway_import_dialer():
             "PQTUNNEL_CLIENT_CA=/etc/pqtunnel/pki/dialer-ca.crt\n"
             "PQTUNNEL_MAX_CLIENTS=1\n"
             "PQTUNNEL_PEER_PREFIXES=10.66.0.2/32,fd42:7061:7475::2/128\n"
-            "PQTUNNEL_LOCAL_PREFIXES=0.0.0.0/0,::/0\n"
+            "PQTUNNEL_LOCAL_PREFIXES=10.66.0.1/32,fd42:7061:7475::1/128\n"
             "PQTUNNEL_PEER_NAME=10.66.0.2\n"
             f"PQTUNNEL_ALLOWED_DST_PORTS={allow}\n"
         )
@@ -384,6 +382,11 @@ def main():
 try:
     rc = main()
 except Exception as exc:
+    clean_created()
+    try:
+        ENV_FILE.unlink()
+    except FileNotFoundError:
+        pass
     log("ERROR: " + str(exc))
     LOG_FILE.write_text("\n".join(LOGS) + "\n", encoding="utf-8")
     os.chown(LOG_FILE, 0, 0)
@@ -391,4 +394,9 @@ except Exception as exc:
     write_state("failed")
     print("Node setup failed: " + str(exc), file=sys.stderr)
     sys.exit(1)
+finally:
+    try:
+        ENV_FILE.unlink()
+    except FileNotFoundError:
+        pass
 sys.exit(rc)
