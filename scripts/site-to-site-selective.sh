@@ -7,6 +7,7 @@ CONFIG="${PQTUNNEL_SITE_CONFIG:-/etc/pqtunnel/site-to-site.env}"
 STATE_DIR="${PQTUNNEL_STATE_DIR:-/var/lib/pqtunnel}"
 DIALER_STATE="$STATE_DIR/site-selective-dialer.state"
 GATEWAY_STATE="$STATE_DIR/site-selective-gateway.state"
+GATEWAY_TUN_OWNER_MARKER="/run/pqtunnel/pqtunnel-gateway-tun-owned"
 TUN_DEFAULT="pqtun0"
 TUN_V4_DIALER="10.66.0.2/24"
 TUN_V4_GATEWAY="10.66.0.1/24"
@@ -371,6 +372,38 @@ gateway_preflight() {
   echo 'PASS: Gateway network preflight passed; no service, route, interface, forwarding, or firewall state was changed.'
 }
 
+gateway_prepare() {
+  need_root
+  gateway_preflight
+  [[ -d /run/pqtunnel && ! -L /run/pqtunnel ]] || fail 'systemd RuntimeDirectory /run/pqtunnel is missing or unsafe'
+  [[ "$(stat -c '%u' /run/pqtunnel)" == 0 ]] || fail '/run/pqtunnel is not owned by root'
+  [[ ! -e "$GATEWAY_TUN_OWNER_MARKER" && ! -L "$GATEWAY_TUN_OWNER_MARKER" ]] || fail 'Gateway TUN ownership marker already exists; inspect the previous service run'
+  (umask 077; : > "$GATEWAY_TUN_OWNER_MARKER")
+  chown root:root "$GATEWAY_TUN_OWNER_MARKER"
+  chmod 0600 "$GATEWAY_TUN_OWNER_MARKER"
+  echo 'Gateway preflight passed; the upcoming pqtunneld service start owns the newly created TUN interface.'
+}
+
+gateway_cleanup() {
+  need_root
+  if systemctl is-active --quiet pqtunneld; then
+    fail 'stop pqtunneld before Gateway network cleanup'
+  fi
+  if [[ -f "$GATEWAY_STATE" ]]; then
+    bring_down gateway "$GATEWAY_STATE"
+  fi
+  if [[ -e "$GATEWAY_TUN_OWNER_MARKER" || -L "$GATEWAY_TUN_OWNER_MARKER" ]]; then
+    [[ -f "$GATEWAY_TUN_OWNER_MARKER" && ! -L "$GATEWAY_TUN_OWNER_MARKER" ]] || fail 'Gateway TUN ownership marker is unsafe; refusing cleanup'
+    [[ "$(stat -c '%u' "$GATEWAY_TUN_OWNER_MARKER")" == 0 ]] || fail 'Gateway TUN ownership marker is not root-owned'
+    if ip link show dev "$TUN_DEFAULT" >/dev/null 2>&1; then
+      ip link set dev "$TUN_DEFAULT" down 2>/dev/null || true
+      ip tuntap del dev "$TUN_DEFAULT" mode tun || fail 'could not remove the TUN interface owned by the Gateway service'
+    fi
+    rm -f -- "$GATEWAY_TUN_OWNER_MARKER"
+    echo 'Gateway-owned TUN interface and network state cleaned up.'
+  fi
+}
+
 apply_gateway() {
   need_root
   load_config 1; validate_config
@@ -455,6 +488,8 @@ case "$MODE" in
     ;;
   dialer-up) apply_dialer ;;
   gateway-preflight) gateway_preflight ;;
+  gateway-prepare) gateway_prepare ;;
+  gateway-cleanup) gateway_cleanup ;;
   gateway-up) apply_gateway ;;
   dialer-down) bring_down dialer "$DIALER_STATE" ;;
   gateway-down) bring_down gateway "$GATEWAY_STATE" ;;
