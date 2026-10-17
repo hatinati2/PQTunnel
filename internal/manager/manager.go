@@ -487,12 +487,16 @@ func (m *Controller) configurationChanges(cfg adminapi.TunnelConfiguration) (map
 		if err != nil {
 			return nil, fmt.Errorf("peer prefixes: %w", err)
 		}
-		local, err := parseCanonicalPrefixes(cfg.LocalPrefixes)
+		local, err := parseCanonicalPrefixesWithDefault(cfg.LocalPrefixes, true)
 		if err != nil {
 			return nil, fmt.Errorf("local prefixes: %w", err)
 		}
-		if prefixset.Overlap(peer, local) {
-			return nil, errors.New("peer and local CIDR prefix sets must not overlap")
+		for _, peerPrefix := range peer {
+			for _, localPrefix := range local {
+				if localPrefix.Bits() != 0 && peerPrefix.Overlaps(localPrefix) {
+					return nil, errors.New("peer and local CIDR prefix sets must not overlap, except explicit local default routes")
+				}
+			}
 		}
 		if !validIdentity(cfg.PeerIdentity) {
 			return nil, errors.New("peer identity must contain 1-128 letters, digits, dot, underscore or hyphen")
@@ -519,7 +523,7 @@ func (m *Controller) configurationChanges(cfg adminapi.TunnelConfiguration) (map
 	if err != nil {
 		return nil, fmt.Errorf("local prefixes: %w", err)
 	}
-	remote, err := parseCanonicalPrefixes(cfg.RemotePrefixes)
+	remote, err := parseCanonicalPrefixesWithDefault(cfg.RemotePrefixes, true)
 	if err != nil {
 		return nil, fmt.Errorf("remote prefixes: %w", err)
 	}
@@ -912,6 +916,10 @@ func validDNSName(value string) bool {
 }
 
 func parseCanonicalPrefixes(value string) ([]netip.Prefix, error) {
+	return parseCanonicalPrefixesWithDefault(value, false)
+}
+
+func parseCanonicalPrefixesWithDefault(value string, allowDefault bool) ([]netip.Prefix, error) {
 	if value == "" || len(value) > 2048 {
 		return nil, errors.New("at least one CIDR prefix is required")
 	}
@@ -930,8 +938,8 @@ func parseCanonicalPrefixes(value string) ([]netip.Prefix, error) {
 		if p != p.Masked() {
 			return nil, fmt.Errorf("prefix %q must be a canonical network CIDR", raw)
 		}
-		if p.Bits() == 0 {
-			return nil, errors.New("default routes are not accepted by the web manager; configure them only through a separately reviewed recovery plan")
+		if p.Bits() == 0 && !allowDefault {
+			return nil, errors.New("default routes are not accepted in this prefix field")
 		}
 		if seen[p] {
 			return nil, fmt.Errorf("duplicate CIDR prefix %q", p)
