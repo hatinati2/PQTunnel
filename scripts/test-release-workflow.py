@@ -44,20 +44,25 @@ class ReleaseProxyWorkflowTests(unittest.TestCase):
         self.assertIn('[[ ! -e "$DIST_DIR/PQTunnel-${VERSION}-windows-amd64.tar.gz" ]]',
                       self.bundle_builder)
 
-    def test_release_publish_requires_explicit_linux_mvp_gate_approval(self) -> None:
-        self.assertIn(
-            "if: vars.PQTUNNEL_LINUX_MVP_RELEASE_APPROVED == 'true'",
-            self.workflow,
-        )
-        release_job = self.workflow.split("\\n  release:\\n", 1)[1]
+    def test_release_publish_requires_manual_dispatch_and_explicit_gate_approval(self) -> None:
+        self.assertIn("workflow_dispatch:", self.workflow)
+        self.assertIn("release_tag:", self.workflow)
+        self.assertIn("linux_mvp_gates_passed:", self.workflow)
+        self.assertNotIn("    tags: ['v*']", self.workflow)
+        release_start = self.workflow.index("  release:")
+        release_job = self.workflow[release_start:]
+        self.assertIn("if: github.ref == 'refs/heads/main' && inputs.linux_mvp_gates_passed == true", release_job)
         self.assertIn("needs: integration-test", release_job)
+        self.assertIn("ref: ${{ inputs.release_tag }}", release_job)
+        self.assertIn("tag_name: ${{ inputs.release_tag }}", release_job)
+        self.assertIn("contents: write", release_job)
         self.assertLess(
-            release_job.index("if: vars.PQTUNNEL_LINUX_MVP_RELEASE_APPROVED == 'true'"),
+            release_job.index("if: github.ref == 'refs/heads/main' && inputs.linux_mvp_gates_passed == true"),
             release_job.index("- name: Publish release"),
         )
 
     def test_release_workflow_uses_the_verified_bundle_builder(self) -> None:
-        build_step = 'bash scripts/build-release-bundles.sh "$GITHUB_REF_NAME" dist'
+        build_step = 'bash scripts/build-release-bundles.sh "$RELEASE_TAG" dist'
         self.assertIn(build_step, self.workflow)
         self.assertLess(self.workflow.index(build_step), self.workflow.index("Publish release"))
 
