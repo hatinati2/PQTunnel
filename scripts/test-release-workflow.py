@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression checks for proxy packaging and integration coverage in releases."""
+"""Regression checks for release packaging, integration, and supported targets."""
 from __future__ import annotations
 
 import unittest
@@ -32,6 +32,11 @@ class ReleaseProxyWorkflowTests(unittest.TestCase):
             "for cmd in pqtunneld pqtunnel-client pqtunnel-pki pqtunnel-proxy; do",
             self.workflow,
         )
+
+    def test_release_assets_are_limited_to_supported_linux_targets(self) -> None:
+        self.assertIn("for target in 'linux amd64' 'linux arm64'; do", self.workflow)
+        self.assertNotIn("'windows amd64'", self.workflow)
+        self.assertNotIn("windows amd64.tar.gz", self.workflow)
 
 
 if __name__ == "__main__":
