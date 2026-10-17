@@ -11,7 +11,7 @@ import (
 	"github.com/hatinati2/PQTunnel/internal/adminapi"
 )
 
-const defaultRouteApprovalPath = "/var/lib/pqtunnel-manager/default-route-approval"
+const defaultRouteApprovalFile = "/var/lib/pqtunnel-manager/default-route-approval"
 
 func defaultRoutePrefixes(role Role, cfg adminapi.TunnelConfiguration) string {
 	if role == RoleGateway {
@@ -53,11 +53,11 @@ func (m *Controller) defaultRoutesApproved(cfg adminapi.TunnelConfiguration) boo
 	if !requiresDefaultRouteReview(m.role, cfg) {
 		return true
 	}
-	info, err := os.Lstat(defaultRouteApprovalPath)
+	info, err := os.Lstat(m.defaultRouteApprovalPath)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0600 {
 		return false
 	}
-	data, err := os.ReadFile(defaultRouteApprovalPath)
+	data, err := os.ReadFile(m.defaultRouteApprovalPath)
 	if err != nil {
 		return false
 	}
@@ -66,7 +66,7 @@ func (m *Controller) defaultRoutesApproved(cfg adminapi.TunnelConfiguration) boo
 
 func (m *Controller) saveDefaultRouteApproval(cfg adminapi.TunnelConfiguration, allowed bool) error {
 	if !requiresDefaultRouteReview(m.role, cfg) {
-		err := os.Remove(defaultRouteApprovalPath)
+		err := os.Remove(m.defaultRouteApprovalPath)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return errors.New("could not clear the old default-route approval")
 		}
@@ -78,9 +78,9 @@ func (m *Controller) saveDefaultRouteApproval(cfg adminapi.TunnelConfiguration, 
 		}
 		return errors.New("default-route prefixes require explicit confirmation in the settings form")
 	}
-	if info, err := os.Lstat(filepath.Dir(defaultRouteApprovalPath)); err != nil ||
+	if info, err := os.Lstat(filepath.Dir(m.defaultRouteApprovalPath)); err != nil ||
 		!info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
 		return errors.New("manager state directory is missing or has unsafe permissions")
 	}
-	return atomicWrite(defaultRouteApprovalPath, []byte(defaultRouteApprovalDigest(m.role, cfg)+"\n"), 0600)
+	return atomicWrite(m.defaultRouteApprovalPath, []byte(defaultRouteApprovalDigest(m.role, cfg)+"\n"), 0600)
 }
