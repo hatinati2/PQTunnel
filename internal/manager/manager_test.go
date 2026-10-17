@@ -299,6 +299,7 @@ func TestSpeedTestRequiresPrivatePeerPrefixAndAllowedTCPPort(t *testing.T) {
 
 func TestWebManagerRequiresExplicitDefaultRouteApproval(t *testing.T) {
 	m, _ := New(Options{Role: RoleDialer, ConfigPath: "/tmp/d", BackupDir: "/tmp/b", IPCSocket: "/tmp/s", Runner: &fakeRunner{state: "active"}})
+	m.defaultRouteApprovalPath = filepath.Join(t.TempDir(), "default-route-approval")
 	cfg := validDialerConfig()
 	cfg.RemotePrefixes = "0.0.0.0/0,::/0"
 
@@ -312,6 +313,16 @@ func TestWebManagerRequiresExplicitDefaultRouteApproval(t *testing.T) {
 	cfg.AllowDefaultRoutes = true
 	if _, err := m.configurationChanges(cfg); err != nil {
 		t.Fatalf("explicitly confirmed default routes should pass configuration validation: %v", err)
+	}
+	if err := m.saveDefaultRouteApproval(cfg, true); err != nil {
+		t.Fatalf("explicit default-route approval failed: %v", err)
+	}
+	if !m.defaultRoutesApproved(cfg) {
+		t.Fatal("approved default routes were not recognized")
+	}
+	cfg.AllowedDstPorts = "tcp:80"
+	if m.defaultRoutesApproved(cfg) {
+		t.Fatal("editing the endpoint configuration must invalidate prior default-route approval")
 	}
 }
 
