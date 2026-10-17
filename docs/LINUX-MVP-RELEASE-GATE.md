@@ -86,15 +86,33 @@ Namespace tests exercise Linux networking in an isolated runner. They do not rep
 
 ## 4. Evidence record
 
-Fill this in for each candidate rather than relying on memory.
+### Automation snapshot — baseline commit `16463735783daf74e404e955ebe2d735098ab249`
+
+This records automated checks completed for the baseline source commit. It is **not** a release approval and must not be treated as evidence of successful deployment between independent hosts.
 
 | Field | Evidence |
 | --- | --- |
-| Candidate commit | Not recorded |
-| Go version | Not recorded |
-| Ubuntu test matrix | Not recorded |
-| CI / security run URLs | Not recorded |
-| Network-lab results | Not recorded |
-| Two-host test record | Not recorded |
-| Bundle hashes | Not recorded |
-| Reviewer / go-no-go | Not recorded |
+| Baseline commit | `16463735783daf74e404e955ebe2d735098ab249` |
+| Go version | CI workflow uses Go `1.27.x`; the Actions setup step reported `go1.27.2` in the corresponding run environment |
+| Ubuntu test matrix | Automated unit, race, proxymux soak, and network namespace tests passed on `ubuntu-24.04` and `ubuntu-26.04` runners |
+| Architecture evidence | Linux `amd64` and `arm64` cross-build jobs passed; this is not native arm64 runtime evidence |
+| CI | [Run 39075917110](https://github.com/hatinati2/PQTunnel/actions/runs/39075917110) — passed |
+| Security | [Run 39075917094](https://github.com/hatinati2/PQTunnel/actions/runs/39075917094) — passed |
+| Network-lab results | Isolated namespace tests for dual-stack TUN, selective TCP/UDP forwarding and egress, fail-closed rollback, and firewall-coexistence semantics passed on both Ubuntu CI versions |
+| Bundle smoke test | CI smoke builder verified both Linux archive layouts and their temporary `SHA256SUMS`; final release-candidate asset hashes have not been recorded here |
+| Two-host test record | **NOT RUN / NOT EVIDENCED.** No independent-host acceptance record or four-pair Ubuntu matrix is available |
+| Actual provider firewall/routing | Not tested between separate VPS hosts |
+| Out-of-band recovery | Not rehearsed on two independent hosts |
+| Reviewer / go-no-go | **NO-GO** — keep PQTunnel experimental until the remaining gates have recorded evidence |
+
+### Remaining evidence required
+
+Do not replace the baseline snapshot above with a release-candidate claim until the following are recorded against the exact candidate commit:
+
+- The four two-host Ubuntu pairings, intended IPv4/IPv6 prefixes, endpoint reachability, return paths, allowed and denied TCP/UDP, DNS, reconnects and sustained traffic.
+- Provider and host firewall coexistence results from the actual test topology.
+- Controlled apply failure, reboot, and console/out-of-band restoration results on both hosts.
+- Fresh bundle hashes and extracted-bundle smoke tests for the exact candidate commit.
+- Redacted logs, test commands and topology, named reviewer, and signed go/no-go decision.
+
+**Current disposition: NO-GO for release.** The automated CI and security evidence above is positive, but it does not satisfy Gate E or the real-host recovery portions of Gates B, D, and F.
