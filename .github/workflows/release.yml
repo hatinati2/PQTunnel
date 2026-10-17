@@ -1,11 +1,20 @@
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to validate and publish
+        required: true
+        type: string
+      linux_mvp_gates_passed:
+        description: Confirm Gates A-F, including real two-host acceptance and recovery, are complete and reviewed
+        required: true
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate-release-version:
@@ -15,8 +24,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
       - name: Reject tags that disagree with documented versions
-        run: python3 scripts/check-release-version.py "$GITHUB_REF_NAME"
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: python3 scripts/check-release-version.py "$RELEASE_TAG"
 
   integration-test:
     needs: validate-release-version
@@ -30,6 +43,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.x'
@@ -57,12 +72,16 @@ jobs:
         run: sudo bash scripts/test-site-to-site-selective-fail-closed.sh
 
   release:
-    # Fail closed: publish only after the Linux MVP evidence gates, including real two-host acceptance and recovery, have been reviewed. Leave this repository variable unset/false until then.
-    if: vars.PQTUNNEL_LINUX_MVP_RELEASE_APPROVED == 'true'
+    # Manual dispatch only; publishing requires a main-branch run and explicit operator confirmation after reviewing all Linux MVP evidence.
+    if: github.ref == 'refs/heads/main' && inputs.linux_mvp_gates_passed == true
     needs: integration-test
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.x'
@@ -86,15 +105,18 @@ jobs:
         shell: bash
         run: bash scripts/test-site-to-site-selective.sh
       - name: Build and verify Linux release bundles
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         shell: bash
-        run: bash scripts/build-release-bundles.sh "$GITHUB_REF_NAME" dist
+        run: bash scripts/build-release-bundles.sh "$RELEASE_TAG" dist
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag }}
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
           generate_release_notes: true
           # SemVer prerelease identifiers (for example, -rc1, -beta.2, or -alpha)
           # contain a hyphen; stable release tags do not.
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(inputs.release_tag, '-') }}
