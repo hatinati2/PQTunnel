@@ -379,6 +379,9 @@ func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 	default:
 		return errors.New("unsupported service action")
 	}
+	if action == "restart" {
+		return m.restartAndWait(ctx)
+	}
 	if _, err := m.runner.Run(ctx, "systemctl", action, m.unit); err != nil {
 		return fmt.Errorf("systemd %s failed for %s", action, m.unit)
 	}
@@ -386,7 +389,13 @@ func (m *Controller) ServiceAction(ctx context.Context, action string) error {
 	if action == "stop" {
 		want = "inactive"
 	}
-	return m.waitForState(ctx, want)
+	if err := m.waitForState(ctx, want); err != nil {
+		return err
+	}
+	if action == "start" {
+		return m.enableForBoot(ctx)
+	}
+	return nil
 }
 
 func (m *Controller) ApplyConfiguration(ctx context.Context, config adminapi.TunnelConfiguration) error {
@@ -440,10 +449,7 @@ func (m *Controller) ApplyConfiguration(ctx context.Context, config adminapi.Tun
 	// config. Use a fresh bounded context for the rollback restart.
 	rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer rollbackCancel()
-	if _, err := m.runner.Run(rollbackCtx, "systemctl", "restart", m.unit); err != nil {
-		return fmt.Errorf("new configuration failed; previous file was restored but service rollback restart failed")
-	}
-	if err := m.waitForState(rollbackCtx, "active"); err != nil {
+	if err := m.restartAndWait(rollbackCtx); err != nil {
 		return fmt.Errorf("new configuration failed; previous file was restored but previous service state could not be confirmed")
 	}
 	return fmt.Errorf("new configuration failed to start; previous configuration was restored and restarted")
@@ -807,7 +813,20 @@ func (m *Controller) restartAndWait(ctx context.Context) error {
 	if _, err := m.runner.Run(ctx, "systemctl", "restart", m.unit); err != nil {
 		return errors.New("systemd restart failed")
 	}
-	return m.waitForState(ctx, "active")
+	if err := m.waitForState(ctx, "active"); err != nil {
+		return err
+	}
+	return m.enableForBoot(ctx)
+}
+
+// enableForBoot makes an explicitly started or restarted endpoint persistent
+// across host reboots. Installers still leave an unconfigured endpoint stopped
+// and disabled; enabling occurs only after the operator starts it successfully.
+func (m *Controller) enableForBoot(ctx context.Context) error {
+	if _, err := m.runner.Run(ctx, "systemctl", "enable", m.unit); err != nil {
+		return fmt.Errorf("%s is active but could not be enabled for automatic startup", m.unit)
+	}
+	return nil
 }
 
 func validateListenList(value string) error {
