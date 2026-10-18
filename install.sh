@@ -2,7 +2,7 @@
 # PQTunnel one-line entry point. Preflight is read-only; manager setup can print a new token once.
 set -Eeuo pipefail
 
-VERSION="v0.3.0-rc8"
+VERSION="v0.3.0-rc9"
 REPO="hatinati2/PQTunnel"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
 SOURCE_RAW_BASE="$RAW_BASE"
@@ -35,7 +35,7 @@ prompt() {
 }
 usage() {
   cat <<'USAGE'
-PQTunnel one-line installer (experimental release v0.3.0-rc8)
+PQTunnel one-line installer (experimental release v0.3.0-rc9)
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/hatinati2/PQTunnel/main/install.sh | sudo bash
