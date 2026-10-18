@@ -68,15 +68,17 @@ class ReleaseProxyWorkflowTests(unittest.TestCase):
             release_job.index("- name: Publish release"),
         )
 
-    def test_rc8_release_version_is_consistent_across_installer_and_docs(self) -> None:
+    def test_rc9_release_version_is_consistent_across_installer_and_docs(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         readme_fa = (ROOT / "README.fa.md").read_text(encoding="utf-8")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
-        self.assertIn("**Version:** 0.3.0-rc8", readme)
-        self.assertIn("**نسخه: 0.3.0-rc8", readme_fa)
-        self.assertEqual(changelog.splitlines()[:3], ["# Changelog", "", "## 0.3.0-rc8"])
-        self.assertIn('VERSION="v0.3.0-rc8"', installer)
+        setup_script = (ROOT / "scripts" / "pqtunnel-site-to-site-setup.sh").read_text(encoding="utf-8")
+        self.assertIn("**Version:** 0.3.0-rc9", readme)
+        self.assertIn("**نسخه: 0.3.0-rc9", readme_fa)
+        self.assertEqual(changelog.splitlines()[:3], ["# Changelog", "", "## 0.3.0-rc9"])
+        self.assertIn('VERSION="v0.3.0-rc9"', installer)
+        self.assertIn('VERSION="${PQTUNNEL_SETUP_VERSION:-v0.3.0-rc9}"', setup_script)
 
     def test_release_workflow_uses_the_verified_bundle_builder(self) -> None:
         build_step = 'bash scripts/build-release-bundles.sh "$RELEASE_TAG" dist'
