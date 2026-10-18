@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0-rc9
+
+- Fix read-only Dialer preflight to verify client certificates against a separate `dialer-ca.crt` when it actually issues the client certificate, while retaining compatibility with the shared-CA layout.
+- After an operator explicitly starts or restarts the selected tunnel endpoint successfully from the manager, enable its fixed systemd unit for automatic startup after host reboot. Fresh setup and profile generation still leave the endpoint stopped until explicit activation.
+- Add regression tests for separate/shared certificate authorities and manager-driven boot persistence.
+- This remains experimental. One existing two-VPS TCP forwarding/Xray path was confirmed manually, but reboot recovery, IPv4/IPv6 and UDP acceptance, sustained transfer, controlled failure recovery, and a full clean-host installation matrix remain outstanding. Do not consider the Linux MVP production-ready.
+
 ## 0.3.0-rc8
 
 - Prepared an experimental Linux candidate for controlled VPS acceptance testing.
