@@ -20,9 +20,10 @@ class OneLineInstallerTests(unittest.TestCase):
         cls.setup = (ROOT / "scripts/pqtunnel-site-to-site-setup.sh").read_text(encoding="utf-8")
         cls.remote_setup = (ROOT / "scripts/pqtunnel-site-to-site-remote.sh").read_text(encoding="utf-8")
 
-    def test_installer_tracks_current_rc8_release(self) -> None:
-        self.assertIn('VERSION="v0.3.0-rc8"', self.script)
-        self.assertNotIn('VERSION="v0.3.0-rc7"', self.script)
+    def test_installer_tracks_current_rc9_release(self) -> None:
+        self.assertIn('VERSION="v0.3.0-rc9"', self.script)
+        self.assertNotIn('VERSION="v0.3.0-rc8"', self.script)
+        self.assertIn('VERSION="${PQTUNNEL_SETUP_VERSION:-v0.3.0-rc9}"', self.setup)
         self.assertIn('"$RELEASE_BASE/SHA256SUMS"', self.script)
         self.assertIn('sha256sum --check -', self.script)
 
