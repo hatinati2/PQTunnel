@@ -45,6 +45,8 @@ func (f *fakeRunner) Run(ctx context.Context, args ...string) (string, error) {
 		return "", errors.New("unexpected command")
 	}
 	switch args[1] {
+	case "enable":
+		// Enabling at boot changes systemd's persistent unit state, not runtime state.
 	case "start":
 		f.state = "active"
 	case "stop":
@@ -237,8 +239,56 @@ func TestServiceActionsAreAllowlistedAndUseFixedUnit(t *testing.T) {
 	if len(runner.recorded()) != 0 { t.Fatal("invalid action unexpectedly reached systemctl") }
 	if err := m.ServiceAction(context.Background(), "start"); err != nil { t.Fatalf("start: %v", err) }
 	calls := runner.recorded()
-	if len(calls) < 2 || strings.Join(calls[0], " ") != "systemctl start pqtunnel-client.service" {
-		t.Fatalf("unexpected command calls: %#v", calls)
+	startIndex, enableIndex := -1, -1
+	for i, call := range calls {
+		command := strings.Join(call, " ")
+		if command == "systemctl start pqtunnel-client.service" {
+			startIndex = i
+		}
+		if command == "systemctl enable pqtunnel-client.service" {
+			enableIndex = i
+		}
+	}
+	if startIndex < 0 || enableIndex <= startIndex {
+		t.Fatalf("successful start must enable the fixed service for boot after it becomes active: %#v", calls)
+	}
+}
+
+func TestTransportServiceStartAndRestartEnableAutomaticBoot(t *testing.T) {
+	for _, action := range []string{"start", "restart"} {
+		initialState := "inactive"
+		if action == "restart" {
+			initialState = "active"
+		}
+		runner := &fakeRunner{state: initialState}
+		m, err := New(Options{
+			Role: RoleDialer, EndpointMode: "transport",
+			ConfigPath: "/tmp/dialer", BackupDir: "/tmp/b",
+			IPCSocket: "/tmp/sock", Runner: runner,
+		})
+		if err != nil {
+			t.Fatalf("%s: create controller: %v", action, err)
+		}
+		if m.unit != "pqtunnel-client-transport.service" {
+			t.Fatalf("%s: selected unit=%q", action, m.unit)
+		}
+		if err := m.ServiceAction(context.Background(), action); err != nil {
+			t.Fatalf("%s: ServiceAction: %v", action, err)
+		}
+		calls := runner.recorded()
+		actionIndex, enableIndex := -1, -1
+		for i, call := range calls {
+			command := strings.Join(call, " ")
+			if command == "systemctl "+action+" pqtunnel-client-transport.service" {
+				actionIndex = i
+			}
+			if command == "systemctl enable pqtunnel-client-transport.service" {
+				enableIndex = i
+			}
+		}
+		if actionIndex < 0 || enableIndex <= actionIndex {
+			t.Fatalf("%s must enable the selected transport unit after successful activation: %#v", action, calls)
+		}
 	}
 }
 
