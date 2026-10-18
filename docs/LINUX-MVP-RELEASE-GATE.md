@@ -100,10 +100,22 @@ This records automated checks completed for the baseline source commit. It is **
 | Security | [Run 39075917094](https://github.com/hatinati2/PQTunnel/actions/runs/39075917094) — passed |
 | Network-lab results | Isolated namespace tests for dual-stack TUN, selective TCP/UDP forwarding and egress, fail-closed rollback, and firewall-coexistence semantics passed on both Ubuntu CI versions |
 | Bundle smoke test | CI smoke builder verified both Linux archive layouts and their temporary `SHA256SUMS`; final release-candidate asset hashes have not been recorded here |
-| Two-host test record | **NOT RUN / NOT EVIDENCED.** No independent-host acceptance record or four-pair Ubuntu matrix is available |
+| Formal two-host acceptance matrix | **INCOMPLETE.** No four-pair Ubuntu matrix or complete acceptance record is available |
 | Actual provider firewall/routing | Not tested between separate VPS hosts |
 | Out-of-band recovery | Not rehearsed on two independent hosts |
 | Reviewer / go-no-go | **NO-GO** — keep PQTunnel experimental until the remaining gates have recorded evidence |
+
+### Narrow manual forwarding observation — 2026-10-18
+
+The operator reported the following on an existing live topology (not a clean install of the release candidate):
+
+- The private Xray TCP destination accepted a connection from the Dialer host.
+- The public TCP forward accepted a local connection from the Dialer host.
+- A separate VPS could open the public forwarded TCP port.
+- The Xray client observed the Gateway's public egress IP, including after a client disconnect/reconnect.
+- An internet speed-test export showed throughput, but it did not measure packet loss directly.
+
+This is useful narrow end-to-end evidence for one existing TCP-forwarding path. It does **not** establish clean-install behavior, persistence across a VPS reboot, IPv4/IPv6 and UDP coverage, denied-port behavior, controlled failure rollback, provider firewall coexistence, or out-of-band recovery. No public endpoint addresses or authentication material are recorded here.
 
 ### Remaining evidence required
 
